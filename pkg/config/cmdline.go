@@ -2,8 +2,6 @@ package config
 
 import (
 	"errors"
-	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -17,12 +15,12 @@ var DefaultFilePath = filepath.Join("config", "versi.toml")
 func ParseFile(path string) (map[string]any, error) {
 	info, err := os.Stat(path)
 	switch {
-	case path == DefaultFilePath && errors.Is(err, fs.ErrNotExist):
+	case path == DefaultFilePath && errors.Is(err, os.ErrNotExist):
 		return nil, nil // Rely on default values if the default file does not exist.
 	case err != nil:
 		return nil, err
 	case info.IsDir():
-		return nil, fmt.Errorf("configuration path should be a TOML file, not a directory: %s", path)
+		return nil, errors.New("configuration path should be a TOML file, not a directory: " + path)
 	}
 
 	f, err := os.Open(path) //gosec:disable G304 // Modifiable by design.
