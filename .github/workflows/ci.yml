@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  go-tests:
+    name: Go tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7 # https://github.com/marketplace/actions/checkout
+      - name: Set up Go
+        uses: actions/setup-go@v7 # https://github.com/marketplace/actions/setup-go-environment
+        with:
+          go-version-file: go.mod
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+      - name: Build
+        run: go build -v ./cmd/versi
+      - name: Test
+        run: gotestsum -f github-actions -- -coverprofile=coverage.txt ./pkg/... 
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9 # https://github.com/marketplace/actions/golangci-lint
+        with:
+          version: latest
+          args: --timeout=5m # https://github.com/golangci/golangci-lint-action/issues/308
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v6 # https://github.com/marketplace/actions/codecov
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

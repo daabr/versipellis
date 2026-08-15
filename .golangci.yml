@@ -1,0 +1,113 @@
+version: "2"
+
+linters:
+  enable:
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - dupl
+    - dupword
+    - embeddedstructfieldcheck
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exptostd
+    - fatcontext
+    - gocheckcompilerdirectives
+    - goconst
+    - gocritic
+    - godoclint
+    - godot
+    - godox
+    - gosec
+    - gosmopolitan
+    - govet
+    - iface
+    - importas
+    - ineffassign
+    - intrange
+    - mirror
+    - misspell
+    - modernize
+    - musttag
+    - noctx
+    - nolintlint
+    - nosprintfhostport
+    - perfsprint
+    - predeclared
+    - protogetter
+    - recvcheck
+    - revive
+    - sloglint
+    - staticcheck
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - usetesting
+
+  exclusions:
+    rules:
+      - linters:
+          - errcheck
+        source: "defer .*Close()"
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+    goconst:
+      ignore-tests: true
+    godot:
+      scope: all
+      capital: true
+    iface:
+      enable:
+        - identical
+        - unused
+        - unexported
+    misspell:
+      locale: US
+    nolintlint:
+      allow-unused: false
+      require-explanation: true
+      require-specific: true
+    predeclared:
+      qualified-name: true
+    revive:
+      enable-default-rules: true
+      rules:
+        - name: package-comments
+          disabled: true
+    sloglint:
+      attr-only: true
+      key-naming-case: snake
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+    - golines
+
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/daabr)
+    gofumpt:
+      extra-rules: true
+    golines:
+      max-len: 130
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  fix: true

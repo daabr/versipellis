@@ -1,0 +1,17 @@
+version: 2
+
+builds:
+  - main: ./cmd/versi
+    flags:
+      - -trimpath
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    env:
+      - CGO_ENABLED=0
+
+checksum:
+  name_template: "{{.ProjectName}}_v{{.Version}}_checksums.txt"
