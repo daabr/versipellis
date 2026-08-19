@@ -72,3 +72,58 @@ func TestParseFile(t *testing.T) {
 		})
 	}
 }
+
+func TestValue(t *testing.T) {
+	config := map[string]any{
+		"string_key": "value",
+		"int_key":    42,
+	}
+
+	tests := []struct {
+		name string
+		key  string
+		def  any
+		want any
+	}{
+		{
+			name: "existing_string_key",
+			key:  "string_key",
+			def:  "default",
+			want: "value",
+		},
+		{
+			name: "existing_int_key",
+			key:  "int_key",
+			def:  0,
+			want: 42,
+		},
+		{
+			name: "nonexistent_key",
+			key:  "nonexistent",
+			def:  "default",
+			want: "default",
+		},
+		{
+			name: "type_mismatch",
+			key:  "string_key",
+			def:  0,
+			want: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			switch tt.def.(type) {
+			case string:
+				if got := value(config, tt.key, tt.def.(string)); got != tt.want {
+					t.Errorf("value(%q) = %v, want %v", tt.key, got, tt.want)
+				}
+			case int:
+				if got := value(config, tt.key, tt.def.(int)); got != tt.want {
+					t.Errorf("value(%q) = %v, want %v", tt.key, got, tt.want)
+				}
+			default:
+				t.Fatalf("unsupported default value type: %T", tt.def)
+			}
+		})
+	}
+}
