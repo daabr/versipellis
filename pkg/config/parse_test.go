@@ -112,13 +112,13 @@ func TestValue(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			switch tt.def.(type) {
+			switch def := tt.def.(type) {
 			case string:
-				if got := value(config, tt.key, tt.def.(string)); got != tt.want {
+				if got := value(config, tt.key, def); got != tt.want {
 					t.Errorf("value(%q) = %v, want %v", tt.key, got, tt.want)
 				}
 			case int:
-				if got := value(config, tt.key, tt.def.(int)); got != tt.want {
+				if got := value(config, tt.key, def); got != tt.want {
 					t.Errorf("value(%q) = %v, want %v", tt.key, got, tt.want)
 				}
 			default:
