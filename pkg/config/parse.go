@@ -2,6 +2,8 @@ package config
 
 import (
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -13,9 +15,10 @@ var DefaultFilePath = filepath.Join("config", "versi.toml")
 
 // ParseFile parses the TOML configuration file at the given path and returns its contents.
 func ParseFile(path string) (map[string]any, error) {
+	path = filepath.Clean(path)
 	info, err := os.Stat(path)
 	switch {
-	case path == DefaultFilePath && errors.Is(err, os.ErrNotExist):
+	case path == filepath.Clean(DefaultFilePath) && errors.Is(err, os.ErrNotExist):
 		return nil, nil // Rely on default values if the default file does not exist.
 	case err != nil:
 		return nil, err
@@ -35,4 +38,19 @@ func ParseFile(path string) (map[string]any, error) {
 	}
 
 	return config, nil
+}
+
+func value[T any](config map[string]any, key string, defaultValue T) T {
+	anyValue, found := config[key]
+	if !found {
+		return defaultValue
+	}
+	if typedValue, ok := anyValue.(T); ok {
+		return typedValue
+	}
+	slog.Warn("unexpected type for TOML config key, using default value",
+		slog.String("key", key), slog.Any("default", defaultValue),
+		slog.String("expected_type", fmt.Sprintf("%T", defaultValue)),
+	)
+	return defaultValue
 }
