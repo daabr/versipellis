@@ -53,7 +53,7 @@ Versipellis also supports these predefined schedule aliases/nicknames, in accord
 | `@monthly`                       | `0 0 1 * *`   | On the first day of every month at midnight   |
 | `@yearly` or `@annually`         | `0 0 1 1 *`   | Every year on January 1st at midnight         |
 | `@every` [`Xh`][`Ym`][`Zs`]      | N/A           | Every `X` hours, `Y` minutes, and `Z` seconds |
-| `@reboot` / `@startup` / `@once` | N/A           | Run once at startup.                          |
+| `@reboot` / `@startup` / `@once` | N/A           | Run once at startup                           |
 
 ### Time Zones
 

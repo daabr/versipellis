@@ -7,3 +7,15 @@
 Versipellis is a versatile, scalable tool for transferring and transforming data reliably across diverse media, protocols, and formats, without altering the data itself.
 
 It is not a data pipeline, but rather a powerful, easy-to-use conduit for pipeline inputs and outputs.
+
+## Supported Inputs
+
+### SQL Input
+
+Supported drivers for SQL-based relational databases:
+
+- CockroachDB
+- MariaDB
+- MySQL
+- PostgreSQL
+- SQLite

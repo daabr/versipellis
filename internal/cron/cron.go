@@ -39,7 +39,8 @@ var (
 
 // Schedule represents a parsed cronspec expression, ready to start a given goroutine.
 type Schedule struct {
-	once atomic.Bool // @reboot / @startup / @once.
+	oneTimeLeft atomic.Bool // @reboot / @startup / @once.
+	oneTime     bool        // Same, but never changes.
 
 	interval time.Duration // @every.
 
@@ -67,14 +68,14 @@ func Parse(spec string, tz *time.Location) (*Schedule, error) {
 	fields := strings.Fields(spec)
 	switch {
 	case len(fields) == 1 && slices.Contains(rebootAliases, fields[0]):
-		s := &Schedule{}
-		s.once.Store(true)
+		s := &Schedule{oneTime: true}
+		s.oneTimeLeft.Store(true)
 		return s, nil
 	case len(fields) > 1 && fields[0] == "@every":
 		expr := strings.Join(fields[1:], "")
 		d, err := time.ParseDuration(expr)
 		if err != nil || d < time.Second {
-			return nil, fmt.Errorf("@every with invalid duration: %q", expr)
+			return nil, fmt.Errorf("@every with invalid duration %q", expr)
 		}
 		return &Schedule{interval: d.Truncate(time.Second)}, nil
 	case len(fields) != 5:
@@ -90,19 +91,19 @@ func Parse(spec string, tz *time.Location) (*Schedule, error) {
 	}
 
 	if err := parseField(fields[0], s.minutes, false, nil); err != nil {
-		return nil, fmt.Errorf("minute: %w", err)
+		return nil, fmt.Errorf("minute(s): %w", err)
 	}
 	if err := parseField(fields[1], s.hours, false, nil); err != nil {
-		return nil, fmt.Errorf("hour: %w", err)
+		return nil, fmt.Errorf("hour(s): %w", err)
 	}
 	if err := parseField(fields[2], s.daysOfMonth, true, nil); err != nil {
-		return nil, fmt.Errorf("day of month: %w", err)
+		return nil, fmt.Errorf("day(s) of month: %w", err)
 	}
 	if err := parseField(fields[3], s.months, true, monthNames); err != nil {
-		return nil, fmt.Errorf("month: %w", err)
+		return nil, fmt.Errorf("month(s): %w", err)
 	}
 	if err := parseField(fields[4], s.daysOfWeek, false, dayNames); err != nil {
-		return nil, fmt.Errorf("day of week: %w", err)
+		return nil, fmt.Errorf("day(s) of week: %w", err)
 	}
 
 	s.domRestricted = fields[2] != "*"
@@ -137,7 +138,7 @@ func parsePart(input string, output []bool, zeroUnused bool, names map[string]in
 	if hasStep {
 		step, err = strconv.Atoi(after)
 		if err != nil || step <= 0 || step > to {
-			return fmt.Errorf("invalid step: %q", after)
+			return fmt.Errorf("invalid step %q", after)
 		}
 		input = before
 	}
@@ -164,7 +165,8 @@ func parsePart(input string, output []bool, zeroUnused bool, names map[string]in
 	// Special case: allow wraparound for day-of-week (0 = Sunday = 7).
 	toSunday := from > 0 && to == 0 && names != nil && names["sat"] == 6
 	if from > to && !toSunday {
-		return fmt.Errorf("invalid range: %d-%d", from, to)
+		tip := "use list instead of range for wrap-around, or 2 schedules with valid ranges"
+		return fmt.Errorf("inverted range: %d-%d (%s)", from, to, tip)
 	}
 	if toSunday {
 		to = 7
@@ -186,7 +188,7 @@ func parseValue(input string, lastIndex int, zeroUnused bool, names map[string]i
 
 	v, err := strconv.Atoi(input)
 	if err != nil {
-		return 0, fmt.Errorf("invalid value: %q", input)
+		return 0, fmt.Errorf("invalid value %q", input)
 	}
 
 	from, to := 0, lastIndex
@@ -204,6 +206,12 @@ func parseValue(input string, lastIndex int, zeroUnused bool, names map[string]i
 	return v, nil
 }
 
+// RunsOnlyOnce returns true if the schedule is @reboot/@startup/@once,
+// regardless of whether it has already run or not.
+func (s *Schedule) RunsOnlyOnce() bool {
+	return s.oneTime
+}
+
 // Next returns the earliest timestamp that matches the schedule after the given time.
 // This is truncated to the nearest minute, unless it's an interval-based schedule (@every).
 // If no matching time is found, this function returns the zero value of [time.Time].
@@ -213,7 +221,7 @@ func (s *Schedule) Next(after time.Time) time.Time {
 		return after.Add(s.interval).Truncate(time.Second)
 	}
 
-	if s.once.Swap(false) {
+	if s.oneTimeLeft.Swap(false) {
 		return time.Now().UTC().Truncate(time.Second)
 	}
 	if s.timezone == nil {
@@ -222,7 +230,7 @@ func (s *Schedule) Next(after time.Time) time.Time {
 
 	after = after.In(s.timezone)
 	next := after.Add(time.Minute).Truncate(time.Minute)
-	limit := after.AddDate(4, 0, 1)
+	limit := after.AddDate(8, 0, 1) // Handle rare valid schedules, but avoid infinite loops for invalid ones.
 
 	for next.Before(limit) {
 		switch {
