@@ -8,7 +8,7 @@ USER nonroot:nonroot
 
 WORKDIR /app
 COPY --chmod=700 --chown=nonroot:nonroot dist/versipellis_linux_${TARGETARCH}_*/versi ./
-VOLUME ["config", "data"]
+VOLUME ["/app/config", "/app/data"]
 ENTRYPOINT ["./versi"]
 
 EXPOSE 4884/tcp 4885/tcp 3885/udp

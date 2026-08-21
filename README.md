@@ -8,6 +8,48 @@ Versipellis is a versatile, scalable tool for transferring and transforming data
 
 It is not a data pipeline, but rather a powerful, easy-to-use conduit for pipeline inputs and outputs.
 
+## Getting Started
+
+Choose any of the options below:
+
+### Install Option 1: Docker Image
+
+<https://github.com/daabr/versipellis/pkgs/container/versipellis>
+
+Command line example:
+
+```shell
+docker run -d --name my-versi-container \
+       -v $HOME/versi/config:/app/config -v $HOME/versi/data:/app/data \
+       ghcr.io/daabr/versipellis:latest
+```
+
+- Platforms: Linux (amd64/arm64)
+- Volumes / bind mounts:
+  - `/app/config` - for `.toml` files, etc.
+  - `/app/data` - for runtime storage of input data
+
+### Install Option 2: Precompiled Executable Binary
+
+<https://github.com/daabr/versipellis/releases/latest>
+
+- Platforms:
+  - Linux (amd64/arm64)
+  - macOS (amd64/arm64)
+  - Windows (amd64 only)
+
+### Install Option 3: Build From Source
+
+Required Go version: [1.27](https://go.dev/dl/)
+
+Command line:
+
+```shell
+CGO_ENABLED=0 go build ./cmd/versi
+
+./versi -h
+```
+
 ## Supported Inputs
 
 ### SQL Input
