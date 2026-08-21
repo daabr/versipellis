@@ -191,11 +191,11 @@ func TestPullerExecutePostgresQueryErrors(t *testing.T) {
 			t.Parallel()
 
 			p := &Puller{
-				BasePuller: config.BasePuller{Type: config.PullTypeSQL},
-				driver:     DriverTypePostgres,
-				query:      "SELECT 1",
-				pgPool:     tt.pool,
-				usingPG:    true,
+				Type:    config.PullTypeSQL,
+				driver:  DriverTypePostgres,
+				query:   "SELECT 1",
+				pgPool:  tt.pool,
+				usingPG: true,
 			}
 
 			payload, rowCount, ok := p.executeQuery(t.Context())
@@ -439,7 +439,7 @@ func (r *fakePGRows) Scan(dest ...any) error {
 
 	if len(dest) == 1 {
 		if rc, ok := dest[0].(pgx.RowScanner); ok {
-			return rc.ScanRow(r)
+			return rc.ScanRow(r) //nolint:wrapcheck // Fake for testing purposes, propagate the error as-is.
 		}
 	}
 

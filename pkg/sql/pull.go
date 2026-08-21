@@ -319,7 +319,7 @@ func serializeAndClose(rows *sql.Rows) ([]byte, int, error) {
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("row iteration error: %w", err)
 	}
 	if rowCount == 0 {
 		return nil, 0, nil
@@ -336,7 +336,7 @@ func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
 	}
 
 	if err := rows.Scan(ptrs...); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("row scanning error: %w", err)
 	}
 
 	row := make(map[string]any, size)

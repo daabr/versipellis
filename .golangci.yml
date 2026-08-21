@@ -53,6 +53,7 @@ linters:
     - unused
     - usestdlibvars
     - usetesting
+    - wrapcheck
 
   exclusions:
     rules:
@@ -81,14 +82,13 @@ linters:
       require-specific: true
     predeclared:
       qualified-name: true
-    revive:
-      enable-default-rules: true
-      rules:
-        - name: package-comments
-          disabled: true
     sloglint:
       attr-only: true
       key-naming-case: snake
+    wrapcheck:
+      ignore-package-globs:
+        - os
+        - github.com/pelletier/go-toml/*
 
 formatters:
   enable:
@@ -103,7 +103,10 @@ formatters:
         - default
         - prefix(github.com/daabr)
     gofumpt:
-      extra-rules: true
+      module-path: github.com/daabr/versipellis
+      extra:
+        clothe-returns: true
+        balance-calls: true
     golines:
       max-len: 130
 
