@@ -299,7 +299,9 @@ func TestPullerConnectionStringError(t *testing.T) {
 
 	tests := []string{
 		DriverTypeMariaDB,
+		DriverTypeMSSQL,
 		DriverTypePostgres,
+		DriverTypeSAPHANA,
 	}
 	for _, driver := range tests {
 		t.Run(driver, func(t *testing.T) {

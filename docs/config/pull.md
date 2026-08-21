@@ -32,9 +32,12 @@
 - Required
 - Options (case insensitive):
   - `"cockroachdb"` ([CockroachDB](https://www.cockroachlabs.com/))
+  - `"mssql"` or `"sqlserver"` ([Microsoft SQL Server](https://www.microsoft.com/en-us/sql-server))
   - `"mariadb"` ([MariaDB](https://mariadb.com/))
   - `"mysql"` ([MySQL](https://www.mysql.com/))
   - `"postgres"` or `"postgresql"` ([PostgreSQL](https://www.postgresql.org/))
+  - `"sap_hana"` ([SAP HANA](https://www.sap.com/products/data-cloud/hana/what-is-sap-hana.html))
+  - `"snowflake"` ([Snowflake](https://www.snowflake.com/))
   - `"sqlite"` ([SQLite](https://sqlite.org/))
 
 `connection` - database connection string for the SQL client
