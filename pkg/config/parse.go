@@ -32,16 +32,18 @@ func ParseFile(path string) (map[string]any, error) {
 	}
 	defer f.Close()
 
-	var config map[string]any
-	if err := toml.NewDecoder(f).Decode(&config); err != nil {
+	var cfg map[string]any
+	if err := toml.NewDecoder(f).Decode(&cfg); err != nil {
 		return nil, err
 	}
 
-	return config, nil
+	return cfg, nil
 }
 
-func value[T any](config map[string]any, key string, defaultValue T) T {
-	anyValue, found := config[key]
+// Value retrieves a generic value with the given key from the given TOML-based configuration map.
+// This function intentionally does not return errors, it reports them via logging.
+func Value[T any](cfg map[string]any, key string, defaultValue T) T {
+	anyValue, found := cfg[key]
 	if !found {
 		return defaultValue
 	}
@@ -51,6 +53,7 @@ func value[T any](config map[string]any, key string, defaultValue T) T {
 	slog.Warn("unexpected type for TOML config key, using default value",
 		slog.String("key", key), slog.Any("default", defaultValue),
 		slog.String("expected_type", fmt.Sprintf("%T", defaultValue)),
+		slog.String("actual_type", fmt.Sprintf("%T", anyValue)),
 	)
 	return defaultValue
 }

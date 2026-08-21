@@ -9,6 +9,8 @@ import (
 )
 
 func TestParseAndNext(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		spec  string
@@ -304,6 +306,12 @@ func TestParseAndNext(t *testing.T) {
 			want:  "2028-02-29 00:00:00",
 		},
 		{
+			name:  "extreme_leap_year",
+			spec:  "0 0 29 2 *",
+			after: "2096-02-29 00:00:00",
+			want:  "2104-02-29 00:00:00",
+		},
+		{
 			name:  "impossible_but_valid_date",
 			spec:  "* * 31 2 *",
 			after: "2024-02-29 00:00:00",
@@ -312,6 +320,8 @@ func TestParseAndNext(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			sched, err := cron.Parse(tt.spec, nil)
 			if err != nil {
 				t.Fatalf("Parse(%q) error: %v", tt.spec, err)
@@ -350,6 +360,8 @@ func TestParseAndNextOnSundays(t *testing.T) {
 }
 
 func TestParseAndNextWithReboot(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		spec string
@@ -365,6 +377,8 @@ func TestParseAndNextWithReboot(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			s, err := cron.Parse(tt.spec, nil)
 			if err != nil {
 				t.Fatalf("Parse(%q) error: %v", tt.spec, err)
@@ -384,6 +398,8 @@ func TestParseAndNextWithReboot(t *testing.T) {
 }
 
 func TestParseAndNextWithTimezone(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		spec     string
@@ -544,6 +560,8 @@ func TestParseAndNextWithTimezone(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			loc, err := time.LoadLocation(tt.timezone)
 			if err != nil {
 				t.Fatalf("time.LoadLocation(%q) error: %v", tt.timezone, err)
@@ -567,6 +585,8 @@ func TestParseAndNextWithTimezone(t *testing.T) {
 }
 
 func TestParseErrors(t *testing.T) {
+	t.Parallel()
+
 	bad := []string{
 		"",
 		"0",
@@ -603,6 +623,8 @@ func TestParseErrors(t *testing.T) {
 	}
 	for _, spec := range bad {
 		t.Run(spec, func(t *testing.T) {
+			t.Parallel()
+
 			if _, err := cron.Parse(spec, time.UTC); err == nil {
 				t.Errorf("Parse(%q) expected error", spec)
 			}

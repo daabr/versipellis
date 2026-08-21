@@ -6,57 +6,57 @@ import (
 	"github.com/daabr/versipellis/pkg/config"
 )
 
-func TestNewGenericPuller(t *testing.T) {
+func TestNewBasePuller(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name    string
-		config  map[string]any
+		cfg     map[string]any
 		wantErr bool
 	}{
 		{
 			name:    "invalid_type",
-			config:  map[string]any{"type": "invalid", "schedule": "0 * * * *"},
+			cfg:     map[string]any{"type": "invalid", "schedule": "0 * * * *"},
 			wantErr: true,
 		},
 		{
 			name:    "implicit_none",
-			config:  map[string]any{},
+			cfg:     map[string]any{},
 			wantErr: false,
 		},
 		{
 			name:    "explicit_none",
-			config:  map[string]any{"type": "none"},
+			cfg:     map[string]any{"type": "none"},
 			wantErr: false,
 		},
 		{
 			name:    "none_with_schedule",
-			config:  map[string]any{"type": "none", "schedule": "* * * * *"},
+			cfg:     map[string]any{"type": "none", "schedule": "* * * * *"},
 			wantErr: true,
 		},
 		{
 			name:    "none_with_trigger",
-			config:  map[string]any{"type": "none", "trigger": "my_trigger"},
+			cfg:     map[string]any{"type": "none", "trigger": "my_trigger"},
 			wantErr: true,
 		},
 		{
 			name:    "http_without_schedule_or_trigger",
-			config:  map[string]any{"type": "http"},
+			cfg:     map[string]any{"type": "http"},
 			wantErr: true,
 		},
 		{
 			name:    "http_with_schedule",
-			config:  map[string]any{"type": "http", "schedule": "@hourly"},
+			cfg:     map[string]any{"type": "http", "schedule": "@hourly"},
 			wantErr: false,
 		},
 		{
 			name:    "sql_with_trigger",
-			config:  map[string]any{"type": "sql", "trigger": "my_trigger"},
+			cfg:     map[string]any{"type": "sql", "trigger": "my_trigger"},
 			wantErr: false,
 		},
 		{
 			name: "both_schedule_and_trigger",
-			config: map[string]any{
+			cfg: map[string]any{
 				"type":     "http",
 				"schedule": "@daily",
 				"trigger":  "my_trigger",
@@ -65,12 +65,17 @@ func TestNewGenericPuller(t *testing.T) {
 		},
 		{
 			name:    "http3_with_invalid_timezone",
-			config:  map[string]any{"type": "http/3", "schedule": "@hourly", "timezone": "invalid"},
+			cfg:     map[string]any{"type": "http/3", "schedule": "@hourly", "timezone": "invalid"},
 			wantErr: true,
 		},
 		{
 			name:    "http3_with_invalid_schedule",
-			config:  map[string]any{"type": "http/3", "schedule": "invalid"},
+			cfg:     map[string]any{"type": "http/3", "schedule": "invalid"},
+			wantErr: true,
+		},
+		{
+			name:    "syntactically_valid_but_semantically_invalid",
+			cfg:     map[string]any{"type": "sql", "schedule": "0 0 31 2 *"},
 			wantErr: true,
 		},
 	}
@@ -78,9 +83,8 @@ func TestNewGenericPuller(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := config.NewGenericPuller(tt.config); (err != nil) != tt.wantErr {
-				t.Errorf("NewGenericPuller() error = %v, wantErr %v", err, tt.wantErr)
-				return
+			if _, err := config.NewBasePuller(tt.cfg); (err != nil) != tt.wantErr {
+				t.Errorf("NewBasePuller() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
