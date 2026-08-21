@@ -25,7 +25,7 @@ jobs:
       - name: Build
         run: go build -v ./cmd/versi
       - name: Test
-        run: gotestsum -f github-actions -- -coverprofile=coverage.txt ./internal/... ./pkg/...
+        run: gotestsum -f github-actions -- -race -covermode=atomic -coverprofile=coverage.txt ./internal/... ./pkg/...
 
       - name: Lint
         uses: golangci/golangci-lint-action@v9 # https://github.com/marketplace/actions/golangci-lint
@@ -34,6 +34,6 @@ jobs:
           args: --timeout=5m # https://github.com/golangci/golangci-lint-action/issues/308
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v6 # https://github.com/marketplace/actions/codecov
+        uses: codecov/codecov-action@v7 # https://github.com/marketplace/actions/codecov
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
