@@ -16,6 +16,9 @@ Supported drivers for SQL-based relational databases:
 
 - CockroachDB
 - MariaDB
+- Microsoft SQL Server
 - MySQL
 - PostgreSQL
+- SAP HANA
+- Snowflake
 - SQLite

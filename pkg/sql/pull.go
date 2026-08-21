@@ -16,7 +16,10 @@ import (
 	"time"
 
 	// Import drivers for runtime registration in [sql].
+	_ "github.com/SAP/go-hdb/driver"
 	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/microsoft/go-mssqldb"
+	_ "github.com/snowflakedb/gosnowflake/v2"
 	_ "modernc.org/sqlite"
 
 	"github.com/daabr/versipellis/pkg/config"
@@ -26,19 +29,27 @@ import (
 const (
 	DriverTypeCockroachDB = "cockroachdb"
 	DriverTypeMariaDB     = "mariadb"
+	DriverTypeMSSQL       = "mssql"
 	DriverTypeMySQL       = "mysql"
 	DriverTypePostgres    = "postgres"
 	DriverTypePostgreSQL  = "postgresql"
+	DriverTypeSAPHANA     = "sap_hana"
+	DriverTypeSnowflake   = "snowflake"
 	DriverTypeSQLite      = "sqlite"
+	DriverTypeSQLServer   = "sqlserver"
 )
 
 var validDriverTypes = []string{
 	DriverTypeCockroachDB,
 	DriverTypeMariaDB,
+	DriverTypeMSSQL,
 	DriverTypeMySQL,
-	DriverTypeSQLite,
 	DriverTypePostgres,
 	DriverTypePostgreSQL,
+	DriverTypeSAPHANA,
+	DriverTypeSnowflake,
+	DriverTypeSQLite,
+	DriverTypeSQLServer,
 }
 
 const (
@@ -168,6 +179,10 @@ func (p *Puller) Start(ctx context.Context) bool {
 		err = p.connectToPostgres(ctx)
 	case DriverTypeMariaDB:
 		db, err = OpenDB(ctx, DriverTypeMySQL, p.conn)
+	case DriverTypeMSSQL:
+		db, err = OpenDB(ctx, DriverTypeSQLServer, p.conn)
+	case DriverTypeSAPHANA:
+		db, err = OpenDB(ctx, "hdb", p.conn)
 	default:
 		db, err = OpenDB(ctx, p.driver, p.conn)
 	}
