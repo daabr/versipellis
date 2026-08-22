@@ -40,6 +40,22 @@
   - <https://dev.mysql.com/doc/refman/en/server-system-variables.html>
   - <https://mariadb.com/docs/server/server-management/variables-and-modes/server-system-variables>
 
+### PostgreSQL
+
+- Formats:
+
+  - URI: `postgres[ql]://[user[:password]@][host[:port][,host2[:port2],...]][/dbname][?param1=value1&...&paramN=valueN]`
+  - Space-separated key/value pairs: `key1=value1 key2=value2 ... keyN=valueN`
+
+- Documentation:
+
+  - <https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING>
+  - <https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib>
+
+> [!TIP]
+> Use the [`.pgpass` file](https://www.postgresql.org/docs/current/libpq-pgpass.html) to avoid exposing the user password in the connection string.\
+> To use a non-default path for it, specify the [`passfile` parameter](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNECT-PASSFILE) in the connection string, or set the `PGPASSFILE` environment variable.
+
 ### SAP HANA
 
 - Format: `hdb://user:password@something.hanacloud.ondemand.com:port?TLSServerName=something.hanacloud.ondemand.com`
@@ -77,15 +93,3 @@
   - <https://sqlite.org/c3ref/open.html>
   - <https://sqlite.org/pragma.html>
   - <https://sqlite.org/uri.html>
-  
-### PostgreSQL
-
-- Formats:
-
-  - URI: `postgres[ql]://user:password@[host[:port][,host2[:port2],...]][/dbname][?param1=value1&...&paramN=valueN]`
-  - Space-separated key/value pairs: `key1=value1 key2=value2 ... keyN=valueN`
-
-- Documentation:
-
-  - <https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING>
-  - <https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib>
