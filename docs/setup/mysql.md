@@ -16,7 +16,7 @@
    docker exec -it my-mysql mysql --user=larry --password=awooo --database=versi_db
    ```
 
-3. [Create a new table](https://dev.mysql.com/doc/refman/en/create-table.html)[^1]
+3. [Create a new table](https://dev.mysql.com/doc/refman/en/create-table.html) [^1]
 
    ```sql
    CREATE TABLE IF NOT EXISTS input_data (
@@ -51,5 +51,4 @@
    \q
    ```
 
-[^1]: Reference documentation for the function `UUID_TO_BIN()` and the meaning of `swap_flag=1` there:\
-<https://dev.mysql.com/doc/refman/en/miscellaneous-functions.html#function_uuid-to-bin>
+[^1]: See the reference documentation for the [`UUID_TO_BIN()`](https://dev.mysql.com/doc/refman/en/miscellaneous-functions.html#function_uuid-to-bin) function for the meaning of `swap_flag=1`

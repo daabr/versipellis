@@ -16,7 +16,7 @@
    docker exec -it my-mariadb mariadb --user=larry --password=awooo --database=versi_db
    ```
 
-3. [Create a new table](https://mariadb.com/docs/server/server-usage/tables/create-table)[^1]
+3. [Create a new table](https://mariadb.com/docs/server/server-usage/tables/create-table) [^1]
 
    ```sql
    CREATE TABLE IF NOT EXISTS input_data (
@@ -51,4 +51,4 @@
    \q
    ```
 
-[^1]: The [`UUID_v4()`](https://mariadb.com/docs/server/reference/sql-functions/secondary-functions/miscellaneous-functions/uuid_v4) function is available since MariaDB 11.7.
+[^1]: The [`UUID_v4()`](https://mariadb.com/docs/server/reference/sql-functions/secondary-functions/miscellaneous-functions/uuid_v4) function is available since MariaDB 11.7

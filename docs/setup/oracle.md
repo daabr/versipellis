@@ -14,7 +14,7 @@
    docker exec -it my-oracle sqlplus larry/awooo@FREEPDB1
    ```
 
-3. [Create a new table](https://docs.oracle.com/en/database/oracle/oracle-database/26/sqlrf/CREATE-TABLE.html)[^1][^2]
+3. [Create a new table](https://docs.oracle.com/en/database/oracle/oracle-database/26/sqlrf/CREATE-TABLE.html) [^1][^2]
 
    ```sql
    CREATE TABLE IF NOT EXISTS input_data (
@@ -55,6 +55,6 @@
    EXIT
    ```
 
-[^1]: The `IF NOT EXISTS` syntax is supported since Oracle Database 19c (backported from 23ai in [Release Update 19.28](https://docs.oracle.com/en/database/oracle/oracle-database/19/newft/ru-19-28.html#GUID-D4C5B6DD-625B-4885-9767-8817C6B1604E)).
+[^1]: The `IF NOT EXISTS` syntax is supported since Oracle Database 19c (backported from 23ai in [Release Update 19.28](https://docs.oracle.com/en/database/oracle/oracle-database/19/newft/ru-19-28.html#GUID-D4C5B6DD-625B-4885-9767-8817C6B1604E))
 
-[^2]: The [`UUID()`](https://docs.oracle.com/en/database/oracle/oracle-database/26/sqlrf/uuid.html) function was introduced in Oracle Database 23ai.
+[^2]: The [`UUID()`](https://docs.oracle.com/en/database/oracle/oracle-database/26/sqlrf/uuid.html) function was introduced in Oracle Database 23ai
