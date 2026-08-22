@@ -40,6 +40,23 @@
   - <https://dev.mysql.com/doc/refman/en/server-system-variables.html>
   - <https://mariadb.com/docs/server/server-management/variables-and-modes/server-system-variables>
 
+### Oracle Database
+
+- Formats:
+
+  - [Easy Connect](https://www.oracle.com/pls/topic/lookup?ctx=dblatest&id=GUID-B0437826-43C1-49EC-A94D-B650B6A4A6EE): `username[/password]@[//]host[:port][/[service][:server][/instance]]`
+  - [Easy Connect Plus](https://download.oracle.com/ocomdocs/global/Oracle-Net-Easy-Connect-Plus.pdf): `[[protocol:]//]host1{,host12}[:port1]{,host2:port2}{;host1{,host12}[:port1]}[/[service][:server][/instance]][?param1=value1&...&paramN=valueN]`
+  - [Connect Descriptor](https://www.oracle.com/pls/topic/lookup?ctx=dblatest&id=GUID-2BDF9E52-4147-4F46-84E2-A5AE1018A373)
+  - [Service name](https://www.oracle.com/pls/topic/lookup?ctx=dblatest&id=GUID-7F967CE5-5498-427C-9390-4A5C6767ADAA) (as defined in a `tnsnames.ora` file)
+  - URI: `oracle://username[:password]@server:port/service?param1=value1&...&paramN=valueN`
+  - Space-separated key/value pairs: `user="scott" password="tiger" connectString="host:port/service" param1=value1 ... paramN=valueN`
+
+- Documentation:
+
+  - <https://github.com/godror/godror#connection>
+  - <https://pkg.go.dev/github.com/godror/godror#pkg-overview>
+  - <https://www.oracle.com/developer/working-in-go-applications-with-oracle-database-and-oracle-cloud-autonomous-database/>
+
 ### PostgreSQL
 
 - Formats:
