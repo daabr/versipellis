@@ -37,6 +37,8 @@
   - <https://github.com/go-sql-driver/mysql#dsn-data-source-name>
   - <https://github.com/go-sql-driver/mysql#parameters>
   - <https://github.com/go-sql-driver/mysql#examples>
+  - <https://dev.mysql.com/doc/refman/en/server-system-variables.html>
+  - <https://mariadb.com/docs/server/server-management/variables-and-modes/server-system-variables>
 
 ### SAP HANA
 
