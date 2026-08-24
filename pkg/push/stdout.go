@@ -32,7 +32,7 @@ func Stdout(data any) error {
 	once.Do(lazyInit)
 
 	if err := encoder.Encode(data); err != nil {
-		slog.Error("cannot encode data", slog.Any("error", err), slog.String("data", fmt.Sprintf("%#v", data)))
+		slog.Error("cannot encode data", slog.Any("error", err), slog.String("data_type", fmt.Sprintf("%T", data)))
 		// Log this error, but...
 	}
 

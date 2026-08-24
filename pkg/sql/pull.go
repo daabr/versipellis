@@ -319,7 +319,7 @@ func processResults(rows *sql.Rows, resultSet int) (int, error) {
 	for rows.Next() {
 		row, err := scanRow(rows, cols)
 		if err != nil {
-			return 0, fmt.Errorf("failed to scan row %d in result-set %d: %w", rowCount+1, resultSet, err)
+			return rowCount, fmt.Errorf("failed to scan row %d in result-set %d: %w", rowCount+1, resultSet, err)
 		}
 		if err := push.Stdout(row); err != nil {
 			return rowCount, fmt.Errorf("failed to process row %d in result-set %d: %w", rowCount+1, resultSet, err)
