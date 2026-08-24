@@ -1,4 +1,6 @@
-# Versipellis - Data Flow Shape Shifter
+![Versipellis - The Data Flow Shape Shifter](./images/banner.jpg)
+
+# Versipellis - The Data Flow Shape Shifter
 
 [![Code Wiki](https://img.shields.io/badge/Code_Wiki-gold?logo=googlegemini)](https://codewiki.google/github.com/daabr/versipellis)
 [![Go Reference](https://pkg.go.dev/badge/github.com/daabr/versipellis.svg)](https://pkg.go.dev/github.com/daabr/versipellis)
@@ -25,12 +27,13 @@ Command line example:
 ```shell
 docker run -d --name my-versi-container \
        -v $HOME/versi/config:/app/config -v $HOME/versi/data:/app/data \
+       -p 4884:4884/tcp -p 4885:4885/tcp -p 3885:3885/udp \
        ghcr.io/daabr/versipellis:latest
 ```
 
 - Platforms: Linux (amd64/arm64)
-- Volumes / bind mounts:
-  - `/app/config` - for `.toml` files, etc.
+- Volumes / bind mount points:
+  - `/app/config` - for `.toml` files (Versipellis), `.ini` files (ODBC), certificates, etc.
   - `/app/data` - for runtime storage of input data
 
 ### Install Option 2: Precompiled Executable Binary
