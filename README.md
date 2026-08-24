@@ -6,7 +6,11 @@
 
 Versipellis is a versatile, scalable tool for transferring and transforming data reliably across diverse media, protocols, and formats, without altering the data itself.
 
-It is not a data pipeline, but rather a powerful, easy-to-use conduit for pipeline inputs and outputs.
+It is not a data pipeline, but rather a powerful yet easy-to-use conduit for pipeline inputs and outputs.
+
+In other words: ["Let's take all this data, and push it somewhere else."](https://knowyourmeme.com/memes/push-it-somewhere-else-patrick)
+
+![Let's take all this data, and push it somewhere else](./images/patrick_meme.png)
 
 ## Getting Started
 
