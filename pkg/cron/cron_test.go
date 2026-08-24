@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/daabr/versipellis/internal/cron"
+	"github.com/daabr/versipellis/pkg/cron"
 )
 
 func TestParseAndNext(t *testing.T) {

@@ -1,7 +1,6 @@
-// Package cron provides a simple-yet-robust scheduling mechanism
-// that parses cronspec expressions to manage the execution of
-// recurring goroutines. Think of it as a simplified but more
-// modern version of https://github.com/robfig/cron.
+// Package cron provides a simple-yet-robust scheduling mechanism that parses cronspec
+// expressions to manage the execution of recurring goroutines. Think of it as a
+// simplified but more modern version of https://github.com/robfig/cron.
 package cron
 
 import (

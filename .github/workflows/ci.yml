@@ -25,7 +25,7 @@ jobs:
       - name: Build
         run: go build -v ./cmd/versi
       - name: Test
-        run: gotestsum -f github-actions -- -race -covermode=atomic -coverprofile=coverage.txt ./internal/... ./pkg/...
+        run: gotestsum -f github-actions -- -race -covermode=atomic -coverprofile=coverage.txt ./pkg/...
 
       - name: Lint
         uses: golangci/golangci-lint-action@v9 # https://github.com/marketplace/actions/golangci-lint

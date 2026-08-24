@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/daabr/versipellis/internal/cron"
+	"github.com/daabr/versipellis/pkg/cron"
 )
 
 // PullType* constants represent all the available types of "pull" configurations in the TOML file.
