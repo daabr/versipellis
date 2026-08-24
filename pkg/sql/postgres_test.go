@@ -8,7 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/daabr/versipellis/pkg/config"
 )
@@ -288,10 +287,6 @@ func (p fakePGPool) BeginTx(_ context.Context, _ pgx.TxOptions) (pgx.Tx, error) 
 }
 
 func (p fakePGPool) Close() {}
-
-func (p fakePGPool) Stat() *pgxpool.Stat {
-	return &pgxpool.Stat{}
-}
 
 // Simple implementation of the [pgx.Tx] interface.
 type fakePGTx struct {

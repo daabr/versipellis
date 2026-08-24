@@ -16,7 +16,6 @@ import (
 type pgPool interface {
 	BeginTx(ctx context.Context, opts pgx.TxOptions) (pgx.Tx, error)
 	Close()
-	Stat() *pgxpool.Stat
 }
 
 // Never called directly, only through [Puller.Start] when the driver is PostgreSQL.
@@ -75,12 +74,9 @@ func (p *Puller) executePostgresQuery(ctx context.Context) bool {
 			slog.String("driver", p.driver), slog.Int("successfully_processed_rows", rowCount),
 		)
 	} else {
-		stats := p.pgPool.Stat()
 		slog.Debug("SQL query completed successfully",
 			slog.String("driver", p.driver), slog.Int("rows", rowCount),
 			slog.Time("start_time", start), slog.Duration("exec_duration", end.Sub(start)),
-			slog.Int("acquired_conns", int(stats.AcquiredConns())),
-			slog.Int("idle_conns", int(stats.IdleConns())),
 		)
 	}
 

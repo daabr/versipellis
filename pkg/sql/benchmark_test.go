@@ -68,7 +68,7 @@ func createTable(b *testing.B, db *sql.DB, intCols, textCols int) {
 		if i > 0 {
 			create.WriteString(", ")
 		}
-		create.WriteString(fmt.Sprintf("col%d ", i+1))
+		fmt.Fprintf(&create, "col%d ", i+1)
 		if i < intCols {
 			create.WriteString("INTEGER")
 		} else {
@@ -77,7 +77,7 @@ func createTable(b *testing.B, db *sql.DB, intCols, textCols int) {
 	}
 	create.WriteString(");")
 
-	if _, err := db.Exec(create.String()); err != nil {
+	if _, err := db.ExecContext(b.Context(), create.String()); err != nil {
 		b.Fatalf("DB.Exec(CREATE TABLE) error: %v", err)
 	}
 }
