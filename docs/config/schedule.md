@@ -35,7 +35,7 @@ Examples:
 - `*/15` in the Minutes field is equivalent to `0,15,30,45`
 - `1-5/2` in the Days-of-Week field is the same as `1,3,5` and `Mon,Wed,Fri`
 
-If both the Days-of-Month and Days-of-Week fields are restricted (i.e. neither of them is `*`), a match occurs when **either** field matches the current time.
+If both the Days-of-Month and Days-of-Week fields are restricted (i.e., neither of them is `*`), a match occurs when **either** field matches the current time.
 
 Example: The expression `"0 12 1 * MON"` will trigger at noon (`0 12`) on the first day of every month (`1`) **as well as** on every Monday (`MON`).
 

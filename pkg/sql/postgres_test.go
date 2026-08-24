@@ -305,7 +305,7 @@ func (t fakePGTx) Begin(_ context.Context) (pgx.Tx, error) {
 
 // Commit commits the transaction if this is a real transaction or releases the savepoint if this is a pseudo nested
 // transaction. Commit will return an error where errors.Is([pgx.ErrTxClosed]) is true if the Tx is already closed,
-// but is otherwise safe to call multiple times. If the commit fails with a rollback status (e.g. the transaction
+// but is otherwise safe to call multiple times. If the commit fails with a rollback status (e.g., the transaction
 // was already in a broken state) then an error where errors.Is([pgx.ErrTxCommitRollback]) is true will be returned.
 func (t fakePGTx) Commit(_ context.Context) error {
 	return t.commitErr
@@ -442,7 +442,7 @@ func (r *fakePGRows) RawValues() [][]byte {
 }
 
 // Conn returns the underlying *Conn on which the query was executed. This may return nil
-// if Rows did not come from a *Conn (e.g. if it was created by RowsFromResultReader).
+// if Rows did not come from a *Conn (e.g., if it was created by RowsFromResultReader).
 func (r *fakePGRows) Conn() *pgx.Conn {
 	return nil // Not implemented.
 }

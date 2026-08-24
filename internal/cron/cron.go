@@ -270,13 +270,13 @@ func (s *Schedule) dayMatches(t time.Time) bool {
 	dom, dow := t.Day(), int(t.Weekday())
 	switch {
 	case s.domRestricted && s.dowRestricted:
-		// If both day fields are restricted (i.e. neither of them is "*"), match either of them.
+		// If both day fields are restricted (i.e., neither of them is "*"), match either of them.
 		return s.daysOfMonth[dom] || s.daysOfWeek[dow]
 	case s.domRestricted || s.dowRestricted:
-		// If only one of them is restricted (i.e. only the other one is "*"), match both of them
+		// If only one of them is restricted (i.e., only the other one is "*"), match both of them
 		// (only the restricted one matters, because the unrestricted one matches every day).
 		return s.daysOfMonth[dom] && s.daysOfWeek[dow]
 	default:
-		return true // If neither day field is restricted (i.e. both are "*"), every day is a match.
+		return true // If neither day field is restricted (i.e., both are "*"), every day is a match.
 	}
 }
