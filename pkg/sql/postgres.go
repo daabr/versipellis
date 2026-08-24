@@ -1,15 +1,15 @@
 package sql
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/daabr/versipellis/pkg/push"
 )
 
 // Defines the minimal interface required for [pgxpool.Pool], for testing purposes.
@@ -48,39 +48,48 @@ func (p *Puller) connectToPostgres(ctx context.Context) error {
 }
 
 // Never called directly, only through [Puller.executeQuery] when the driver is PostgreSQL.
-func (p *Puller) executePostgresQuery(ctx context.Context) ([]byte, int, bool) {
+// This means that these 2 functions do and return the same things, but do it differently.
+func (p *Puller) executePostgresQuery(ctx context.Context) bool {
 	tx, err := p.pgPool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err), slog.String("driver", p.driver))
-		return nil, 0, false
+		return false
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }() //nolint:contextcheck // Ctx is already canceled.
+	defer func() { _ = tx.Rollback(context.Background()) }() //nolint:contextcheck // Ctx is potentially already canceled.
 
-	start := time.Now().UTC()
+	start := time.Now()
 	rows, err := tx.Query(ctx, p.query)
 	if err != nil {
-		slog.Warn("failed to execute SQL query", slog.Any("error", err), slog.String("driver", p.driver))
-		return nil, 0, false
-	}
-	payload, rowCount, err := serializeAndClosePostgres(rows)
-	if err != nil {
-		slog.Warn("failed to serialize SQL query results", slog.Any("error", err), slog.String("driver", p.driver))
-		return nil, 0, false
-	}
-	end := time.Now().UTC()
-	if err := tx.Commit(ctx); err != nil {
-		slog.Info("failed to commit read-only SQL transaction", slog.Any("error", err), slog.String("driver", p.driver))
-		// Don't abort - we already have the payload, and the transaction is read-only anyway.
+		slog.Warn("failed to execute SQL query", slog.Any("error", err), slog.String("driver", p.driver),
+			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+		)
+		return false
 	}
 
-	p.prevStart = start
-	p.prevEnd = end
-	return payload, rowCount, true
+	rowCount, err := processPostgresResults(rows)
+	end := time.Now()
+	ok := err == nil
+	if !ok {
+		slog.Warn("error while processing SQL query results", slog.Any("error", err),
+			slog.String("driver", p.driver), slog.Int("successfully_processed_rows", rowCount),
+		)
+	} else {
+		slog.Debug("SQL query completed successfully",
+			slog.String("driver", p.driver), slog.Int("rows", rowCount),
+			slog.Time("start_time", start), slog.Duration("exec_duration", end.Sub(start)),
+		)
+	}
+
+	if ok || rowCount > 0 {
+		p.prevStart = start.UTC()
+		p.prevEnd = end.UTC()
+	}
+	return ok
 }
 
-// PostgreSQL-specific variant of [serializeAndClose]. Using [pgx]
-// instead of [sql] for better performance and feature support.
-func serializeAndClosePostgres(rows pgx.Rows) ([]byte, int, error) {
+// PostgreSQL-specific variant of [processResults]. Using [pgx]
+// instead of [sql] for better performance and PostgreSQL feature support.
+func processPostgresResults(rows pgx.Rows) (int, error) {
 	cols := rows.FieldDescriptions()
 	size := len(cols)
 	vals := make([]any, size)
@@ -89,27 +98,20 @@ func serializeAndClosePostgres(rows pgx.Rows) ([]byte, int, error) {
 		ptrs[i] = &vals[i]
 	}
 
-	var buf bytes.Buffer
-	payload := json.NewEncoder(&buf)
-	payload.SetEscapeHTML(false) // Passing raw data, not rendering it, so not altering it either.
 	rowCount := 0
-
 	_, err := pgx.ForEachRow(rows, ptrs, func() error { // [pgx.ForEachRow] closes [pgx.Rows] automatically.
 		row := make(map[string]any, size)
 		for i, col := range cols {
 			row[col.Name] = vals[i]
 		}
-		if err := payload.Encode(row); err != nil {
-			return fmt.Errorf("failed to encode row %d into JSON: %w", rowCount+1, err)
+		if err := push.Stdout(row); err != nil {
+			return fmt.Errorf("failed to process row %d: %w", rowCount+1, err)
 		}
 		rowCount++
 		return nil
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to process after %d rows: %w", rowCount, err)
+		return rowCount, fmt.Errorf("row processing error: %w", err)
 	}
-	if rowCount == 0 {
-		return nil, 0, nil
-	}
-	return buf.Bytes(), rowCount, nil
+	return rowCount, nil
 }

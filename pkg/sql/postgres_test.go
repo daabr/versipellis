@@ -3,7 +3,6 @@ package sql
 import (
 	"context"
 	"errors"
-	"reflect"
 	"testing"
 	"time"
 
@@ -44,6 +43,12 @@ func TestPullerConnectToPostgres(t *testing.T) {
 			ctx:     ctx,
 			wantErr: true,
 		},
+		{
+			name:    "pool_already_set",
+			puller:  &Puller{pgPool: fakePGPool{}},
+			ctx:     t.Context(),
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -51,6 +56,9 @@ func TestPullerConnectToPostgres(t *testing.T) {
 
 			if err := tt.puller.connectToPostgres(tt.ctx); (err != nil) != tt.wantErr {
 				t.Errorf("Puller.connectToPostgres() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && !tt.puller.usingPG {
+				t.Error("Puller.connectToPostgres() usingPG = false, want true")
 			}
 		})
 	}
@@ -135,16 +143,11 @@ func TestPullerExecutePostgresQuery(t *testing.T) {
 	puller.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
 	puller.usingPG = true
 
-	gotPayload, gotRowCount, gotOK := puller.executeQuery(t.Context())
-	want := "{\"1\":1}\n"
-	if got := string(gotPayload); got != want {
-		t.Errorf("Puller.executeQuery() = %q, want %q", got, want)
+	if !puller.executeQuery(t.Context()) {
+		t.Error("Puller.executeQuery() = false, want true")
 	}
-	if gotRowCount != 1 {
-		t.Errorf("Puller.executeQuery() row count = %d, want 1", gotRowCount)
-	}
-	if !gotOK {
-		t.Errorf("Puller.executeQuery() ok = %v, want true", gotOK)
+	if puller.prevStart.IsZero() || puller.prevEnd.IsZero() {
+		t.Error("Puller.executeQuery() did not update the checkpoint on success")
 	}
 }
 
@@ -152,10 +155,10 @@ func TestPullerExecutePostgresQueryErrors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		pool    fakePGPool
-		wantOK  bool
-		wantRow int
+		name           string
+		pool           fakePGPool
+		wantOK         bool
+		wantCheckpoint bool
 	}{
 		{
 			name:   "begin_tx_error",
@@ -168,65 +171,41 @@ func TestPullerExecutePostgresQueryErrors(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			name: "serialize_error",
-			pool: fakePGPool{
-				cols: []string{"unsupported"},
-				rows: [][]any{{make(chan int)}}, // Channels cannot be encoded into JSON.
-			},
-			wantOK: false,
-		},
-		{
-			name: "commit_error_still_succeeds",
-			pool: fakePGPool{
-				cols:      []string{"id"},
-				rows:      [][]any{{1}},
-				commitErr: errors.New("commit error"),
-			},
-			wantOK:  true,
-			wantRow: 1,
+			name:           "timestamp_checkpoint_after_partial_success",
+			pool:           fakePGPool{cols: []string{"col"}, rows: [][]any{{1}}, finalErr: errors.New("final error")},
+			wantOK:         false,
+			wantCheckpoint: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			p := &Puller{
-				Type:    config.PullTypeSQL,
-				driver:  DriverTypePostgres,
-				query:   "SELECT 1",
-				pgPool:  tt.pool,
-				usingPG: true,
+			puller := &Puller{driver: DriverTypePostgres, query: "SELECT 1", pgPool: tt.pool, usingPG: true}
+			if ok := puller.executeQuery(t.Context()); ok != tt.wantOK {
+				t.Errorf("executeQuery() = %v, want %v", ok, tt.wantOK)
 			}
-
-			payload, rowCount, ok := p.executeQuery(t.Context())
-			if ok != tt.wantOK {
-				t.Errorf("executeQuery() ok = %v, want %v", ok, tt.wantOK)
-			}
-			if rowCount != tt.wantRow {
-				t.Errorf("executeQuery() rowCount = %d, want %d", rowCount, tt.wantRow)
-			}
-			if tt.wantOK && len(payload) == 0 {
-				t.Errorf("executeQuery() len(payload) = 0, expected > 0")
+			if gotCheckpoint := !puller.prevStart.IsZero(); gotCheckpoint != tt.wantCheckpoint {
+				t.Errorf("executeQuery() checkpoint updated = %v, want %v", gotCheckpoint, tt.wantCheckpoint)
 			}
 		})
 	}
 }
 
-func TestSerializeAndClosePostgres(t *testing.T) {
+func TestProcessPostgresResults(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name   string
 		noRows bool
-		want   []byte
 	}{
 		{
 			name:   "no_rows",
 			noRows: true,
 		},
 		{
-			name: "with_rows",
-			want: []byte("{\"id\":1,\"name\":\"Alice\"}\n{\"id\":2,\"name\":\"Bob\"}\n{\"id\":3,\"name\":\"Charlie\"}\n"),
+			name:   "with_rows",
+			noRows: false,
 		},
 	}
 	for _, tt := range tests {
@@ -238,25 +217,22 @@ func TestSerializeAndClosePostgres(t *testing.T) {
 				rows.rows = [][]any{
 					{1, "Alice"},
 					{2, "Bob"},
-					{3, "Charlie"},
+					{3, "Carol"},
 				}
 			}
 
-			gotPayload, gotRowCount, err := serializeAndClosePostgres(rows)
+			gotRowCount, err := processPostgresResults(rows)
 			if err != nil {
-				t.Fatalf("serializeAndClosePostgres() error: %v", err)
+				t.Fatalf("processPostgresResults() error: %v", err)
 			}
 			if gotRowCount != len(rows.rows) {
-				t.Fatalf("serializeAndClosePostgres() row count = %d, want %d", gotRowCount, len(rows.rows))
-			}
-			if !reflect.DeepEqual(gotPayload, tt.want) {
-				t.Fatalf("serializeAndClosePostgres(): got %q, want %q", string(gotPayload), string(tt.want))
+				t.Fatalf("processPostgresResults() row count = %d, want %d", gotRowCount, len(rows.rows))
 			}
 		})
 	}
 }
 
-func TestSerializeAndClosePostgresErrors(t *testing.T) {
+func TestProcessPostgresResultsErrors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -273,14 +249,6 @@ func TestSerializeAndClosePostgresErrors(t *testing.T) {
 			},
 		},
 		{
-			name: "json_encode_error",
-			rows: &fakePGRows{
-				cols:  []string{"unsupported"},
-				rows:  [][]any{{make(chan int)}}, // Channels cannot be encoded into JSON.
-				index: -1,
-			},
-		},
-		{
 			name: "final_error",
 			rows: &fakePGRows{
 				cols:     []string{"col"},
@@ -294,8 +262,8 @@ func TestSerializeAndClosePostgresErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, _, err := serializeAndClosePostgres(tt.rows); err == nil {
-				t.Errorf("serializeAndClosePostgres() error = nil, wantErr = true")
+			if _, err := processPostgresResults(tt.rows); err == nil {
+				t.Errorf("processPostgresResults() error = nil, wantErr = true")
 			}
 		})
 	}
@@ -306,16 +274,16 @@ type fakePGPool struct {
 	cols []string
 	rows [][]any
 
-	beginErr  error
-	queryErr  error
-	commitErr error
+	beginErr error
+	queryErr error
+	finalErr error
 }
 
 func (p fakePGPool) BeginTx(_ context.Context, _ pgx.TxOptions) (pgx.Tx, error) {
 	if p.beginErr != nil {
 		return nil, p.beginErr
 	}
-	return fakePGTx{cols: p.cols, rows: p.rows, queryErr: p.queryErr, commitErr: p.commitErr}, nil
+	return fakePGTx{cols: p.cols, rows: p.rows, queryErr: p.queryErr, finalErr: p.finalErr}, nil
 }
 
 func (p fakePGPool) Close() {}
@@ -327,6 +295,7 @@ type fakePGTx struct {
 
 	queryErr  error
 	commitErr error
+	finalErr  error
 }
 
 // Begin starts a pseudo nested transaction.
@@ -355,11 +324,11 @@ func (t fakePGTx) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error)
 	if t.queryErr != nil {
 		return nil, t.queryErr
 	}
-	return &fakePGRows{cols: t.cols, rows: t.rows, index: -1}, nil
+	return &fakePGRows{cols: t.cols, rows: t.rows, index: -1, finalErr: t.finalErr}, nil
 }
 
 func (t fakePGTx) CopyFrom(_ context.Context, _ pgx.Identifier, _ []string, _ pgx.CopyFromSource) (int64, error) {
-	return 0, nil // Not implemented.
+	return 0, errors.New("not implemented")
 }
 
 func (t fakePGTx) SendBatch(_ context.Context, _ *pgx.Batch) pgx.BatchResults {
@@ -371,11 +340,11 @@ func (t fakePGTx) LargeObjects() pgx.LargeObjects {
 }
 
 func (t fakePGTx) Prepare(_ context.Context, _, _ string) (*pgconn.StatementDescription, error) {
-	return nil, nil // Not implemented.
+	return nil, errors.New("not implemented")
 }
 
 func (t fakePGTx) Exec(_ context.Context, _ string, _ ...any) (commandTag pgconn.CommandTag, err error) {
-	return pgconn.CommandTag{}, nil // Not implemented.
+	return pgconn.CommandTag{}, errors.New("not implemented")
 }
 
 func (t fakePGTx) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
