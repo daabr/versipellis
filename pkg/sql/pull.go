@@ -1,13 +1,10 @@
 package sql
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"slices"
@@ -23,6 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/push"
 )
 
 // DriverType* constants represent all the available SQL database drivers for configurations in the TOML file.
@@ -59,7 +57,8 @@ const (
 	defaultQueryTimeout = time.Minute
 )
 
-// Puller contains the all the configuration and state details for pulling data from SQL-based relational databases.
+// Puller contains all the configuration and state details
+// for pulling data from SQL-based relational databases.
 type Puller struct {
 	config.BasePuller
 
@@ -73,7 +72,7 @@ type Puller struct {
 	pgPool  pgPool
 	usingPG bool
 
-	// For checkpointing: timestamps of the last successful query execution.
+	// For checkpointing: timestamps of the last (at least partially) successful query.
 	prevStart time.Time
 	prevEnd   time.Time
 
@@ -246,25 +245,15 @@ func (p *Puller) scheduleNextQuery(ctx context.Context, prev time.Time) {
 			timer.Stop() // No need to drain since Go 1.23.
 			return
 		case <-timer.C:
-			payload, rowCount, ok := p.executeQuery(ctx)
+			p.executeQuery(ctx)
 			prev = nextStart
-
-			if ok {
-				slog.Debug("SQL query execution completed successfully", slog.String("driver", p.driver),
-					slog.Int("row_count", rowCount), slog.Int("encoded_bytes", len(payload)),
-					slog.Time("start_time", p.prevStart), slog.Time("end_time", p.prevEnd),
-					slog.Duration("duration", p.prevEnd.Sub(p.prevStart)),
-				)
-			}
-
-			_, _ = io.Discard.Write(payload) // Temporary placeholder for future storage and pushing logic.
 		}
 	}
 }
 
 // This is never called directly, only through [Puller.scheduleNextQuery]. Therefore, it's safe to assume
 // that either [Puller.db] or [Puller.pgPool] are non-nil, given that [Puller.Start] had to succeed first.
-func (p *Puller) executeQuery(ctx context.Context) ([]byte, int, bool) {
+func (p *Puller) executeQuery(ctx context.Context) bool {
 	queryCtx := ctx
 	var cancel context.CancelFunc
 	if p.timeout > 0 {
@@ -283,63 +272,77 @@ func (p *Puller) executeQuery(ctx context.Context) ([]byte, int, bool) {
 	tx, err := p.db.BeginTx(queryCtx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err), slog.String("driver", p.driver))
-		return nil, 0, false
+		return false
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	start := time.Now().UTC()
+	start := time.Now()
 	rows, err := tx.QueryContext(queryCtx, p.query)
 	if err != nil {
-		slog.Warn("failed to execute SQL query", slog.Any("error", err), slog.String("driver", p.driver))
-		return nil, 0, false
+		slog.Warn("failed to execute SQL query", slog.Any("error", err), slog.String("driver", p.driver),
+			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+		)
+		return false
 	}
-	payload, rowCount, err := serializeAndClose(rows)
-	if err != nil {
-		slog.Warn("failed to serialize SQL query results", slog.Any("error", err), slog.String("driver", p.driver))
-		return nil, 0, false
-	}
-	end := time.Now().UTC()
-	if err := tx.Commit(); err != nil {
-		slog.Info("failed to commit read-only SQL transaction", slog.Any("error", err), slog.String("driver", p.driver))
-		// Don't abort - we already have the payload, and the transaction is read-only anyway.
-	}
-
-	p.prevStart = start
-	p.prevEnd = end
-	return payload, rowCount, true
-}
-
-func serializeAndClose(rows *sql.Rows) ([]byte, int, error) {
 	defer rows.Close()
 
-	cols, err := rows.Columns()
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to read SQL column names: %w", err)
+	rowCount, err := processResults(rows, 1)
+	end := time.Now()
+	ok := err == nil
+	if !ok {
+		slog.Warn("error while processing SQL query results", slog.Any("error", err),
+			slog.String("driver", p.driver), slog.Int("successfully_processed_rows", rowCount),
+		)
+	} else {
+		stats := p.db.Stats()
+		slog.Debug("SQL query completed successfully",
+			slog.String("driver", p.driver), slog.Int("rows", rowCount),
+			slog.Time("start_time", start), slog.Duration("exec_duration", end.Sub(start)),
+			slog.Int("in_use_conns", stats.InUse), slog.Int("idle_conns", stats.Idle),
+		)
 	}
 
-	var buf bytes.Buffer
-	payload := json.NewEncoder(&buf)
-	payload.SetEscapeHTML(false) // Passing raw data, not rendering it, so not altering it either.
-	rowCount := 0
+	if ok || rowCount > 0 {
+		p.prevStart = start.UTC()
+		p.prevEnd = end.UTC()
+	}
+	return ok
+}
 
+func processResults(rows *sql.Rows, resultSet int) (int, error) {
+	cols, err := rows.Columns()
+	if err != nil {
+		return 0, fmt.Errorf("failed to read SQL column names in result-set %d: %w", resultSet, err)
+	}
+
+	rowCount := 0
 	for rows.Next() {
 		row, err := scanRow(rows, cols)
 		if err != nil {
-			return nil, 0, fmt.Errorf("failed to scan row %d: %w", rowCount+1, err)
+			return 0, fmt.Errorf("failed to scan row %d in result-set %d: %w", rowCount+1, resultSet, err)
 		}
-		if err := payload.Encode(row); err != nil {
-			return nil, 0, fmt.Errorf("failed to encode row %d into JSON: %w", rowCount+1, err)
+		if err := push.Stdout(row); err != nil {
+			return rowCount, fmt.Errorf("failed to process row %d in result-set %d: %w", rowCount+1, resultSet, err)
 		}
 		rowCount++
 	}
-
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("row iteration error: %w", err)
+		return rowCount, fmt.Errorf("row iteration error: %w", err)
 	}
-	if rowCount == 0 {
-		return nil, 0, nil
+
+	// Support multiple result-sets for multiple statements, using recursion.
+	if rows.NextResultSet() {
+		nextRowCount, err := processResults(rows, resultSet+1)
+		rowCount += nextRowCount
+		if err != nil {
+			return rowCount, err
+		}
 	}
-	return buf.Bytes(), rowCount, nil
+	if err := rows.Err(); err != nil {
+		return rowCount, fmt.Errorf("row-set iteration error: %w", err)
+	}
+
+	return rowCount, nil
 }
 
 func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {

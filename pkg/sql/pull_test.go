@@ -3,9 +3,13 @@ package sql
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -412,51 +416,6 @@ func TestPullerExecuteQuery(t *testing.T) {
 		t.Fatalf("config.NewBasePuller() error: %v", err)
 	}
 
-	puller, err := NewPuller(base, map[string]any{
-		"type": config.PullTypeSQL,
-		"sql": map[string]any{
-			"type":       DriverTypeSQLite,
-			"connection": ":memory:",
-			"query":      "SELECT 1",
-		},
-	})
-	if err != nil {
-		t.Fatalf("NewPuller() error: %v", err)
-	}
-
-	// Substitute the [Puller.Start] logic...
-	puller.db, err = sql.Open(puller.driver, puller.conn)
-	if err != nil {
-		t.Fatalf("sql.Open() error: %v", err)
-	}
-	t.Cleanup(func() { _ = puller.db.Close() })
-
-	var ctx context.Context
-	ctx, puller.cancel = context.WithCancel(t.Context())
-	puller.done = ctx.Done()
-
-	// ...In order to run [Puller.executeQuery] directly.
-	gotPayload, gotRowCount, gotOK := puller.executeQuery(ctx)
-	want := "{\"1\":1}\n"
-	if got := string(gotPayload); got != want {
-		t.Errorf("Puller.executeQuery() = %q, want %q", got, want)
-	}
-	if gotRowCount != 1 {
-		t.Errorf("Puller.executeQuery() row count = %d, want 1", gotRowCount)
-	}
-	if !gotOK {
-		t.Errorf("Puller.executeQuery() ok = %v, want true", gotOK)
-	}
-}
-
-func TestPullerExecuteQueryExtraBranches(t *testing.T) {
-	t.Parallel()
-
-	base, err := config.NewBasePuller(map[string]any{"type": config.PullTypeSQL, "schedule": "@once"})
-	if err != nil {
-		t.Fatalf("config.NewBasePuller() error: %v", err)
-	}
-
 	tests := []struct {
 		name    string
 		cfg     map[string]any
@@ -469,6 +428,15 @@ func TestPullerExecuteQueryExtraBranches(t *testing.T) {
 				"type":       DriverTypeSQLite,
 				"connection": ":memory:",
 				"query":      "SELECT 1 WHERE 1 = 0;",
+			},
+			wantOK: true,
+		},
+		{
+			name: "multiple_rows_returned",
+			cfg: map[string]any{
+				"type":       DriverTypeSQLite,
+				"connection": ":memory:",
+				"query":      "SELECT 1 UNION SELECT 2 UNION SELECT 3",
 			},
 			wantOK: true,
 		},
@@ -512,30 +480,90 @@ func TestPullerExecuteQueryExtraBranches(t *testing.T) {
 			} else {
 				t.Cleanup(func() { _ = puller.db.Close() })
 			}
-			if _, _, gotOK := puller.executeQuery(t.Context()); gotOK != tt.wantOK {
-				t.Errorf("Puller.executeQuery() ok = %v, want %v", gotOK, tt.wantOK)
+
+			if gotOK := puller.executeQuery(t.Context()); gotOK != tt.wantOK {
+				t.Errorf("Puller.executeQuery() = %v, want %v", gotOK, tt.wantOK)
+			}
+			if timestampUpdated := !puller.prevStart.IsZero(); timestampUpdated != tt.wantOK {
+				t.Errorf("Puller.prevXXXX checkpoint updated = %v, want %v", timestampUpdated, tt.wantOK)
 			}
 		})
 	}
 }
 
-func TestSerializeAndCloseError(t *testing.T) {
+func TestProcessResults(t *testing.T) {
 	t.Parallel()
 
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := sql.Open(DriverTypeSQLite, ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open() error: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	rows, err := db.QueryContext(t.Context(), "SELECT 1;")
+	rows, err := db.QueryContext(t.Context(), "SELECT 1")
 	if err != nil {
 		t.Fatalf("db.QueryContext() error: %v", err)
 	}
 	_ = rows.Close() // Close rows immediately so [sql.Rows.Columns] fails.
 
-	if _, _, err := serializeAndClose(rows); err == nil {
-		t.Error("serializeAndClose() expected error on closed rows, got nil")
+	if _, err := processResults(rows, 1); err == nil {
+		t.Error("processResults() error = nil, wantErr = true")
+	}
+}
+
+func TestProcessResultsWithFakeDriver(t *testing.T) {
+	t.Parallel()
+	registerFakeSQLDriver()
+
+	tests := []struct {
+		name         string
+		dsn          string
+		wantRowCount int
+		wantErr      bool
+	}{
+		{
+			name:         "multiple_result_sets",
+			dsn:          "noErrors",
+			wantRowCount: 3,
+			wantErr:      false,
+		},
+		{
+			name:         "row_iteration_error",
+			dsn:          "rowsNextError",
+			wantRowCount: 1,
+			wantErr:      true,
+		},
+		{
+			name:         "row_set_iteration_error",
+			dsn:          "rowsNextResultSetError",
+			wantRowCount: 1,
+			wantErr:      true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			db, err := sql.Open(fakeSQLDriverName, tt.dsn)
+			if err != nil {
+				t.Fatalf("sql.Open() error: %v", err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+
+			rows, err := db.QueryContext(t.Context(), "SELECT 1; SELECT 2;")
+			if err != nil {
+				t.Fatalf("db.QueryContext() error: %v", err)
+			}
+			t.Cleanup(func() { _ = rows.Close() })
+
+			gotRowCount, gotErr := processResults(rows, 1)
+			if (gotErr != nil) != tt.wantErr {
+				t.Fatalf("processResults() error = %v, wantErr = %v", gotErr, tt.wantErr)
+			}
+			if gotRowCount != tt.wantRowCount {
+				t.Errorf("processResults() row count = %d, want %d", gotRowCount, tt.wantRowCount)
+			}
+		})
 	}
 }
 
@@ -566,7 +594,7 @@ func TestPullerClose(t *testing.T) {
 	t.Run("in_memory_sqlite", func(t *testing.T) {
 		t.Parallel()
 
-		db, err := sql.Open("sqlite", ":memory:")
+		db, err := sql.Open(DriverTypeSQLite, ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open() error: %v", err)
 		}
@@ -580,4 +608,97 @@ func TestPullerClose(t *testing.T) {
 
 		<-puller.Done()
 	})
+}
+
+const (
+	fakeSQLDriverName = "versipellis-fake-sql-driver"
+)
+
+var registerFakeSQLDriver = sync.OnceFunc(func() {
+	sql.Register(fakeSQLDriverName, fakeSQLDriver{})
+})
+
+type fakeSQLDriver struct{}
+
+// Open uses the DSN to set desired failure modes as connection parameters.
+func (fakeSQLDriver) Open(dsn string) (driver.Conn, error) {
+	c := &fakeSQLConn{}
+	switch {
+	case strings.Contains(dsn, "rowsNextError"):
+		c.rowsNextError = true
+	case strings.Contains(dsn, "rowsNextResultSetError"):
+		c.rowsNextResultSetError = true
+	}
+	return c, nil
+}
+
+type fakeSQLConn struct {
+	rowsNextError          bool
+	rowsNextResultSetError bool
+}
+
+func (c *fakeSQLConn) Prepare(_ string) (driver.Stmt, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (c *fakeSQLConn) Close() error {
+	return nil
+}
+
+func (c *fakeSQLConn) Begin() (driver.Tx, error) {
+	return &fakeSQLTx{}, nil
+}
+
+func (c *fakeSQLConn) QueryContext(_ context.Context, _ string, _ []driver.NamedValue) (driver.Rows, error) {
+	return &fakeSQLRows{nextError: c.rowsNextError, nextResultSetError: c.rowsNextResultSetError}, nil
+}
+
+type fakeSQLTx struct{}
+
+func (fakeSQLTx) Commit() error {
+	return nil
+}
+
+func (fakeSQLTx) Rollback() error {
+	return nil
+}
+
+// fakeSQLRows yields 1 row per result-set, across 3 result-sets, unless mode is one of the
+// fakeSQLMode* constants, in which case it fails instead of completing normally. This is used
+// to test the correct handling of multiple result-sets (which the MySQL driver supports, for
+// example), and of driver-level iteration errors, in [processResults].
+type fakeSQLRows struct {
+	set  int
+	read bool
+
+	nextError          bool
+	nextResultSetError bool
+}
+
+func (r *fakeSQLRows) Columns() []string { return []string{"col"} }
+func (r *fakeSQLRows) Close() error      { return nil }
+
+func (r *fakeSQLRows) Next(dest []driver.Value) error {
+	if r.read {
+		if r.nextError {
+			return errors.New("fake row iteration error")
+		}
+		return io.EOF
+	}
+	r.read = true
+	dest[0] = int64(r.set + 1)
+	return nil
+}
+
+func (r *fakeSQLRows) HasNextResultSet() bool {
+	return r.set < 2
+}
+
+func (r *fakeSQLRows) NextResultSet() error {
+	if r.nextResultSetError {
+		return errors.New("next row-set iteration error")
+	}
+	r.set++
+	r.read = false
+	return nil
 }

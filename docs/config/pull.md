@@ -45,11 +45,11 @@
 - Required
 - More details here: [formats and documentation links](./sql.md)
 
-`query` - simple SQL query to execute
+`query` - SQL query to execute
 
 - Required **unless** `query_file` is specified (mutually exclusive)
 
-`query_file` - file path to multiline SQL query to execute
+`query_file` - file path of SQL query to execute
 
 - Required **unless** `query` is specified (mutually exclusive)
 
