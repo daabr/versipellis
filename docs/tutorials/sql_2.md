@@ -20,7 +20,7 @@ Comment-out the SQLite block (lines 6-8) in the file [`config/sql_queries.toml`]
    query = "SELECT * FROM input_data"
    ```
 
-3. Start Versipellis:
+3. Restart Versipellis:
 
    ```shell
    versi -d -c config/sql_queries.toml
@@ -38,7 +38,7 @@ Comment-out the SQLite block (lines 6-8) in the file [`config/sql_queries.toml`]
    query = "SELECT * FROM input_data"
    ```
 
-3. Start Versipellis:
+3. Restart Versipellis:
 
    ```shell
    versi -d -c config/sql_queries.toml
@@ -70,7 +70,7 @@ Comment-out the SQLite block (lines 6-8) in the file [`config/sql_queries.toml`]
    chmod 0600 config/.pgpass # u=rw,go-rwx (owner can read and write, but no one else can)
    ```
 
-5. Start Versipellis:
+5. Restart Versipellis:
 
    ```shell
    versi -d -c config/sql_queries.toml

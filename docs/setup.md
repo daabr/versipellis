@@ -1,4 +1,4 @@
-# Setup Guides for Third-Party Sources & Destinations
+# Basic Setup Guides for Versipellis Demos & Tutorials
 
 - [MariaDB](./setup/mariadb.md)
 
