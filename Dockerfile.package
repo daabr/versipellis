@@ -1,13 +1,36 @@
 # syntax=docker/dockerfile:1
 
+# =======================
+# Stage 1: Debian Builder
+# =======================
+
+FROM debian:trixie-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates wget tar unzip unixodbc libaio1t64 && rm -rf /var/lib/apt/lists/*
+
+# ===========================
+# Stage 2: Distroless Runtime
+# ===========================
+
 FROM gcr.io/distroless/cc-debian13:nonroot
 
 ARG TARGETARCH
 
+ENV USR_LIB_PATH=/usr/lib/${TARGETARCH:-arm64}-linux-gnu
+ENV USR_LIB_PATH=${USR_LIB_PATH/arm64/aarch64}
+ENV USR_LIB_PATH=${USR_LIB_PATH/amd64/x86_64}
+
+COPY --from=builder ${USR_LIB_PATH}/libaio*  ${USR_LIB_PATH}/
+COPY --from=builder ${USR_LIB_PATH}/libltdl* ${USR_LIB_PATH}/
+COPY --from=builder ${USR_LIB_PATH}/libodbc* ${USR_LIB_PATH}/
+ENV LD_LIBRARY_PATH=${USR_LIB_PATH}
+
 USER nonroot:nonroot
 
 WORKDIR /app
-COPY --chmod=700 --chown=nonroot:nonroot dist/versipellis_linux_${TARGETARCH}_*/versi ./
+COPY --chmod=u=rwX --chown=nonroot:nonroot config/ ./config/
+COPY --chmod=700   --chown=nonroot:nonroot dist/versipellis_linux_${TARGETARCH}_*/versi ./
 VOLUME ["/app/config", "/app/data"]
 ENTRYPOINT ["./versi"]
 

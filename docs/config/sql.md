@@ -1,6 +1,12 @@
 # Versipellis Configuration File
 
-## Connection Strings for SQL-Based Relational Databases
+## Additional Setup Instructions
+
+ODBC: <https://github.com/alexbrainman/odbc/wiki>
+
+Other drivers below don't require any setup prior to running Versipellis.
+
+## Connection Strings for SQL-Based Databases
 
 ### CockroachDB
 
@@ -20,13 +26,15 @@
 - Formats:
 
   - URI: `sqlserver://username:password@host[:port][/instance][?param1=value1&...&paramN=valueN]`
-  - ADO: `key1=value1;key2=value2;...;keyN=valueN`
-  - ODBC-like: `odbc:key1=value1;key2=value2;...;keyN=valueN`
+  - ADO.NET: `server=host; password="pass;word"; key1=value1; key2=value2; ... keyN=valueN`
+  - ODBC: `odbc:server=host;user id=username;password={pass;word};key1=value1;key2=value2;...;keyN=valueN`
 
 - Documentation:
 
   - <https://github.com/microsoft/go-mssqldb#connection-parameters-and-dsn>
   - <https://learn.microsoft.com/en-us/dotnet/framework/data/adonet/connection-string-syntax>
+  - <https://learn.microsoft.com/en-us/dotnet/api/system.data.sqlclient.sqlconnection.connectionstring>
+  - <https://github.com/microsoft/go-mssqldb/blob/main/msdsn/conn_str_test.go>
 
 ### MySQL
 
@@ -39,6 +47,14 @@
   - <https://github.com/go-sql-driver/mysql#examples>
   - <https://dev.mysql.com/doc/refman/en/server-system-variables.html>
   - <https://mariadb.com/docs/server/server-management/variables-and-modes/server-system-variables>
+  - <https://github.com/go-sql-driver/mysql/blob/master/dsn_test.go>
+
+### ODBC
+
+- Formats:
+
+  - Predefined DSN: `DSN=...;key1=value1;key2=value2;...;keyN=valueN`
+  - Driver without DSN: `Driver={...};key1=value1;key2=value2;...;keyN=valueN`
 
 ### Oracle Database
 
@@ -55,7 +71,10 @@
 
   - <https://github.com/godror/godror#connection>
   - <https://pkg.go.dev/github.com/godror/godror#pkg-overview>
+  - <https://github.com/godror/godror/blob/main/doc/connection.md>
   - <https://www.oracle.com/developer/working-in-go-applications-with-oracle-database-and-oracle-cloud-autonomous-database/>
+  - <https://www.oracle.com/pls/topic/lookup?ctx=dblatest&id=GUID-19423B71-3F6C-430F-84CC-18145CC2A818>
+  - <https://github.com/godror/godror/blob/main/dsn/dsn_test.go>
 
 ### PostgreSQL
 
@@ -68,6 +87,7 @@
 
   - <https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING>
   - <https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib>
+  - <https://github.com/jackc/pgx/tree/master/pgconn>
 
 > [!TIP]
 > Use the [`.pgpass` file](https://www.postgresql.org/docs/current/libpq-pgpass.html) to avoid exposing the user password in the connection string.\
@@ -80,6 +100,7 @@
 - Documentation:
 
   - <https://github.com/SAP/go-hdb#hana-cloud-connection>
+  - <https://pkg.go.dev/github.com/SAP/go-hdb/driver#DSN>
   - <https://help.sap.com/docs/SAP_HANA_CLIENT/f1b440ded6144a54ada97ff95dac7adf/0ffbe86c9d9f44338441829c6bee15e6.html>
   - <https://help.sap.com/docs/hana-cloud-data-lake/client-interfaces/go-golang-driver>
 
@@ -110,3 +131,15 @@
   - <https://sqlite.org/c3ref/open.html>
   - <https://sqlite.org/pragma.html>
   - <https://sqlite.org/uri.html>
+
+### Teradata
+
+- Use the generic [ODBC driver](#odbc) (see above), with an OS-specific Teradata driver:
+
+  - [Linux](https://downloads.teradata.com/download/connectivity/odbc-driver/linux)
+  - [macOS](https://downloads.teradata.com/download/connectivity/teradata-odbc-driver-for-mac-os-x)
+  - [Windows](https://downloads.teradata.com/download/connectivity/odbc-driver/windows)
+
+- Documentation:
+
+  - <https://docs.teradata.com/r/Enterprise_IntelliFlex_Lake_VMware/ODBC-Driver-for-Teradata-User-Guide-20.00>

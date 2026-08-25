@@ -49,7 +49,7 @@ func BenchmarkSQLitePuller(b *testing.B) {
 func openInMemorySQLiteDB(b *testing.B, dsn string) *sql.DB {
 	b.Helper()
 
-	db, err := OpenDB(b.Context(), DriverTypeSQLite, dsn)
+	db, err := openDB(b.Context(), DriverTypeSQLite, dsn)
 	if err != nil {
 		b.Fatalf("OpenDB() error: %v", err)
 	}

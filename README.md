@@ -33,8 +33,10 @@ docker run -d --name my-versi-container \
 
 - Platforms: Linux (amd64/arm64)
 - Volumes / bind mount points:
-  - `/app/config` - for `.toml` files (Versipellis), `.ini` files (ODBC), certificates, etc.
-  - `/app/data` - for runtime storage of input data
+  - `/app/config` - for Versipellis `.toml` files, ODBC `.ini` files (instead of `/etc`), Oracle `.ora` files, passwords and certificates, etc.
+  - `/app/data` - for backup storage of runtime input data
+- Already bundled and tested with:
+  - unixODBC
 
 ### Install Option 2: Precompiled Executable Binary
 
@@ -44,6 +46,8 @@ docker run -d --name my-versi-container \
   - Linux (amd64/arm64)
   - macOS (amd64/arm64)
   - Windows (amd64 only)
+- Optional runtime dependencies:
+  - [unixODBC](https://github.com/alexbrainman/odbc/wiki) - needed only for ODBC connections, and only on Linux and macOS
 
 ### Install Option 3: Build From Source
 
@@ -52,21 +56,30 @@ Required Go version: [1.27](https://go.dev/dl/)
 Command line:
 
 ```shell
-CGO_ENABLED=0 go build ./cmd/versi
-
-./versi -h
+CGO_ENABLED=0 go build ./cmd/versi && ./versi -h
 ```
+
+Or:
+
+```shell
+CGO_ENABLED=1 go build -tags=odbc ./cmd/versi && ./versi -h
+```
+
+- `CGO_ENABLED=1` - optional, needed only for unixODBC
+- `-tags=odbc` - optional, needed only for unixODBC
 
 ## Supported Inputs
 
 ### SQL Input
 
-Supported drivers for SQL-based relational databases:
+Supported SQL-based databases:
 
 - CockroachDB
 - MariaDB
 - Microsoft SQL Server
 - MySQL
+- ODBC
+  - Teradata
 - PostgreSQL
 - SAP HANA
 - Snowflake
