@@ -1,0 +1,29 @@
+FROM ghcr.io/goreleaser/goreleaser-cross:latest
+
+# On (& for) Linux: install unixODBC headers and libs for both amd64 and arm64.
+
+RUN dpkg --add-architecture arm64 && apt-get update && \
+    apt-get install -y libltdl-dev libltdl-dev:arm64 unixodbc-dev unixodbc-dev:arm64 unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+# For macOS: compile unixODBC from source (fetched in advance in .github/workflows/release.yml).
+
+WORKDIR /tmp
+
+COPY unixODBC/ unixODBC/arm64/
+RUN AR_TOOL=$(ls /usr/local/osxcross/bin/aarch64-apple-darwin*-ar) && \
+    RANLIB_TOOL=$(ls /usr/local/osxcross/bin/aarch64-apple-darwin*-ranlib) && \
+    cd unixODBC/arm64 && sed -i '/^[[:space:]]*exe[[:space:]]*\\$/d' Makefile.am && \
+    autoreconf -ivf && CC=oa64-clang CXX=oa64-clang++ AR=${AR_TOOL} RANLIB=${RANLIB_TOOL} \
+    ./configure --host=aarch64-apple-darwin --prefix=/usr/local/opt/unixodbc/arm64 --enable-static --disable-shared \
+    lt_cv_dlopen=dlopen lt_cv_dlopen_libs= lt_cv_dlopen_self=yes AR=${AR_TOOL} RANLIB=${RANLIB_TOOL} && \
+    make install && make clean
+
+COPY unixODBC/ unixODBC/amd64/
+RUN AR_TOOL=$(ls /usr/local/osxcross/bin/x86_64-apple-darwin*-ar) && \
+    RANLIB_TOOL=$(ls /usr/local/osxcross/bin/x86_64-apple-darwin*-ranlib) && \
+    cd unixODBC/amd64 && sed -i '/^[[:space:]]*exe[[:space:]]*\\$/d' Makefile.am && \
+    autoreconf -ivf && CC=o64-clang CXX=o64-clang++ AR=${AR_TOOL} RANLIB=${RANLIB_TOOL} \
+    ./configure --host=x86_64-apple-darwin --prefix=/usr/local/opt/unixodbc/amd64 --enable-static --disable-shared \
+    lt_cv_dlopen=dlopen lt_cv_dlopen_libs= lt_cv_dlopen_self=yes AR=${AR_TOOL} RANLIB=${RANLIB_TOOL} && \
+    make install && make clean

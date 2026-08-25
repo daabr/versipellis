@@ -27,7 +27,7 @@
 
 ## `[pull.sql]` Sub-Section
 
-`type` - type of the SQL-based relational database to connect to
+`type` - driver type of the SQL-based database to connect to
 
 - Required
 - Options (case insensitive):
@@ -35,6 +35,7 @@
   - `"mssql"` or `"sqlserver"` ([Microsoft SQL Server](https://www.microsoft.com/en-us/sql-server))
   - `"mariadb"` ([MariaDB](https://mariadb.com/))
   - `"mysql"` ([MySQL](https://www.mysql.com/))
+  - `"odbc"` ([Open Database Connectivity](https://github.com/Microsoft/ODBC-Specification) - see additional [setup instructions](./sql.md))
   - `"postgres"` or `"postgresql"` ([PostgreSQL](https://www.postgresql.org/))
   - `"sap_hana"` ([SAP HANA](https://www.sap.com/products/data-cloud/hana/what-is-sap-hana.html))
   - `"snowflake"` ([Snowflake](https://www.snowflake.com/))
@@ -43,15 +44,14 @@
 `connection` - database connection string for the SQL client
 
 - Required
-- More details here: [formats and documentation links](./sql.md)
+- More details here: [formats and documentation links](./sql.md#connection-strings-for-sql-based-databases)
 
-`query` - SQL query to execute
+`query` or `query_file` - SQL query to execute
 
-- Required **unless** `query_file` is specified (mutually exclusive)
-
-`query_file` - file path of SQL query to execute
-
-- Required **unless** `query` is specified (mutually exclusive)
+- Required, but...
+- Only one of them, not both (they're mutually exclusive):
+  - Inline (e.g., `"SELECT * FROM table;"`) - usually when it's short
+  - Relative or absolute path to a file containing the query (e.g., `"config/query.sql"` or `"/path/query.sql"`) - usually when it's complex or sensitive
 
 `timeout` - timeout for SQL client queries
 

@@ -11,7 +11,44 @@ builds:
       - goos: windows
         goarch: arm64
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
+    tags:
+      - odbc
+
+    overrides:
+      - goos: linux
+        goarch: arm64
+        env:
+          - CC=aarch64-linux-gnu-gcc
+          - CXX=aarch64-linux-gnu-g++
+          # unixODBC - downloaded.
+          - CGO_LDFLAGS=-L/usr/lib/aarch64-linux-gnu -lodbc
+
+      - goos: darwin
+        goarch: arm64
+        env:
+          - CC=oa64-clang
+          - CXX=oa64-clang++
+          # unixODBC - cross-compiled.
+          - CGO_CFLAGS=-I/usr/local/opt/unixodbc/arm64/include
+          - CGO_LDFLAGS=-L/usr/local/opt/unixodbc/arm64/lib -lodbc -liconv
+
+      - goos: darwin
+        goarch: amd64
+        env:
+          - CC=o64-clang
+          - CXX=o64-clang++
+          # unixODBC - cross-compiled.
+          - CGO_CFLAGS=-I/usr/local/opt/unixodbc/amd64/include
+          - CGO_LDFLAGS=-L/usr/local/opt/unixodbc/amd64/lib -lodbc -liconv
+
+      - goos: windows
+        goarch: amd64
+        env:
+          - CC=x86_64-w64-mingw32-gcc
+          - CXX=x86_64-w64-mingw32-g++
+          # unixODBC - not required (MinGW handles ODBC natively).
+          - CGO_LDFLAGS=-lodbc32
 
 checksum:
   name_template: "{{.ProjectName}}_v{{.Version}}_checksums.txt"

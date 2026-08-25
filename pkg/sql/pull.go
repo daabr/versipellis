@@ -29,6 +29,7 @@ const (
 	DriverTypeMariaDB     = "mariadb"
 	DriverTypeMSSQL       = "mssql"
 	DriverTypeMySQL       = "mysql"
+	DriverTypeODBC        = "odbc"
 	DriverTypePostgres    = "postgres"
 	DriverTypePostgreSQL  = "postgresql"
 	DriverTypeSAPHANA     = "sap_hana"
@@ -42,6 +43,7 @@ var validDriverTypes = []string{
 	DriverTypeMariaDB,
 	DriverTypeMSSQL,
 	DriverTypeMySQL,
+	DriverTypeODBC,
 	DriverTypePostgres,
 	DriverTypePostgreSQL,
 	DriverTypeSAPHANA,
@@ -57,8 +59,7 @@ const (
 	defaultQueryTimeout = time.Minute
 )
 
-// Puller contains all the configuration and state details
-// for pulling data from SQL-based relational databases.
+// Puller contains all the configuration and state details for pulling data from SQL-based databases.
 type Puller struct {
 	config.BasePuller
 
@@ -157,7 +158,7 @@ func checkQuery(query string, err error) (string, error) {
 	return query, nil
 }
 
-// Start connects to the configured SQL-based relational database and starts pulling data from it.
+// Start connects to the configured SQL-based database and starts pulling data from it.
 // This function returns immediately, and the puller runs asynchronously in the background.
 // This function is idempotent: only the first call will actually start a goroutine. However,
 // it is not meant to be safe for concurrency, initialize pullers only in the main goroutine.
@@ -177,13 +178,15 @@ func (p *Puller) Start(ctx context.Context) bool {
 	case DriverTypeCockroachDB, DriverTypePostgres, DriverTypePostgreSQL:
 		err = p.connectToPostgres(ctx)
 	case DriverTypeMariaDB:
-		db, err = OpenDB(ctx, DriverTypeMySQL, p.conn)
+		db, err = openDB(ctx, DriverTypeMySQL, p.conn)
 	case DriverTypeMSSQL:
-		db, err = OpenDB(ctx, DriverTypeSQLServer, p.conn)
+		db, err = openDB(ctx, DriverTypeSQLServer, p.conn)
+	case DriverTypeODBC:
+		db, err = connectToODBC(ctx, p.conn)
 	case DriverTypeSAPHANA:
-		db, err = OpenDB(ctx, "hdb", p.conn)
+		db, err = openDB(ctx, "hdb", p.conn)
 	default:
-		db, err = OpenDB(ctx, p.driver, p.conn)
+		db, err = openDB(ctx, p.driver, p.conn)
 	}
 	if err != nil {
 		slog.Warn("failed to connect to SQL-based database", slog.Any("err", err), slog.String("driver", p.driver))
@@ -199,8 +202,8 @@ func (p *Puller) Start(ctx context.Context) bool {
 	return true
 }
 
-// OpenDB opens a connection to a specific database, and pings it to ensure it's reachable.
-func OpenDB(ctx context.Context, driver, conn string) (*sql.DB, error) {
+// openDB opens a connection to a specific database, and pings it to ensure it's actually reachable.
+func openDB(ctx context.Context, driver, conn string) (*sql.DB, error) {
 	db, err := sql.Open(driver, conn)
 	if err != nil {
 		return nil, fmt.Errorf("connection error: %w", err)

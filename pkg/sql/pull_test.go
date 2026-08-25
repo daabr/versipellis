@@ -302,9 +302,12 @@ func TestPullerConnectionStringError(t *testing.T) {
 	}
 
 	tests := []string{
+		DriverTypeCockroachDB,
 		DriverTypeMariaDB,
 		DriverTypeMSSQL,
+		DriverTypeODBC,
 		DriverTypePostgres,
+		DriverTypePostgreSQL,
 		DriverTypeSAPHANA,
 	}
 	for _, driver := range tests {
@@ -333,8 +336,8 @@ func TestPullerConnectionStringError(t *testing.T) {
 func TestOpenDBInvalidDriver(t *testing.T) {
 	t.Parallel()
 
-	if _, err := OpenDB(t.Context(), "invalid_driver", "connection"); err == nil {
-		t.Error("OpenDB(invalid_driver) error = nil, wantErr = true")
+	if _, err := openDB(t.Context(), "invalid_driver", "connection"); err == nil {
+		t.Error("openDB(invalid_driver) error = nil, wantErr = true")
 	}
 }
 
@@ -344,8 +347,8 @@ func TestOpenDBPingFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // Canceled context causes PingContext to fail immediately.
 
-	if _, err := OpenDB(ctx, DriverTypeMySQL, "user:pass@tcp(127.0.0.1:1)/dbname"); err == nil {
-		t.Error("OpenDB() error = nil, wantErr = true")
+	if _, err := openDB(ctx, DriverTypeMySQL, "user:pass@tcp(127.0.0.1:1)/dbname"); err == nil {
+		t.Error("openDB() error = nil, wantErr = true")
 	}
 }
 
