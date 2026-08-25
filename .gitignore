@@ -1,4 +1,5 @@
 /versi
+/config/.pgpass
 /config/versi.toml
 /data/
 /dist/

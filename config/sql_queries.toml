@@ -1,0 +1,24 @@
+[collector]
+type = "SQL"
+schedule = "@every 5s"
+
+[collector.sql]
+type = "SQLite"
+connection = "file::memory:?cache=shared"
+query = "SELECT 'abc' AS bytes, 123 AS nums, CURRENT_TIMESTAMP AS objs UNION SELECT X'deadbeef', 3.14159, NULL"
+
+# type = "MariaDB"
+# connection = "larry:woof@tcp(localhost)/versi_db?parseTime=true&timeout=3s"
+# query = "SELECT * FROM input_data"
+
+# type = "MySQL"
+# connection = "larry:woof@tcp(localhost)/versi_db?parseTime=true&timeout=3s"
+# query = "SELECT * FROM input_data"
+
+# type = "PostgreSQL"
+# connection = "replace this string with one of the two equivalent options below"
+# # kv_option = "host=localhost dbname=versi_db user=larry passfile=config/.pgpass"
+# # uri_option = "postgres://larry@localhost/versi_db?passfile=config/.pgpass"
+# query = "SELECT * FROM input_data"
+
+destination = "stdout"
