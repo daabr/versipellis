@@ -64,7 +64,7 @@ func BenchmarkCollector(b *testing.B) {
 					rowTime.Add(coll.prevEnd.Sub(coll.prevStart).Microseconds())
 				}
 			})
-			b.ReportMetric(float64(rowTime.Load())/float64(runtime.GOMAXPROCS(0)*b.N*tt.rows), "μs/rows/proc")
+			b.ReportMetric(float64(rowTime.Load())/float64(runtime.GOMAXPROCS(0)*b.N*tt.rows), "μs/row/proc")
 			b.ReportMetric(float64(fails.Load()), "fails")
 		})
 	}
