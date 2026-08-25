@@ -4,7 +4,7 @@
 
    ```shell
    docker run --name my-postgres -p 5432:5432 -e POSTGRES_DB=versi_db \
-          -e POSTGRES_USER=larry -e POSTGRES_PASSWORD=awooo \
+          -e POSTGRES_USER=larry -e POSTGRES_PASSWORD=woof \
           --detach postgres:latest
    ```
 

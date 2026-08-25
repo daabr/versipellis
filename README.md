@@ -16,9 +16,11 @@ In other words: ["Let's take all this data, and push it somewhere else."](https:
 
 ## Getting Started
 
-Choose any of the options below:
+1. Choose any of the installation options below
+2. [Quickstart demos & tutorials](./docs/tutorials.md)
+3. [Configuration reference](./docs/config.md)
 
-### Install Option 1: Docker Image
+### Installation Option 1: Docker Image
 
 <https://github.com/daabr/versipellis/pkgs/container/versipellis>
 
@@ -38,7 +40,7 @@ docker run -d --name my-versi-container \
 - Already bundled and tested with:
   - unixODBC
 
-### Install Option 2: Precompiled Executable Binary
+### Installation Option 2: Precompiled Executable Binary
 
 <https://github.com/daabr/versipellis/releases/latest>
 
@@ -49,7 +51,7 @@ docker run -d --name my-versi-container \
 - Optional runtime dependencies:
   - [unixODBC](https://github.com/alexbrainman/odbc/wiki) - needed only for ODBC connections, and only on Linux and macOS
 
-### Install Option 3: Build From Source
+### Installation Option 3: Build From Source
 
 Required Go version: [1.27](https://go.dev/dl/)
 

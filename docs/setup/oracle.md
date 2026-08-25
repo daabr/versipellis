@@ -4,14 +4,14 @@
 
    ```shell
    docker run --name my-oracle -p 1521:1521 -e ORACLE_RANDOM_PASSWORD=yes \
-          -e APP_USER=larry -e APP_USER_PASSWORD=awooo \
+          -e APP_USER=larry -e APP_USER_PASSWORD=woof \
           --detach gvenzl/oracle-free:slim-faststart
    ```
 
 2. [Connect to Oracle Database](https://docs.oracle.com/en/database/oracle/oracle-database/26/sqpug/SQL-Plus-quick-start.html#GUID-D65BD2EF-72C6-4E61-812B-9FFCAAF6F305)
 
    ```shell
-   docker exec -it my-oracle sqlplus larry/awooo@FREEPDB1
+   docker exec -it my-oracle sqlplus larry/woof@FREEPDB1
    ```
 
 3. [Create a new table](https://docs.oracle.com/en/database/oracle/oracle-database/26/sqlrf/CREATE-TABLE.html) [^1][^2]

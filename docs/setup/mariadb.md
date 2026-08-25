@@ -4,7 +4,7 @@
 
    ```shell
    docker run --name my-mariadb -p 3306:3306 -e MARIADB_RANDOM_ROOT_PASSWORD=yes \
-          -e MARIADB_DATABASE=versi_db -e MARIADB_USER=larry -e MARIADB_PASSWORD=awooo \
+          -e MARIADB_DATABASE=versi_db -e MARIADB_USER=larry -e MARIADB_PASSWORD=woof \
           --detach mariadb:latest
    ```
 
@@ -13,7 +13,7 @@
 2. [Connect to MariaDB](https://mariadb.com/docs/server/clients-and-utilities/mariadb-client/mariadb-command-line-client)
 
    ```shell
-   docker exec -it my-mariadb mariadb --user=larry --password=awooo --database=versi_db
+   docker exec -it my-mariadb mariadb --user=larry --password=woof --database=versi_db
    ```
 
 3. [Create a new table](https://mariadb.com/docs/server/server-usage/tables/create-table) [^1]

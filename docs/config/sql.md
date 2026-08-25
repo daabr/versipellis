@@ -1,4 +1,4 @@
-# Versipellis Configuration File
+# Versipellis Configuration Reference
 
 ## Additional Setup Instructions
 

@@ -4,7 +4,7 @@
 
    ```shell
    docker run --name my-mysql -p 3306:3306 -e MYSQL_RANDOM_ROOT_PASSWORD=yes \
-          -e MYSQL_DATABASE=versi_db -e MYSQL_USER=larry -e MYSQL_PASSWORD=awooo \
+          -e MYSQL_DATABASE=versi_db -e MYSQL_USER=larry -e MYSQL_PASSWORD=woof \
           --detach mysql:latest
    ```
 
@@ -13,7 +13,7 @@
 2. [Connect to MySQL](https://dev.mysql.com/doc/refman/en/mysql.html)
 
    ```shell
-   docker exec -it my-mysql mysql --user=larry --password=awooo --database=versi_db
+   docker exec -it my-mysql mysql --user=larry --password=woof --database=versi_db
    ```
 
 3. [Create a new table](https://dev.mysql.com/doc/refman/en/create-table.html) [^1]
