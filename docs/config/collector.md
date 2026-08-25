@@ -1,8 +1,8 @@
 # Versipellis Configuration File
 
-## `[pull]` Sections
+## `[collector]` Sections
 
-`type` - what kind of data to pull / how to pull it
+`type` - what kind of data to collect / how to retrieve it
 
 - Required
 - Options (case insensitive):
@@ -25,7 +25,7 @@
   - `"local"` (case insensitive)
   - Any valid identifier from the [IANA Time Zone database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) (case sensitive!), e.g. `"America/Los_Angeles"`
 
-## `[pull.sql]` Sub-Section
+## `[collector.sql]` Sub-Section
 
 `type` - driver type of the SQL-based database to connect to
 

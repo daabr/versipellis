@@ -12,7 +12,7 @@ import (
 	"github.com/daabr/versipellis/pkg/config"
 )
 
-func TestPullerConnectToPostgres(t *testing.T) {
+func TestCollectorConnectToPostgres(t *testing.T) {
 	t.Parallel()
 
 	// Pgxpool can parse the DSN below just fine, but we force ping failure by canceling the context.
@@ -21,31 +21,31 @@ func TestPullerConnectToPostgres(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		puller  *Puller
+		coll    *Collector
 		ctx     context.Context //nolint:containedctx // Purely for test coverage purposes.
 		wantErr bool
 	}{
 		{
 			name:    "already_using_pg",
-			puller:  &Puller{usingPG: true},
+			coll:    &Collector{usingPG: true},
 			ctx:     t.Context(),
 			wantErr: false,
 		},
 		{
 			name:    "invalid_dsn",
-			puller:  &Puller{conn: "://invalid-dsn"},
+			coll:    &Collector{conn: "://invalid-dsn"},
 			ctx:     t.Context(),
 			wantErr: true,
 		},
 		{
 			name:    "unreachable_host",
-			puller:  &Puller{conn: "postgres://127.0.0.1:1/dbname"},
+			coll:    &Collector{conn: "postgres://127.0.0.1:1/dbname"},
 			ctx:     ctx,
 			wantErr: true,
 		},
 		{
 			name:    "pool_already_set",
-			puller:  &Puller{pgPool: fakePGPool{}},
+			coll:    &Collector{pgPool: fakePGPool{}},
 			ctx:     t.Context(),
 			wantErr: false,
 		},
@@ -54,17 +54,17 @@ func TestPullerConnectToPostgres(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if err := tt.puller.connectToPostgres(tt.ctx); (err != nil) != tt.wantErr {
-				t.Errorf("Puller.connectToPostgres() error = %v, wantErr %v", err, tt.wantErr)
+			if err := tt.coll.connectToPostgres(tt.ctx); (err != nil) != tt.wantErr {
+				t.Errorf("Collector.connectToPostgres() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if !tt.wantErr && !tt.puller.usingPG {
-				t.Error("Puller.connectToPostgres() usingPG = false, want true")
+			if !tt.wantErr && !tt.coll.usingPG {
+				t.Error("Collector.connectToPostgres() usingPG = false, want true")
 			}
 		})
 	}
 }
 
-func TestPullerStartPostgres(t *testing.T) {
+func TestCollectorStartPostgres(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -84,13 +84,13 @@ func TestPullerStartPostgres(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			base, err := config.NewBasePuller(map[string]any{"type": config.PullTypeSQL, "schedule": "@once"})
+			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"})
 			if err != nil {
-				t.Fatalf("config.NewBasePuller() error: %v", err)
+				t.Fatalf("config.NewBaseCollector() error: %v", err)
 			}
 
-			puller, err := NewPuller(base, map[string]any{
-				"type": config.PullTypeSQL,
+			coll, err := NewCollector(base, map[string]any{
+				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       DriverTypePostgres,
 					"connection": "postgres://localhost:5432/dbname",
@@ -98,38 +98,38 @@ func TestPullerStartPostgres(t *testing.T) {
 				},
 			})
 			if err != nil {
-				t.Fatalf("NewPuller() error: %v", err)
+				t.Fatalf("NewCollector() error: %v", err)
 			}
 
-			puller.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
-			puller.usingPG = tt.usingPG
+			coll.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
+			coll.usingPG = tt.usingPG
 			ctx := t.Context()
 			if tt.usingPG {
-				ctx, puller.cancel = context.WithCancel(t.Context())
-				puller.done = ctx.Done()
+				ctx, coll.cancel = context.WithCancel(t.Context())
+				coll.done = ctx.Done()
 			}
 
-			if ok := puller.Start(ctx); !ok {
-				t.Fatal("Puller.Start() failed")
+			if ok := coll.Start(ctx); !ok {
+				t.Fatal("Collector.Start() failed")
 			}
 			if tt.usingPG {
-				go puller.scheduleNextQuery(ctx, time.Now())
+				go coll.scheduleNextQuery(ctx, time.Now())
 			}
 
-			<-puller.Done() // Wait for the puller's goroutine to finish its work.
+			<-coll.Done() // Wait for the collector's goroutine to finish its work.
 		})
 	}
 }
 
-func TestPullerExecutePostgresQuery(t *testing.T) {
+func TestCollectorExecutePostgresQuery(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBasePuller(map[string]any{"type": config.PullTypeSQL, "schedule": "@once"})
+	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"})
 	if err != nil {
-		t.Fatalf("config.NewBasePuller() error: %v", err)
+		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
 
-	puller, err := NewPuller(base, map[string]any{
+	coll, err := NewCollector(base, map[string]any{
 		"sql": map[string]any{
 			"type":       DriverTypePostgres,
 			"connection": "postgres://localhost:5432/dbname",
@@ -137,21 +137,21 @@ func TestPullerExecutePostgresQuery(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("NewPuller() error: %v", err)
+		t.Fatalf("NewCollector() error: %v", err)
 	}
 
-	puller.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
-	puller.usingPG = true
+	coll.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
+	coll.usingPG = true
 
-	if !puller.executeQuery(t.Context()) {
-		t.Error("Puller.executeQuery() = false, want true")
+	if !coll.executeQuery(t.Context()) {
+		t.Error("Collector.executeQuery() = false, want true")
 	}
-	if puller.prevStart.IsZero() || puller.prevEnd.IsZero() {
-		t.Error("Puller.executeQuery() did not update the checkpoint on success")
+	if coll.prevStart.IsZero() || coll.prevEnd.IsZero() {
+		t.Error("Collector.executeQuery() did not update the checkpoint on success")
 	}
 }
 
-func TestPullerExecutePostgresQueryErrors(t *testing.T) {
+func TestCollectorExecutePostgresQueryErrors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -181,12 +181,12 @@ func TestPullerExecutePostgresQueryErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			puller := &Puller{driver: DriverTypePostgres, query: "SELECT 1", pgPool: tt.pool, usingPG: true}
-			if ok := puller.executeQuery(t.Context()); ok != tt.wantOK {
-				t.Errorf("executeQuery() = %v, want %v", ok, tt.wantOK)
+			coll := &Collector{driver: DriverTypePostgres, query: "SELECT 1", pgPool: tt.pool, usingPG: true}
+			if ok := coll.executeQuery(t.Context()); ok != tt.wantOK {
+				t.Errorf("Collector.executeQuery() = %v, want %v", ok, tt.wantOK)
 			}
-			if gotCheckpoint := !puller.prevStart.IsZero(); gotCheckpoint != tt.wantCheckpoint {
-				t.Errorf("executeQuery() checkpoint updated = %v, want %v", gotCheckpoint, tt.wantCheckpoint)
+			if gotCheckpoint := !coll.prevStart.IsZero(); gotCheckpoint != tt.wantCheckpoint {
+				t.Errorf("Collector.executeQuery() checkpoint updated = %v, want %v", gotCheckpoint, tt.wantCheckpoint)
 			}
 		})
 	}
