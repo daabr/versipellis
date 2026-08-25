@@ -3,55 +3,79 @@ package sql
 import (
 	"database/sql"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 )
 
-func BenchmarkSQLitePuller(b *testing.B) {
+const (
+	// See https://pkg.go.dev/modernc.org/sqlite#Driver.Open for connection string details.
+	benchmarkDSN   = "file::memory:?cache=shared&_journal_mode=OFF&_synchronous=OFF"
+	benchmarkQuery = "SELECT * FROM bench;"
+)
+
+func BenchmarkCollector(b *testing.B) {
 	tests := []struct {
 		name     string
 		rows     int
 		intCols  int
 		textCols int
+		serial   bool
 	}{
-		{"1k_rows", 1000, 5, 5},
-		{"10k_rows", 10000, 5, 5},
-		{"100k_rows", 100000, 5, 5},
-	}
+		{"1k_rows_serial", 1000, 5, 5, true},
+		{"10k_rows_serial", 10000, 5, 5, true},
+		{"100k_rows_serial", 100000, 5, 5, true},
 
+		{"1k_rows_parallel", 1000, 5, 5, false},
+		{"10k_rows_parallel", 10000, 5, 5, false},
+		{"100k_rows_parallel", 100000, 5, 5, false},
+	}
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
-			// See https://pkg.go.dev/modernc.org/sqlite#Driver.Open
-			dsn := "file::memory:?cache=shared&_journal_mode=OFF&_synchronous=OFF"
-			db := openInMemorySQLiteDB(b, dsn)
+			db := openInMemoryDB(b, benchmarkDSN)
 			createTable(b, db, tt.intCols, tt.textCols)
 			populateTable(b, db, tt.rows, tt.intCols, tt.textCols)
+			fails := atomic.Int64{}
+			rowTime := atomic.Int64{}
 
-			var fails, micros int64
+			if tt.serial {
+				coll := &Collector{driver: DriverTypeSQLite, conn: benchmarkDSN, query: benchmarkQuery, db: db}
+				for b.Loop() {
+					if !coll.executeQuery(b.Context()) {
+						fails.Add(1)
+					}
+					rowTime.Add(coll.prevEnd.Sub(coll.prevStart).Microseconds())
+				}
+				b.ReportMetric(float64(rowTime.Load())/float64(b.N*tt.rows), "μs/row")
+				b.ReportMetric(float64(fails.Load()), "fails")
+				return
+			}
+
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					puller := &Puller{driver: DriverTypeSQLite, conn: dsn, query: "SELECT * FROM bench;", db: db}
-					if !puller.executeQuery(b.Context()) {
-						atomic.AddInt64(&fails, 1)
+					// The collector's timestamps are not thread-safe, so we have to create a new one for
+					// each goroutine, but empirically, this doesn't seem to affect the measurements much.
+					coll := &Collector{driver: DriverTypeSQLite, conn: benchmarkDSN, query: benchmarkQuery, db: db}
+					if !coll.executeQuery(b.Context()) {
+						fails.Add(1)
 					}
-					atomic.AddInt64(&micros, puller.prevEnd.Sub(puller.prevStart).Microseconds())
+					rowTime.Add(coll.prevEnd.Sub(coll.prevStart).Microseconds())
 				}
 			})
-			perRow := float64(micros) / float64(b.N) / float64(tt.rows)
-			b.ReportMetric(perRow-2, "μs/op/row") // Account for our extra overhead that Go doesn't measure in its own ns/op.
-			b.ReportMetric(float64(fails), "fails")
+			b.ReportMetric(float64(rowTime.Load())/float64(runtime.GOMAXPROCS(0)*b.N*tt.rows), "μs/rows/proc")
+			b.ReportMetric(float64(fails.Load()), "fails")
 		})
 	}
 }
 
-func openInMemorySQLiteDB(b *testing.B, dsn string) *sql.DB {
+func openInMemoryDB(b *testing.B, dsn string) *sql.DB {
 	b.Helper()
 
 	db, err := openDB(b.Context(), DriverTypeSQLite, dsn)
 	if err != nil {
-		b.Fatalf("OpenDB() error: %v", err)
+		b.Fatalf("openDB() error: %v", err)
 	}
 	b.Cleanup(func() {
 		_ = db.Close()
@@ -89,6 +113,7 @@ func populateTable(b *testing.B, db *sql.DB, rows, intCols, textCols int) {
 	if err != nil {
 		b.Fatalf("db.BeginTx() error: %v", err)
 	}
+	b.Cleanup(func() { _ = tx.Rollback() })
 
 	var insert strings.Builder
 	insert.WriteString("INSERT INTO bench VALUES (")
@@ -99,6 +124,7 @@ func populateTable(b *testing.B, db *sql.DB, rows, intCols, textCols int) {
 	if err != nil {
 		b.Fatalf("tx.PrepareContext() error: %v", err)
 	}
+	b.Cleanup(func() { _ = stmt.Close() })
 
 	for i := range rows {
 		vals := make([]any, intCols+textCols)

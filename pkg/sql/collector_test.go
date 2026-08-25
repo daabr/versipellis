@@ -16,61 +16,61 @@ import (
 	"github.com/daabr/versipellis/pkg/config"
 )
 
-func TestNewPuller(t *testing.T) {
+func TestNewCollector(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name    string
-		base    *config.BasePuller
-		pullCfg map[string]any
+		base    *config.BaseCollector
+		collCfg map[string]any
 		wantErr bool
 	}{
 		{
 			name: "nil_base",
 			base: nil,
-			pullCfg: map[string]any{
+			collCfg: map[string]any{
 				"sql": map[string]any{},
 			},
 			wantErr: true,
 		},
 		{
 			name: "wrong_base_type",
-			base: &config.BasePuller{Type: config.PullTypeHTTP},
-			pullCfg: map[string]any{
-				"type": config.PullTypeHTTP,
+			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
+			collCfg: map[string]any{
+				"type": config.CollectorTypeHTTP,
 				"sql":  map[string]any{},
 			},
 			wantErr: true,
 		},
 		{
-			name:    "nil_pull_cfg",
-			base:    &config.BasePuller{Type: config.PullTypeSQL},
-			pullCfg: nil,
+			name:    "nil_collector_cfg",
+			base:    &config.BaseCollector{Type: config.CollectorTypeSQL},
+			collCfg: nil,
 			wantErr: true,
 		},
 		{
 			name: "missing_sql_section",
-			base: &config.BasePuller{Type: config.PullTypeSQL},
-			pullCfg: map[string]any{
-				"type": config.PullTypeSQL,
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			collCfg: map[string]any{
+				"type": config.CollectorTypeSQL,
 				"sol":  map[string]any{},
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid_sql_section",
-			base: &config.BasePuller{Type: config.PullTypeSQL},
-			pullCfg: map[string]any{
-				"type": config.PullTypeSQL,
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			collCfg: map[string]any{
+				"type": config.CollectorTypeSQL,
 				"sql":  "not a map",
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing_driver_type",
-			base: &config.BasePuller{Type: config.PullTypeSQL},
-			pullCfg: map[string]any{
-				"type": config.PullTypeSQL,
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			collCfg: map[string]any{
+				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"connection": "connection",
 					"query":      "SELECT 1",
@@ -80,9 +80,9 @@ func TestNewPuller(t *testing.T) {
 		},
 		{
 			name: "unrecognized_driver_type",
-			base: &config.BasePuller{Type: config.PullTypeSQL},
-			pullCfg: map[string]any{
-				"type": config.PullTypeSQL,
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			collCfg: map[string]any{
+				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       "unknown",
 					"connection": "connection",
@@ -93,9 +93,9 @@ func TestNewPuller(t *testing.T) {
 		},
 		{
 			name: "missing_connection",
-			base: &config.BasePuller{Type: config.PullTypeSQL},
-			pullCfg: map[string]any{
-				"type": config.PullTypeSQL,
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			collCfg: map[string]any{
+				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":  DriverTypeSQLite,
 					"query": "SELECT 1",
@@ -105,9 +105,9 @@ func TestNewPuller(t *testing.T) {
 		},
 		{
 			name: "missing_query",
-			base: &config.BasePuller{Type: config.PullTypeSQL},
-			pullCfg: map[string]any{
-				"type": config.PullTypeSQL,
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			collCfg: map[string]any{
+				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       DriverTypeSQLite,
 					"connection": ":memory:",
@@ -117,9 +117,9 @@ func TestNewPuller(t *testing.T) {
 		},
 		{
 			name: "invalid_timeout",
-			base: &config.BasePuller{Type: config.PullTypeSQL},
-			pullCfg: map[string]any{
-				"type": config.PullTypeSQL,
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			collCfg: map[string]any{
+				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       DriverTypeSQLite,
 					"connection": "connection",
@@ -131,9 +131,9 @@ func TestNewPuller(t *testing.T) {
 		},
 		{
 			name: "negative_timeout_is_allowed",
-			base: &config.BasePuller{Type: config.PullTypeSQL},
-			pullCfg: map[string]any{
-				"type": config.PullTypeSQL,
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			collCfg: map[string]any{
+				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       DriverTypeSQLite,
 					"connection": "connection",
@@ -145,9 +145,9 @@ func TestNewPuller(t *testing.T) {
 		},
 		{
 			name: "happy_path",
-			base: &config.BasePuller{Type: config.PullTypeSQL},
-			pullCfg: map[string]any{
-				"type": config.PullTypeSQL,
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			collCfg: map[string]any{
+				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       strings.ToUpper(DriverTypeSQLite), // Test case-insensitivity of the driver type.
 					"connection": "connection",
@@ -161,8 +161,8 @@ func TestNewPuller(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, gotErr := NewPuller(tt.base, tt.pullCfg); (gotErr != nil) != tt.wantErr {
-				t.Errorf("NewPuller() error = %v, wantErr %v", gotErr, tt.wantErr)
+			if _, gotErr := NewCollector(tt.base, tt.collCfg); (gotErr != nil) != tt.wantErr {
+				t.Errorf("NewCollector() error = %v, wantErr %v", gotErr, tt.wantErr)
 			}
 		})
 	}
@@ -254,25 +254,25 @@ func TestLoadAndCheckQuery(t *testing.T) {
 	}
 }
 
-func TestPullerStartNilGuard(t *testing.T) {
+func TestCollectorStartNilGuard(t *testing.T) {
 	t.Parallel()
 
-	var nilPuller *Puller
-	if ok := nilPuller.Start(t.Context()); ok {
-		t.Error("nil Puller.Start() = true, want false")
+	var nilCollector *Collector
+	if ok := nilCollector.Start(t.Context()); ok {
+		t.Error("nil Collector.Start() = true, want false")
 	}
 }
 
-func TestPullerStart(t *testing.T) {
+func TestCollectorStart(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBasePuller(map[string]any{"type": config.PullTypeSQL, "schedule": "@once"})
+	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"})
 	if err != nil {
-		t.Fatalf("config.NewBasePuller() error: %v", err)
+		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
 
-	puller, err := NewPuller(base, map[string]any{
-		"type": config.PullTypeSQL,
+	coll, err := NewCollector(base, map[string]any{
+		"type": config.CollectorTypeSQL,
 		"sql": map[string]any{
 			"type":       DriverTypeSQLite,
 			"connection": ":memory:",
@@ -280,25 +280,25 @@ func TestPullerStart(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("NewPuller() error: %v", err)
+		t.Fatalf("NewCollector() error: %v", err)
 	}
 
-	if ok := puller.Start(t.Context()); !ok {
-		t.Fatal("Puller.Start() failed")
+	if ok := coll.Start(t.Context()); !ok {
+		t.Fatal("Collector.Start() failed")
 	}
-	if ok := puller.Start(t.Context()); !ok {
-		t.Fatal("second Puller.Start() failed (should be idempotent)")
+	if ok := coll.Start(t.Context()); !ok {
+		t.Fatal("second Collector.Start() failed (should be idempotent)")
 	}
 
-	<-puller.Done() // Wait for the puller's goroutine to finish its work.
+	<-coll.Done() // Wait for the collector's goroutine to finish its work.
 }
 
-func TestPullerConnectionStringError(t *testing.T) {
+func TestCollectorConnectionStringError(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBasePuller(map[string]any{"type": config.PullTypeSQL, "schedule": "@once"})
+	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"})
 	if err != nil {
-		t.Fatalf("config.NewBasePuller() error: %v", err)
+		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
 
 	tests := []string{
@@ -314,8 +314,8 @@ func TestPullerConnectionStringError(t *testing.T) {
 		t.Run(driver, func(t *testing.T) {
 			t.Parallel()
 
-			puller, err := NewPuller(base, map[string]any{
-				"type": config.PullTypeSQL,
+			coll, err := NewCollector(base, map[string]any{
+				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       driver,
 					"connection": "invalid_connection_string",
@@ -323,11 +323,11 @@ func TestPullerConnectionStringError(t *testing.T) {
 				},
 			})
 			if err != nil {
-				t.Fatalf("NewPuller() error: %v", err)
+				t.Fatalf("NewCollector() error: %v", err)
 			}
 
-			if ok := puller.Start(t.Context()); ok {
-				t.Fatal("Puller.Start() succeeded unexpectedly")
+			if ok := coll.Start(t.Context()); ok {
+				t.Fatal("Collector.Start() succeeded unexpectedly")
 			}
 		})
 	}
@@ -376,12 +376,12 @@ func TestScheduleNextQuery(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			base, err := config.NewBasePuller(map[string]any{"type": config.PullTypeSQL, "schedule": tt.schedule})
+			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": tt.schedule})
 			if err != nil {
-				t.Fatalf("config.NewBasePuller() error: %v", err)
+				t.Fatalf("config.NewBaseCollector() error: %v", err)
 			}
-			puller, err := NewPuller(base, map[string]any{
-				"type": config.PullTypeSQL,
+			coll, err := NewCollector(base, map[string]any{
+				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       DriverTypeSQLite,
 					"connection": ":memory:",
@@ -389,7 +389,7 @@ func TestScheduleNextQuery(t *testing.T) {
 				},
 			})
 			if err != nil {
-				t.Fatalf("NewPuller() error: %v", err)
+				t.Fatalf("NewCollector() error: %v", err)
 			}
 
 			ctx, cancel := context.WithCancel(t.Context())
@@ -400,23 +400,23 @@ func TestScheduleNextQuery(t *testing.T) {
 			}
 
 			if !tt.isAsync {
-				puller.scheduleNextQuery(ctx, time.Now())
+				coll.scheduleNextQuery(ctx, time.Now())
 				return
 			}
 
-			go puller.scheduleNextQuery(ctx, time.Now().Add(-5*time.Second))
+			go coll.scheduleNextQuery(ctx, time.Now().Add(-5*time.Second))
 			time.Sleep(50 * time.Millisecond)
 			cancel()
 		})
 	}
 }
 
-func TestPullerExecuteQuery(t *testing.T) {
+func TestCollectorExecuteQuery(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBasePuller(map[string]any{"type": config.PullTypeSQL, "schedule": "@once"})
+	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"})
 	if err != nil {
-		t.Fatalf("config.NewBasePuller() error: %v", err)
+		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
 
 	tests := []struct {
@@ -467,28 +467,28 @@ func TestPullerExecuteQuery(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			puller, err := NewPuller(base, map[string]any{"type": config.PullTypeSQL, "sql": tt.cfg})
+			coll, err := NewCollector(base, map[string]any{"type": config.CollectorTypeSQL, "sql": tt.cfg})
 			if err != nil {
-				t.Fatalf("NewPuller() error: %v", err)
+				t.Fatalf("NewCollector() error: %v", err)
 			}
-			puller.db, err = sql.Open(puller.driver, puller.conn)
+			coll.db, err = sql.Open(coll.driver, coll.conn)
 			if err != nil {
 				t.Fatalf("sql.Open() error: %v", err)
 			}
 
 			if tt.closeDB {
-				if err := puller.db.Close(); err != nil {
+				if err := coll.db.Close(); err != nil {
 					t.Fatalf("sql.DB.Close() error: %v", err)
 				}
 			} else {
-				t.Cleanup(func() { _ = puller.db.Close() })
+				t.Cleanup(func() { _ = coll.db.Close() })
 			}
 
-			if gotOK := puller.executeQuery(t.Context()); gotOK != tt.wantOK {
-				t.Errorf("Puller.executeQuery() = %v, want %v", gotOK, tt.wantOK)
+			if gotOK := coll.executeQuery(t.Context()); gotOK != tt.wantOK {
+				t.Errorf("Collector.executeQuery() = %v, want %v", gotOK, tt.wantOK)
 			}
-			if timestampUpdated := !puller.prevStart.IsZero(); timestampUpdated != tt.wantOK {
-				t.Errorf("Puller.prevXXXX checkpoint updated = %v, want %v", timestampUpdated, tt.wantOK)
+			if timestampUpdated := !coll.prevStart.IsZero(); timestampUpdated != tt.wantOK {
+				t.Errorf("Collector.prevXXXX checkpoint updated = %v, want %v", timestampUpdated, tt.wantOK)
 			}
 		})
 	}
@@ -570,28 +570,28 @@ func TestProcessResultsWithFakeDriver(t *testing.T) {
 	}
 }
 
-func TestPullerClose(t *testing.T) {
+func TestCollectorClose(t *testing.T) {
 	t.Parallel()
 
 	t.Run("unstarted", func(t *testing.T) {
 		t.Parallel()
 
-		puller := &Puller{}
-		puller.Close()
+		coll := &Collector{}
+		coll.Close()
 	})
 
 	t.Run("fake_pg_pool", func(t *testing.T) {
 		t.Parallel()
 
 		var ctx context.Context
-		puller := &Puller{pgPool: fakePGPool{}, usingPG: true}
-		ctx, puller.cancel = context.WithCancel(t.Context())
-		puller.done = ctx.Done()
+		coll := &Collector{pgPool: fakePGPool{}, usingPG: true}
+		ctx, coll.cancel = context.WithCancel(t.Context())
+		coll.done = ctx.Done()
 
-		puller.Close()
-		puller.Close()
+		coll.Close()
+		coll.Close()
 
-		<-puller.Done()
+		<-coll.Done()
 	})
 
 	t.Run("in_memory_sqlite", func(t *testing.T) {
@@ -603,13 +603,13 @@ func TestPullerClose(t *testing.T) {
 		}
 
 		var ctx context.Context
-		puller := &Puller{db: db}
-		ctx, puller.cancel = context.WithCancel(t.Context())
-		puller.done = ctx.Done()
+		coll := &Collector{db: db}
+		ctx, coll.cancel = context.WithCancel(t.Context())
+		coll.done = ctx.Done()
 
-		puller.Close()
+		coll.Close()
 
-		<-puller.Done()
+		<-coll.Done()
 	})
 }
 

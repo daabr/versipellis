@@ -18,8 +18,8 @@ type pgPool interface {
 	Close()
 }
 
-// Never called directly, only through [Puller.Start] when the driver is PostgreSQL.
-func (p *Puller) connectToPostgres(ctx context.Context) error {
+// Never called directly, only through [Collector.Start] when the driver is PostgreSQL.
+func (p *Collector) connectToPostgres(ctx context.Context) error {
 	if p.usingPG {
 		return nil
 	}
@@ -47,9 +47,9 @@ func (p *Puller) connectToPostgres(ctx context.Context) error {
 	return nil
 }
 
-// Never called directly, only through [Puller.executeQuery] when the driver is PostgreSQL.
+// Never called directly, only through [Collector.executeQuery] when the driver is PostgreSQL.
 // This means that these 2 functions do and return the same things, but do it differently.
-func (p *Puller) executePostgresQuery(ctx context.Context) bool {
+func (p *Collector) executePostgresQuery(ctx context.Context) bool {
 	tx, err := p.pgPool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err), slog.String("driver", p.driver))

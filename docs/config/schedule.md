@@ -1,8 +1,8 @@
 # Versipellis Configuration File
 
-## Pull Schedules
+## Collector Schedules
 
-Pulling data usually requires a schedule configuration.
+Data collection usually requires a schedule configuration.
 
 Versipellis supports the cronspec syntax `"MIN HRS DOM MON DOW"` (a string of 5 fields separated by spaces), as defined in the [OCPS 1.0 specification](https://github.com/open-source-cron/ocps/blob/main/specifications/OCPS-1.0.md).
 

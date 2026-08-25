@@ -59,9 +59,9 @@ const (
 	defaultQueryTimeout = time.Minute
 )
 
-// Puller contains all the configuration and state details for pulling data from SQL-based databases.
-type Puller struct {
-	config.BasePuller
+// Collector contains all the configuration and state details for querying SQL-based databases.
+type Collector struct {
+	config.BaseCollector
 
 	driver  string
 	conn    string
@@ -82,21 +82,21 @@ type Puller struct {
 	closeOnce sync.Once
 }
 
-// NewPuller creates a new [Puller] from the given configuration, which was read from
+// NewCollector creates a new [Collector] from the given configuration, which was read from
 // a TOML file. It checks the details and returns an error if any of them is invalid.
-func NewPuller(base *config.BasePuller, pullCfg map[string]any) (*Puller, error) {
+func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, error) {
 	switch {
 	case base == nil:
-		return nil, errors.New("base puller cannot be nil")
-	case base.Type != config.PullTypeSQL:
-		return nil, fmt.Errorf("this puller type is %q, but must be %q", base.Type, config.PullTypeSQL)
-	case pullCfg == nil || pullCfg["sql"] == nil:
-		return nil, errors.New("[pull.sql] TOML config section is missing")
+		return nil, errors.New("base collector cannot be nil")
+	case base.Type != config.CollectorTypeSQL:
+		return nil, fmt.Errorf("this collector type is %q, but must be %q", base.Type, config.CollectorTypeSQL)
+	case cfg == nil || cfg["sql"] == nil:
+		return nil, errors.New("[collector.sql] TOML config section is missing")
 	}
 
-	sqlCfg, ok := pullCfg["sql"].(map[string]any)
+	sqlCfg, ok := cfg["sql"].(map[string]any)
 	if !ok {
-		return nil, errors.New("[pull.sql] isn't a valid TOML config section")
+		return nil, errors.New("[collector.sql] isn't a valid TOML config section")
 	}
 	query, err := checkQuery(loadQuery(sqlCfg))
 	if err != nil {
@@ -107,19 +107,19 @@ func NewPuller(base *config.BasePuller, pullCfg map[string]any) (*Puller, error)
 		return nil, fmt.Errorf("invalid query timeout duration: %w", err)
 	}
 
-	p := &Puller{
-		BasePuller: *base,
-		driver:     strings.ToLower(strings.TrimSpace(config.Value(sqlCfg, "type", ""))),
-		conn:       config.Value(sqlCfg, "connection", ""),
-		query:      query,
-		timeout:    timeout,
+	p := &Collector{
+		BaseCollector: *base,
+		driver:        strings.ToLower(strings.TrimSpace(config.Value(sqlCfg, "type", ""))),
+		conn:          config.Value(sqlCfg, "connection", ""),
+		query:         query,
+		timeout:       timeout,
 	}
 
 	switch {
 	case !slices.Contains(validDriverTypes, p.driver):
 		return nil, fmt.Errorf("unrecognized SQL driver type %q", p.driver)
 	case p.conn == "":
-		return nil, fmt.Errorf("SQL puller config for %q must have a database connection string", p.driver)
+		return nil, fmt.Errorf("SQL collector config for %q must have a database connection string", p.driver)
 	default:
 		return p, nil
 	}
@@ -158,18 +158,18 @@ func checkQuery(query string, err error) (string, error) {
 	return query, nil
 }
 
-// Start connects to the configured SQL-based database and starts pulling data from it.
-// This function returns immediately, and the puller runs asynchronously in the background.
+// Start connects to the configured SQL-based database and starts collecting data from it.
+// This function returns immediately, and the collector runs asynchronously in the background.
 // This function is idempotent: only the first call will actually start a goroutine. However,
-// it is not meant to be safe for concurrency, initialize pullers only in the main goroutine.
-func (p *Puller) Start(ctx context.Context) bool {
+// it is not meant to be safe for concurrency, initialize collectors only in the main goroutine.
+func (p *Collector) Start(ctx context.Context) bool {
 	if p == nil {
-		slog.Error("SQL puller is misconfigured")
+		slog.Error("SQL collector is misconfigured")
 		return false
 	}
 	if p.cancel != nil {
-		slog.Error("SQL puller already started") // This is a programming error...
-		return true                              // ...But a harmless one.
+		slog.Error("SQL collector already started") // This is a programming error...
+		return true                                 // ...But a harmless one.
 	}
 
 	var db *sql.DB
@@ -197,7 +197,7 @@ func (p *Puller) Start(ctx context.Context) bool {
 	ctx, p.cancel = context.WithCancel(ctx)
 	p.done = ctx.Done()
 
-	slog.Info("starting to pull data with SQL queries", slog.String("driver", p.driver), slog.String("schedule", p.Cronspec))
+	slog.Info("starting to execute SQL queries", slog.String("driver", p.driver), slog.String("schedule", p.Cronspec))
 	go p.scheduleNextQuery(ctx, time.Now())
 	return true
 }
@@ -221,20 +221,20 @@ func openDB(ctx context.Context, driver, conn string) (*sql.DB, error) {
 	return db, nil
 }
 
-func (p *Puller) scheduleNextQuery(ctx context.Context, prev time.Time) {
+func (p *Collector) scheduleNextQuery(ctx context.Context, prev time.Time) {
 	defer p.Close()
 	for {
 		nextStart := p.Schedule.Next(prev)
 		if nextStart.IsZero() {
 			if p.Schedule.RunsOnlyOnce() {
-				slog.Info("SQL puller finished one-time execution", slog.String("driver", p.driver))
+				slog.Info("SQL collector finished one-time execution", slog.String("driver", p.driver))
 			} else {
-				slog.Error("SQL puller stopped due to scheduler bug - no next instance for: " + p.Cronspec)
+				slog.Error("SQL collector stopped due to scheduler bug - no next instance for: " + p.Cronspec)
 			}
 			return
 		}
 		if now := time.Now(); !p.Schedule.RunsOnlyOnce() && now.After(nextStart) {
-			slog.Warn("SQL puller is behind schedule, skipping missed execution",
+			slog.Warn("SQL collector is behind schedule, skipping missed execution",
 				slog.String("driver", p.driver), slog.Time("skipped", nextStart),
 				slog.Duration("gap", now.Sub(nextStart)),
 			)
@@ -254,9 +254,9 @@ func (p *Puller) scheduleNextQuery(ctx context.Context, prev time.Time) {
 	}
 }
 
-// This is never called directly, only through [Puller.scheduleNextQuery]. Therefore, it's safe to assume
-// that either [Puller.db] or [Puller.pgPool] are non-nil, given that [Puller.Start] had to succeed first.
-func (p *Puller) executeQuery(ctx context.Context) bool {
+// This is never called directly, only through [Collector.scheduleNextQuery]. Therefore, it's safe to assume
+// that either [Collector.db] or [Collector.pgPool] are non-nil, given that [Collector.Start] had to succeed first.
+func (p *Collector) executeQuery(ctx context.Context) bool {
 	queryCtx := ctx
 	var cancel context.CancelFunc
 	if p.timeout > 0 {
@@ -266,7 +266,7 @@ func (p *Puller) executeQuery(ctx context.Context) bool {
 		defer cancel()
 	}
 
-	// [Puller.db] and [Puller.pgPool]/[Puller.usingPG] are mutually exclusive,
+	// [Collector.db] and [Collector.pgPool]/[Collector.usingPG] are mutually exclusive,
 	// so if the latter is non-nil we have to use it instead of the former.
 	if p.usingPG {
 		return p.executePostgresQuery(queryCtx)
@@ -298,7 +298,7 @@ func (p *Puller) executeQuery(ctx context.Context) bool {
 		)
 	} else {
 		stats := p.db.Stats()
-		slog.Debug("SQL query completed successfully",
+		slog.Debug("SQL query execution completed successfully",
 			slog.String("driver", p.driver), slog.Int("rows", rowCount),
 			slog.Time("start_time", start), slog.Duration("exec_duration", end.Sub(start)),
 			slog.Int("in_use_conns", stats.InUse), slog.Int("idle_conns", stats.Idle),
@@ -367,17 +367,17 @@ func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
 	return row, nil
 }
 
-// Done returns a channel that signals and gets closed when the puller has finished its work and is no longer running.
-func (p *Puller) Done() <-chan struct{} {
+// Done returns a channel that signals and gets closed when the collector has finished its work and is no longer running.
+func (p *Collector) Done() <-chan struct{} {
 	return p.done
 }
 
 // Close closes the database connection pool, prevents new queries from starting, and waits for
 // all queries that have started processing on the server to finish (up to a point). It then
-// signals through the [Puller.Done] channel that the puller isn't executing queries anymore.
-// It is safe (though useless) to call even if [Puller.Start] was never called, but either
-// way it is meant to be called only in the same goroutine as [Puller.scheduleNextQuery].
-func (p *Puller) Close() {
+// signals through the [Collector.Done] channel that the collector isn't executing queries anymore.
+// It is safe (though useless) to call even if [Collector.Start] was never called, but either
+// way it is meant to be called only in the same goroutine as [Collector.scheduleNextQuery].
+func (p *Collector) Close() {
 	p.closeOnce.Do(func() {
 		if p.cancel != nil {
 			defer p.cancel()

@@ -6,7 +6,7 @@ import (
 	"github.com/daabr/versipellis/pkg/config"
 )
 
-func TestNewBasePuller(t *testing.T) {
+func TestNewBaseCollector(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -83,8 +83,8 @@ func TestNewBasePuller(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := config.NewBasePuller(tt.cfg); (err != nil) != tt.wantErr {
-				t.Errorf("NewBasePuller() error = %v, wantErr %v", err, tt.wantErr)
+			if _, err := config.NewBaseCollector(tt.cfg); (err != nil) != tt.wantErr {
+				t.Errorf("NewBaseCollector() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
