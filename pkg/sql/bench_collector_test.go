@@ -3,6 +3,7 @@ package sql
 import (
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -11,8 +12,8 @@ import (
 
 const (
 	// See https://pkg.go.dev/modernc.org/sqlite#Driver.Open for connection string details.
-	benchmarkDSN   = "file::memory:?cache=shared&_journal_mode=OFF&_synchronous=OFF"
-	benchmarkQuery = "SELECT * FROM bench;"
+	benchDSN   = "file:%s?_journal_mode=OFF&_synchronous=OFF"
+	benchQuery = "SELECT * FROM bench;"
 )
 
 func BenchmarkCollector(b *testing.B) {
@@ -21,65 +22,66 @@ func BenchmarkCollector(b *testing.B) {
 		rows     int
 		intCols  int
 		textCols int
-		serial   bool
 	}{
-		{"1k_rows_serial", 1000, 5, 5, true},
-		{"10k_rows_serial", 10000, 5, 5, true},
-		{"100k_rows_serial", 100000, 5, 5, true},
-
-		{"1k_rows_parallel", 1000, 5, 5, false},
-		{"10k_rows_parallel", 10000, 5, 5, false},
-		{"100k_rows_parallel", 100000, 5, 5, false},
+		{"1k_rows", 1000, 5, 5},
+		{"10k_rows", 10000, 5, 5},
+		{"100k_rows", 100000, 5, 5},
 	}
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
-			db := openInMemoryDB(b, benchmarkDSN)
-			createTable(b, db, tt.intCols, tt.textCols)
-			populateTable(b, db, tt.rows, tt.intCols, tt.textCols)
-			fails := atomic.Int64{}
-			rowTime := atomic.Int64{}
-
-			if tt.serial {
-				coll := &Collector{driver: DriverTypeSQLite, conn: benchmarkDSN, query: benchmarkQuery, db: db}
-				for b.Loop() {
-					if !coll.executeQuery(b.Context()) {
-						fails.Add(1)
-					}
-					rowTime.Add(coll.prevEnd.Sub(coll.prevStart).Microseconds())
-				}
-				b.ReportMetric(float64(rowTime.Load())/float64(b.N*tt.rows), "μs/row")
-				b.ReportMetric(float64(fails.Load()), "fails")
-				return
+			dsn := setupDB(b, tt.rows, tt.intCols, tt.textCols) + "&mode=ro"
+			readers := make([]*sql.DB, runtime.GOMAXPROCS(0))
+			for i := range readers {
+				readers[i] = openSQLiteDB(b, dsn)
+				b.Cleanup(func() { readers[i].Close() })
 			}
+			cores := atomic.Int32{}
+			ctx := b.Context()
 
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
+				i := int(cores.Add(1)-1) % len(readers)
+				// The collector's query execution timestamps are not thread-safe,
+				// so we have to create a separate collector for each goroutine. Similarly,
+				// each collector has its own read-only [sql.DB] to minimize SQLite locking.
+				coll := &Collector{driver: DriverTypeSQLite, query: benchQuery, db: readers[i]}
+
 				for pb.Next() {
-					// The collector's timestamps are not thread-safe, so we have to create a new one for
-					// each goroutine, but empirically, this doesn't seem to affect the measurements much.
-					coll := &Collector{driver: DriverTypeSQLite, conn: benchmarkDSN, query: benchmarkQuery, db: db}
-					if !coll.executeQuery(b.Context()) {
-						fails.Add(1)
+					if !coll.executeQuery(ctx) {
+						b.Error("unexpected SQL query error")
+						return
 					}
-					rowTime.Add(coll.prevEnd.Sub(coll.prevStart).Microseconds())
 				}
 			})
-			b.ReportMetric(float64(rowTime.Load())/float64(runtime.GOMAXPROCS(0)*b.N*tt.rows), "μs/row/proc")
-			b.ReportMetric(float64(fails.Load()), "fails")
+
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*tt.rows), "ns/row")
+			b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "queries/sec")
+			b.ReportMetric(float64(b.N*tt.rows)/b.Elapsed().Seconds()/1000.0, "rows/ms")
 		})
 	}
 }
 
-func openInMemoryDB(b *testing.B, dsn string) *sql.DB {
+// setupDB is a helper function in order to close its [sql.DB] connection before the benchmark starts.
+// This is important because each collector during the test has its own read-only [sql.DB] connection.
+func setupDB(b *testing.B, rows, intCols, textCols int) string {
+	b.Helper()
+
+	dsn := fmt.Sprintf(benchDSN, filepath.Join(b.TempDir(), "bench_db.sqlite"))
+	db := openSQLiteDB(b, dsn)
+	defer db.Close()
+
+	createTable(b, db, intCols, textCols)
+	populateTable(b, db, rows, intCols, textCols)
+	return dsn
+}
+
+func openSQLiteDB(b *testing.B, dsn string) *sql.DB {
 	b.Helper()
 
 	db, err := openDB(b.Context(), DriverTypeSQLite, dsn)
 	if err != nil {
 		b.Fatalf("openDB() error: %v", err)
 	}
-	b.Cleanup(func() {
-		_ = db.Close()
-	})
 	return db
 }
 
@@ -102,7 +104,7 @@ func createTable(b *testing.B, db *sql.DB, intCols, textCols int) {
 	create.WriteString(");")
 
 	if _, err := db.ExecContext(b.Context(), create.String()); err != nil {
-		b.Fatalf("DB.Exec(CREATE TABLE) error: %v", err)
+		b.Fatalf("db.ExecContext() error: %v", err)
 	}
 }
 
@@ -113,7 +115,7 @@ func populateTable(b *testing.B, db *sql.DB, rows, intCols, textCols int) {
 	if err != nil {
 		b.Fatalf("db.BeginTx() error: %v", err)
 	}
-	b.Cleanup(func() { _ = tx.Rollback() })
+	defer func() { _ = tx.Rollback() }()
 
 	var insert strings.Builder
 	insert.WriteString("INSERT INTO bench VALUES (")
@@ -124,7 +126,7 @@ func populateTable(b *testing.B, db *sql.DB, rows, intCols, textCols int) {
 	if err != nil {
 		b.Fatalf("tx.PrepareContext() error: %v", err)
 	}
-	b.Cleanup(func() { _ = stmt.Close() })
+	defer func() { _ = stmt.Close() }()
 
 	for i := range rows {
 		vals := make([]any, intCols+textCols)
@@ -139,9 +141,6 @@ func populateTable(b *testing.B, db *sql.DB, rows, intCols, textCols int) {
 		}
 	}
 
-	if err := stmt.Close(); err != nil {
-		b.Fatalf("stmt.Close() error: %v", err)
-	}
 	if err := tx.Commit(); err != nil {
 		b.Fatalf("tx.Commit() error: %v", err)
 	}
