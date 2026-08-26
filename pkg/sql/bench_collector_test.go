@@ -33,7 +33,7 @@ func BenchmarkCollector(b *testing.B) {
 			readers := make([]*sql.DB, runtime.GOMAXPROCS(0))
 			for i := range readers {
 				readers[i] = openSQLiteDB(b, dsn)
-				b.Cleanup(func() { readers[i].Close() })
+				b.Cleanup(func() { _ = readers[i].Close() })
 			}
 			cores := atomic.Int32{}
 			ctx := b.Context()
