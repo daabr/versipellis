@@ -20,23 +20,28 @@ func TestNewBaseCollector(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "implicit_none",
+			name:    "implicit_type_none",
 			cfg:     map[string]any{},
 			wantErr: false,
 		},
 		{
-			name:    "explicit_none",
+			name:    "explicit_type_none",
 			cfg:     map[string]any{"type": "none"},
 			wantErr: false,
 		},
 		{
-			name:    "none_with_schedule",
+			name:    "type_none_with_schedule",
 			cfg:     map[string]any{"type": "none", "schedule": "* * * * *"},
 			wantErr: true,
 		},
 		{
-			name:    "none_with_trigger",
+			name:    "type_none_with_trigger",
 			cfg:     map[string]any{"type": "none", "trigger": "my_trigger"},
+			wantErr: true,
+		},
+		{
+			name:    "type_none_with_destination",
+			cfg:     map[string]any{"type": "none", "destination": "stdout"},
 			wantErr: true,
 		},
 		{
@@ -74,8 +79,28 @@ func TestNewBaseCollector(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "syntactically_valid_but_semantically_invalid",
-			cfg:     map[string]any{"type": "sql", "schedule": "0 0 31 2 *"},
+			name:    "schedule_syntactically_valid_but_semantically_invalid",
+			cfg:     map[string]any{"type": "http/3", "schedule": "0 0 31 2 *"},
+			wantErr: true,
+		},
+		{
+			name:    "implicit_destination_none",
+			cfg:     map[string]any{"type": "sql", "schedule": "@every 1h"},
+			wantErr: false,
+		},
+		{
+			name:    "explicit_destination_none",
+			cfg:     map[string]any{"type": "sql", "trigger": "boo!", "destination": "none"},
+			wantErr: false,
+		},
+		{
+			name:    "explicit_destination_discard",
+			cfg:     map[string]any{"type": "sql", "trigger": "boo!", "destination": "discard"},
+			wantErr: false,
+		},
+		{
+			name:    "invalid_destination",
+			cfg:     map[string]any{"type": "sql", "trigger": "boo!", "destination": "invalid"},
 			wantErr: true,
 		},
 	}

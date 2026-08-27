@@ -20,7 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/push"
+	"github.com/daabr/versipellis/pkg/dest"
 )
 
 // DriverType* constants represent all the available SQL database drivers for configurations in the TOML file.
@@ -107,7 +107,7 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 		return nil, fmt.Errorf("invalid query timeout duration: %w", err)
 	}
 
-	p := &Collector{
+	c := &Collector{
 		BaseCollector: *base,
 		driver:        strings.ToLower(strings.TrimSpace(config.Value(sqlCfg, "type", ""))),
 		conn:          config.Value(sqlCfg, "connection", ""),
@@ -116,12 +116,12 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	}
 
 	switch {
-	case !slices.Contains(validDriverTypes, p.driver):
-		return nil, fmt.Errorf("unrecognized SQL driver type %q", p.driver)
-	case p.conn == "":
-		return nil, fmt.Errorf("SQL collector config for %q must have a database connection string", p.driver)
+	case !slices.Contains(validDriverTypes, c.driver):
+		return nil, fmt.Errorf("unrecognized SQL driver type %q", c.driver)
+	case c.conn == "":
+		return nil, fmt.Errorf("SQL collector config for %q must have a database connection string", c.driver)
 	default:
-		return p, nil
+		return c, nil
 	}
 }
 
@@ -162,43 +162,43 @@ func checkQuery(query string, err error) (string, error) {
 // This function returns immediately, and the collector runs asynchronously in the background.
 // This function is idempotent: only the first call will actually start a goroutine. However,
 // it is not meant to be safe for concurrency, initialize collectors only in the main goroutine.
-func (p *Collector) Start(ctx context.Context) bool {
-	if p == nil {
+func (c *Collector) Start(ctx context.Context) bool {
+	if c == nil {
 		slog.Error("SQL collector is misconfigured")
 		return false
 	}
-	if p.cancel != nil {
+	if c.cancel != nil {
 		slog.Error("SQL collector already started") // This is a programming error...
 		return true                                 // ...But a harmless one.
 	}
 
 	var db *sql.DB
 	var err error
-	switch p.driver {
+	switch c.driver {
 	case DriverTypeCockroachDB, DriverTypePostgres, DriverTypePostgreSQL:
-		err = p.connectToPostgres(ctx)
+		err = c.connectToPostgres(ctx)
 	case DriverTypeMariaDB:
-		db, err = openDB(ctx, DriverTypeMySQL, p.conn)
+		db, err = openDB(ctx, DriverTypeMySQL, c.conn)
 	case DriverTypeMSSQL:
-		db, err = openDB(ctx, DriverTypeSQLServer, p.conn)
+		db, err = openDB(ctx, DriverTypeSQLServer, c.conn)
 	case DriverTypeODBC:
-		db, err = connectToODBC(ctx, p.conn)
+		db, err = connectToODBC(ctx, c.conn)
 	case DriverTypeSAPHANA:
-		db, err = openDB(ctx, "hdb", p.conn)
+		db, err = openDB(ctx, "hdb", c.conn)
 	default:
-		db, err = openDB(ctx, p.driver, p.conn)
+		db, err = openDB(ctx, c.driver, c.conn)
 	}
 	if err != nil {
-		slog.Warn("failed to connect to SQL-based database", slog.Any("err", err), slog.String("driver", p.driver))
+		slog.Warn("failed to connect to SQL-based database", slog.Any("err", err), slog.String("driver", c.driver))
 		return false
 	}
 
-	p.db = db
-	ctx, p.cancel = context.WithCancel(ctx)
-	p.done = ctx.Done()
+	c.db = db
+	ctx, c.cancel = context.WithCancel(ctx)
+	c.done = ctx.Done()
 
-	slog.Info("starting to execute SQL queries", slog.String("driver", p.driver), slog.String("schedule", p.Cronspec))
-	go p.scheduleNextQuery(ctx, time.Now())
+	slog.Info("starting to execute SQL queries", slog.String("driver", c.driver), slog.String("schedule", c.Cronspec))
+	go c.scheduleNextQuery(ctx, time.Now())
 	return true
 }
 
@@ -221,21 +221,21 @@ func openDB(ctx context.Context, driver, conn string) (*sql.DB, error) {
 	return db, nil
 }
 
-func (p *Collector) scheduleNextQuery(ctx context.Context, prev time.Time) {
-	defer p.Close()
+func (c *Collector) scheduleNextQuery(ctx context.Context, prev time.Time) {
+	defer c.Close()
 	for {
-		nextStart := p.Schedule.Next(prev)
+		nextStart := c.Schedule.Next(prev)
 		if nextStart.IsZero() {
-			if p.Schedule.RunsOnlyOnce() {
-				slog.Info("SQL collector finished one-time execution", slog.String("driver", p.driver))
+			if c.Schedule.RunsOnlyOnce() {
+				slog.Info("SQL collector finished one-time execution", slog.String("driver", c.driver))
 			} else {
-				slog.Error("SQL collector stopped due to scheduler bug - no next instance for: " + p.Cronspec)
+				slog.Error("SQL collector stopped due to scheduler bug - no next instance for: " + c.Cronspec)
 			}
 			return
 		}
-		if now := time.Now(); !p.Schedule.RunsOnlyOnce() && now.After(nextStart) {
+		if now := time.Now(); !c.Schedule.RunsOnlyOnce() && now.After(nextStart) {
 			slog.Warn("SQL collector is behind schedule, skipping missed execution",
-				slog.String("driver", p.driver), slog.Time("skipped", nextStart),
+				slog.String("driver", c.driver), slog.Time("skipped", nextStart),
 				slog.Duration("gap", now.Sub(nextStart)),
 			)
 			prev = nextStart
@@ -248,7 +248,7 @@ func (p *Collector) scheduleNextQuery(ctx context.Context, prev time.Time) {
 			timer.Stop() // No need to drain since Go 1.23.
 			return
 		case <-timer.C:
-			p.executeQuery(ctx)
+			c.executeQuery(ctx)
 			prev = nextStart
 		}
 	}
@@ -256,11 +256,11 @@ func (p *Collector) scheduleNextQuery(ctx context.Context, prev time.Time) {
 
 // This is never called directly, only through [Collector.scheduleNextQuery]. Therefore, it's safe to assume
 // that either [Collector.db] or [Collector.pgPool] are non-nil, given that [Collector.Start] had to succeed first.
-func (p *Collector) executeQuery(ctx context.Context) bool {
+func (c *Collector) executeQuery(ctx context.Context) bool {
 	queryCtx := ctx
 	var cancel context.CancelFunc
-	if p.timeout > 0 {
-		queryCtx, cancel = context.WithTimeout(ctx, p.timeout)
+	if c.timeout > 0 {
+		queryCtx, cancel = context.WithTimeout(ctx, c.timeout)
 	}
 	if cancel != nil {
 		defer cancel()
@@ -268,51 +268,51 @@ func (p *Collector) executeQuery(ctx context.Context) bool {
 
 	// [Collector.db] and [Collector.pgPool]/[Collector.usingPG] are mutually exclusive,
 	// so if the latter is non-nil we have to use it instead of the former.
-	if p.usingPG {
-		return p.executePostgresQuery(queryCtx)
+	if c.usingPG {
+		return c.executePostgresQuery(queryCtx, c.Sender)
 	}
 
-	tx, err := p.db.BeginTx(queryCtx, &sql.TxOptions{ReadOnly: true})
+	tx, err := c.db.BeginTx(queryCtx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err), slog.String("driver", p.driver))
+		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err), slog.String("driver", c.driver))
 		return false
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	start := time.Now()
-	rows, err := tx.QueryContext(queryCtx, p.query)
+	rows, err := tx.QueryContext(queryCtx, c.query)
 	if err != nil {
-		slog.Warn("failed to execute SQL query", slog.Any("error", err), slog.String("driver", p.driver),
+		slog.Warn("failed to execute SQL query", slog.Any("error", err), slog.String("driver", c.driver),
 			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
 		return false
 	}
 	defer rows.Close()
 
-	rowCount, err := processResults(rows, 1)
+	rowCount, err := processResults(ctx, rows, c.Sender, 1)
 	end := time.Now()
 	ok := err == nil
 	if !ok {
 		slog.Warn("error while processing SQL query results", slog.Any("error", err),
-			slog.String("driver", p.driver), slog.Int("successfully_processed_rows", rowCount),
+			slog.String("driver", c.driver), slog.Int("successfully_processed_rows", rowCount),
 		)
 	} else {
-		stats := p.db.Stats()
+		stats := c.db.Stats()
 		slog.Debug("SQL query execution completed successfully",
-			slog.String("driver", p.driver), slog.Int("rows", rowCount),
+			slog.String("driver", c.driver), slog.Int("rows", rowCount),
 			slog.Time("start_time", start), slog.Duration("exec_duration", end.Sub(start)),
 			slog.Int("in_use_conns", stats.InUse), slog.Int("idle_conns", stats.Idle),
 		)
 	}
 
 	if ok || rowCount > 0 {
-		p.prevStart = start.UTC()
-		p.prevEnd = end.UTC()
+		c.prevStart = start.UTC()
+		c.prevEnd = end.UTC()
 	}
 	return ok
 }
 
-func processResults(rows *sql.Rows, resultSet int) (int, error) {
+func processResults(ctx context.Context, rows *sql.Rows, sender dest.Sender, resultSet int) (int, error) {
 	cols, err := rows.Columns()
 	if err != nil {
 		return 0, fmt.Errorf("failed to read SQL column names in result-set %d: %w", resultSet, err)
@@ -324,8 +324,10 @@ func processResults(rows *sql.Rows, resultSet int) (int, error) {
 		if err != nil {
 			return rowCount, fmt.Errorf("failed to scan row %d in result-set %d: %w", rowCount+1, resultSet, err)
 		}
-		if err := push.Stdout(row); err != nil {
-			return rowCount, fmt.Errorf("failed to process row %d in result-set %d: %w", rowCount+1, resultSet, err)
+		if sender != nil {
+			if err := sender(ctx, row); err != nil {
+				return rowCount, fmt.Errorf("failed to process row %d in result-set %d: %w", rowCount+1, resultSet, err)
+			}
 		}
 		rowCount++
 	}
@@ -335,7 +337,7 @@ func processResults(rows *sql.Rows, resultSet int) (int, error) {
 
 	// Support multiple result-sets for multiple statements, using recursion.
 	if rows.NextResultSet() {
-		nextRowCount, err := processResults(rows, resultSet+1)
+		nextRowCount, err := processResults(ctx, rows, sender, resultSet+1)
 		rowCount += nextRowCount
 		if err != nil {
 			return rowCount, err
@@ -368,8 +370,8 @@ func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
 }
 
 // Done returns a channel that signals and gets closed when the collector has finished its work and is no longer running.
-func (p *Collector) Done() <-chan struct{} {
-	return p.done
+func (c *Collector) Done() <-chan struct{} {
+	return c.done
 }
 
 // Close closes the database connection pool, prevents new queries from starting, and waits for
@@ -377,13 +379,13 @@ func (p *Collector) Done() <-chan struct{} {
 // signals through the [Collector.Done] channel that the collector isn't executing queries anymore.
 // It is safe (though useless) to call even if [Collector.Start] was never called, but either
 // way it is meant to be called only in the same goroutine as [Collector.scheduleNextQuery].
-func (p *Collector) Close() {
-	p.closeOnce.Do(func() {
-		if p.cancel != nil {
-			defer p.cancel()
+func (c *Collector) Close() {
+	c.closeOnce.Do(func() {
+		if c.cancel != nil {
+			defer c.cancel()
 		}
 
-		if p.db == nil && !p.usingPG {
+		if c.db == nil && !c.usingPG {
 			return
 		}
 
@@ -391,11 +393,11 @@ func (p *Collector) Close() {
 		go func() {
 			defer close(done)
 
-			if p.db != nil {
-				_ = p.db.Close()
+			if c.db != nil {
+				_ = c.db.Close()
 			}
-			if p.usingPG {
-				p.pgPool.Close()
+			if c.usingPG {
+				c.pgPool.Close()
 			}
 		}()
 
@@ -405,7 +407,7 @@ func (p *Collector) Close() {
 			timer.Stop() // No need to drain since Go 1.23.
 		case <-timer.C:
 			slog.Warn("closing SQL connection pool forcefully",
-				slog.String("driver", p.driver), slog.Duration("timeout", closeTimeout),
+				slog.String("driver", c.driver), slog.Duration("timeout", closeTimeout),
 			)
 		}
 	})

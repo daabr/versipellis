@@ -1,8 +1,7 @@
-// Package push provides trivial targets to push output data to, for demo and testing purposes.
-// Other I/O protocol-specific pushers are provided in the packages implementing those protocols.
-package push
+package dest
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,8 +11,8 @@ import (
 )
 
 var (
-	// Synchronize all [Stdout] calls, unlike other pushers, to prevent concurrent callers
-	// from interleaving their output mid-line (because [os.Stdout] is a shared resource).
+	// Synchronize all [Stdout] calls, unlike other destinations which support concurrency, to prevent
+	// concurrent callers from interleaving their output mid-line (because [os.Stdout] is a shared resource).
 	mu sync.Mutex
 
 	once    sync.Once             // Irrelevant in tests.
@@ -22,10 +21,10 @@ var (
 )
 
 // Stdout prints any input data to [os.Stdout]. Simple data types are printed as-is, while
-// complex structures are encoded as JSON, if possible. Because this pusher is intended for
-// demo and testing purposes, it is guaranteed to be concurrency-safe but not necessarily
+// complex structures are encoded as JSON, if possible. Because this destination is intended
+// for demo and testing purposes, it is guaranteed to be concurrency-safe but not necessarily
 // performant. For the same reason, JSON encoding errors are logged, but not exposed.
-func Stdout(data any) error {
+func Stdout(_ context.Context, data any) error {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -36,7 +35,7 @@ func Stdout(data any) error {
 		// Log this error, but...
 	}
 
-	// ...Never let specific pusher interrupt or abort data flow.
+	// ...Never let this specific destination interrupt or abort data flow.
 	return nil
 }
 

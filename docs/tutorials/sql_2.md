@@ -2,17 +2,17 @@
 
 This tutorial is a continuation of the [SQL data collection](./sql_1.md) demo. It's essentially the same, but it shows you how to use real databases instead of SQLite, albeit with the simplest possible setup.
 
-To explore more configuration options and details in-depth, see the [configuration reference](../config.md), and in particular the [SQL page](../config/sql.md). See also these [basic setup guides](../setup.md) for third-parties.
+To explore more configuration options and details in-depth, see the [configuration reference](../config.md), and in particular the [SQL page](../config/sql.md). See also these [basic setup guides](../setup.md).
 
 ## Prerequisite: Comment-Out SQLite
 
-Comment-out the SQLite block (lines 6-8) in the file [`config/sql_queries.toml`](../../config/sql_queries.toml#L6-L8), **but not** the section header `[collector.sql]` (line 5) or the line `destination = "stdout"` at the bottom.
+Comment-out the SQLite block (lines 7-9) in the file [`config/sql_queries.toml`](../../config/sql_queries.toml#L7-L9), **but not** the section header `[collector.sql]` (line 6).
 
 ## MariaDB
 
 1. [Basic setup instructions for this database](../setup/mariadb.md)
 
-2. Uncomment this block in the file [`config/sql_queries.toml`](../../config/sql_queries.toml#L10-L12):
+2. Uncomment this block in the file [`config/sql_queries.toml`](../../config/sql_queries.toml#L11-L13):
 
    ```toml
    type = "MariaDB"
@@ -30,7 +30,7 @@ Comment-out the SQLite block (lines 6-8) in the file [`config/sql_queries.toml`]
 
 1. [Basic setup instructions for this database](../setup/mysql.md)
 
-2. Uncomment this block in the file [`config/sql_queries.toml`](../../config/sql_queries.toml#L14-L16):
+2. Uncomment this block in the file [`config/sql_queries.toml`](../../config/sql_queries.toml#L15-L17):
 
    ```toml
    type = "MySQL"
@@ -48,7 +48,7 @@ Comment-out the SQLite block (lines 6-8) in the file [`config/sql_queries.toml`]
 
 1. [Basic setup instructions for this database](../setup/postgresql.md)
 
-2. Uncomment this block in the file [`config/sql_queries.toml`](../../config/sql_queries.toml#L18-L22):
+2. Uncomment this block in the file [`config/sql_queries.toml`](../../config/sql_queries.toml#L19-L23):
 
    ```toml
    type = "PostgreSQL"

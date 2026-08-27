@@ -44,10 +44,10 @@ func BenchmarkCollector(b *testing.B) {
 				// The collector's query execution timestamps are not thread-safe,
 				// so we have to create a separate collector for each goroutine. Similarly,
 				// each collector has its own read-only [sql.DB] to minimize SQLite locking.
-				coll := &Collector{driver: DriverTypeSQLite, query: benchQuery, db: readers[i]}
+				c := &Collector{driver: DriverTypeSQLite, query: benchQuery, db: readers[i]}
 
 				for pb.Next() {
-					if !coll.executeQuery(ctx) {
+					if !c.executeQuery(ctx) {
 						b.Error("unexpected SQL query error")
 						return
 					}

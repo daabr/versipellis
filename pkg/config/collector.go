@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/daabr/versipellis/pkg/cron"
+	"github.com/daabr/versipellis/pkg/dest"
 )
 
 // CollectorType* constants represent all the available types of "collector" configurations in the TOML file.
@@ -31,31 +32,38 @@ type BaseCollector struct {
 
 	Cronspec string
 	Schedule *cron.Schedule
+	Trigger  string // Not fully implemented yet, but reserved for future use.
 
-	Trigger string // Not fully implemented yet, but reserved for future use.
+	Destination string
+	Sender      dest.Sender
 }
 
 // NewBaseCollector creates a new [BaseCollector] from the given configuration, which was read
 // from a TOML file. It checks the details and returns an error if any of them is invalid.
 func NewBaseCollector(cfg map[string]any) (*BaseCollector, error) {
-	p := &BaseCollector{
-		Type:     strings.ToLower(strings.TrimSpace(Value(cfg, "type", CollectorTypeNone))),
-		Cronspec: Value(cfg, "schedule", ""),
-		Trigger:  Value(cfg, "trigger", ""),
+	c := &BaseCollector{
+		Type:        strings.ToLower(strings.TrimSpace(Value(cfg, "type", CollectorTypeNone))),
+		Cronspec:    Value(cfg, "schedule", ""),
+		Trigger:     Value(cfg, "trigger", ""),
+		Destination: strings.ToLower(strings.TrimSpace(Value(cfg, "destination", ""))),
 	}
+	var senderFound bool
+	c.Sender, senderFound = dest.Senders[c.Destination]
 
 	switch {
-	case !slices.Contains(validCollectorTypes, p.Type):
-		return nil, fmt.Errorf("unrecognized collector type %q", p.Type)
-	case p.Type == CollectorTypeNone && p.Cronspec == "" && p.Trigger == "":
-		return p, nil
-	case p.Type == CollectorTypeNone: // Cronspec != "" || Trigger != "".
-		return nil, errors.New("collector configuration of type 'none' cannot have a schedule or a trigger")
-	case p.Cronspec != "" && p.Trigger != "":
+	case !slices.Contains(validCollectorTypes, c.Type):
+		return nil, fmt.Errorf("unrecognized collector type %q", c.Type)
+	case !senderFound:
+		return nil, fmt.Errorf("unrecognized destination %q", c.Destination)
+	case c.Type == CollectorTypeNone && c.Cronspec == "" && c.Trigger == "" && c.Sender == nil:
+		return c, nil
+	case c.Type == CollectorTypeNone: // Cronspec != "" || Trigger != "" || Sender != nil.
+		return nil, errors.New("collector configuration of type 'none' cannot have a schedule, a trigger, or a destination")
+	case c.Cronspec != "" && c.Trigger != "":
 		return nil, errors.New("collector configuration cannot have both a schedule and a trigger")
-	case p.Trigger != "":
-		return p, nil
-	case p.Cronspec == "":
+	case c.Trigger != "":
+		return c, nil
+	case c.Cronspec == "":
 		return nil, errors.New("collector configuration must have either a schedule or a trigger")
 	}
 
@@ -63,17 +71,17 @@ func NewBaseCollector(cfg map[string]any) (*BaseCollector, error) {
 	if tz == nil {
 		return nil, fmt.Errorf("invalid time zone %q", name)
 	}
-	sched, err := cron.Parse(p.Cronspec, tz)
+	sched, err := cron.Parse(c.Cronspec, tz)
 	if err != nil {
 		return nil, fmt.Errorf("invalid expression in collector schedule: %w", err)
 	}
-	p.Cronspec = fmt.Sprintf("TZ=%s %s", name, p.Cronspec)
+	c.Cronspec = fmt.Sprintf("TZ=%s %s", name, c.Cronspec)
 	if !sched.RunsOnlyOnce() && sched.Next(time.Now()).IsZero() {
-		return nil, fmt.Errorf("collector schedule %q will never run", p.Cronspec)
+		return nil, fmt.Errorf("collector schedule %q will never run", c.Cronspec)
 	}
 
-	p.Schedule = sched
-	return p, nil
+	c.Schedule = sched
+	return c, nil
 }
 
 // LoadLocation returns the [time.Location] corresponding to the given timezone name. This is

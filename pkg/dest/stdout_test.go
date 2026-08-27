@@ -1,4 +1,4 @@
-package push
+package dest
 
 import (
 	"bytes"
@@ -58,7 +58,7 @@ func TestStdout(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := Stdout(tt.data); err != nil {
+			if err := Stdout(t.Context(), tt.data); err != nil {
 				t.Fatalf("Stdout(%s) error = %v, wantErr nil", tt.name, err)
 			}
 
@@ -92,7 +92,7 @@ func TestStdoutConcurrency(t *testing.T) {
 	for g := range goroutines {
 		wg.Go(func() {
 			for i := range callsPerGoroutine {
-				if err := Stdout(map[string]any{"goroutine": g, "call": i}); err != nil {
+				if err := Stdout(t.Context(), map[string]any{"goroutine": g, "call": i}); err != nil {
 					t.Errorf("Stdout(goroutine %d, call %d) error = %v, wantErr nil", g, i, err)
 				}
 			}
