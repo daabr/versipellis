@@ -1,6 +1,7 @@
 [collector]
 type = "SQL"
 schedule = "@every 5s"
+destination = "stdout"
 
 [collector.sql]
 type = "SQLite"
@@ -20,5 +21,3 @@ query = "SELECT 'abc' AS bytes, 123 AS nums, CURRENT_TIMESTAMP AS objs UNION SEL
 # # kv_option = "host=localhost dbname=versi_db user=larry passfile=config/.pgpass"
 # # uri_option = "postgres://larry@localhost/versi_db?passfile=config/.pgpass"
 # query = "SELECT * FROM input_data"
-
-destination = "stdout"

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/dest"
 )
 
 func TestCollectorConnectToPostgres(t *testing.T) {
@@ -89,7 +90,7 @@ func TestCollectorStartPostgres(t *testing.T) {
 				t.Fatalf("config.NewBaseCollector() error: %v", err)
 			}
 
-			coll, err := NewCollector(base, map[string]any{
+			c, err := NewCollector(base, map[string]any{
 				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       DriverTypePostgres,
@@ -101,22 +102,22 @@ func TestCollectorStartPostgres(t *testing.T) {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
 
-			coll.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
-			coll.usingPG = tt.usingPG
+			c.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
+			c.usingPG = tt.usingPG
 			ctx := t.Context()
 			if tt.usingPG {
-				ctx, coll.cancel = context.WithCancel(t.Context())
-				coll.done = ctx.Done()
+				ctx, c.cancel = context.WithCancel(t.Context())
+				c.done = ctx.Done()
 			}
 
-			if ok := coll.Start(ctx); !ok {
+			if ok := c.Start(ctx); !ok {
 				t.Fatal("Collector.Start() failed")
 			}
 			if tt.usingPG {
-				go coll.scheduleNextQuery(ctx, time.Now())
+				go c.scheduleNextQuery(ctx, time.Now())
 			}
 
-			<-coll.Done() // Wait for the collector's goroutine to finish its work.
+			<-c.Done() // Wait for the collector's goroutine to finish its work.
 		})
 	}
 }
@@ -129,7 +130,7 @@ func TestCollectorExecutePostgresQuery(t *testing.T) {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
 
-	coll, err := NewCollector(base, map[string]any{
+	c, err := NewCollector(base, map[string]any{
 		"sql": map[string]any{
 			"type":       DriverTypePostgres,
 			"connection": "postgres://localhost:5432/dbname",
@@ -140,13 +141,13 @@ func TestCollectorExecutePostgresQuery(t *testing.T) {
 		t.Fatalf("NewCollector() error: %v", err)
 	}
 
-	coll.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
-	coll.usingPG = true
+	c.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
+	c.usingPG = true
 
-	if !coll.executeQuery(t.Context()) {
+	if !c.executeQuery(t.Context()) {
 		t.Error("Collector.executeQuery() = false, want true")
 	}
-	if coll.prevStart.IsZero() || coll.prevEnd.IsZero() {
+	if c.prevStart.IsZero() || c.prevEnd.IsZero() {
 		t.Error("Collector.executeQuery() did not update the checkpoint on success")
 	}
 }
@@ -196,16 +197,33 @@ func TestProcessPostgresResults(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		noRows bool
+		name    string
+		sender  dest.Sender
+		noRows  bool
+		wantErr bool
 	}{
 		{
-			name:   "no_rows",
-			noRows: true,
+			name:    "no_rows",
+			noRows:  true,
+			wantErr: false,
 		},
 		{
-			name:   "with_rows",
-			noRows: false,
+			name:    "with_rows_but_no_sender",
+			sender:  nil,
+			noRows:  false,
+			wantErr: false,
+		},
+		{
+			name:    "with_rows_and_sender",
+			sender:  fakeSender(nil),
+			noRows:  false,
+			wantErr: false,
+		},
+		{
+			name:    "with_rows_and_sender_and_error",
+			sender:  fakeSender(errors.New("sender error")),
+			noRows:  false,
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
@@ -221,12 +239,14 @@ func TestProcessPostgresResults(t *testing.T) {
 				}
 			}
 
-			gotRowCount, err := processPostgresResults(rows)
-			if err != nil {
-				t.Fatalf("processPostgresResults() error: %v", err)
-			}
-			if gotRowCount != len(rows.rows) {
-				t.Fatalf("processPostgresResults() row count = %d, want %d", gotRowCount, len(rows.rows))
+			gotRowCount, err := processPostgresResults(t.Context(), rows, tt.sender)
+			switch {
+			case (err != nil) != tt.wantErr:
+				t.Errorf("processPostgresResults() error = %v, wantErr = %v", err, tt.wantErr)
+			case tt.wantErr && gotRowCount != 0:
+				t.Errorf("processPostgresResults() row count = %d, want 0 on error", gotRowCount)
+			case !tt.wantErr && gotRowCount != len(rows.rows):
+				t.Errorf("processPostgresResults() row count = %d, want %d", gotRowCount, len(rows.rows))
 			}
 		})
 	}
@@ -262,7 +282,7 @@ func TestProcessPostgresResultsErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := processPostgresResults(tt.rows); err == nil {
+			if _, err := processPostgresResults(t.Context(), tt.rows, nil); err == nil {
 				t.Errorf("processPostgresResults() error = nil, wantErr = true")
 			}
 		})

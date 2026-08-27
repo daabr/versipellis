@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/cron"
+	"github.com/daabr/versipellis/pkg/dest"
 )
 
 func TestNewCollector(t *testing.T) {
@@ -22,13 +24,13 @@ func TestNewCollector(t *testing.T) {
 	tests := []struct {
 		name    string
 		base    *config.BaseCollector
-		collCfg map[string]any
+		cfg     map[string]any
 		wantErr bool
 	}{
 		{
 			name: "nil_base",
 			base: nil,
-			collCfg: map[string]any{
+			cfg: map[string]any{
 				"sql": map[string]any{},
 			},
 			wantErr: true,
@@ -36,7 +38,7 @@ func TestNewCollector(t *testing.T) {
 		{
 			name: "wrong_base_type",
 			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			collCfg: map[string]any{
+			cfg: map[string]any{
 				"type": config.CollectorTypeHTTP,
 				"sql":  map[string]any{},
 			},
@@ -45,13 +47,13 @@ func TestNewCollector(t *testing.T) {
 		{
 			name:    "nil_collector_cfg",
 			base:    &config.BaseCollector{Type: config.CollectorTypeSQL},
-			collCfg: nil,
+			cfg:     nil,
 			wantErr: true,
 		},
 		{
 			name: "missing_sql_section",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
-			collCfg: map[string]any{
+			cfg: map[string]any{
 				"type": config.CollectorTypeSQL,
 				"sol":  map[string]any{},
 			},
@@ -60,7 +62,7 @@ func TestNewCollector(t *testing.T) {
 		{
 			name: "invalid_sql_section",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
-			collCfg: map[string]any{
+			cfg: map[string]any{
 				"type": config.CollectorTypeSQL,
 				"sql":  "not a map",
 			},
@@ -69,7 +71,7 @@ func TestNewCollector(t *testing.T) {
 		{
 			name: "missing_driver_type",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
-			collCfg: map[string]any{
+			cfg: map[string]any{
 				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"connection": "connection",
@@ -81,7 +83,7 @@ func TestNewCollector(t *testing.T) {
 		{
 			name: "unrecognized_driver_type",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
-			collCfg: map[string]any{
+			cfg: map[string]any{
 				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       "unknown",
@@ -94,7 +96,7 @@ func TestNewCollector(t *testing.T) {
 		{
 			name: "missing_connection",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
-			collCfg: map[string]any{
+			cfg: map[string]any{
 				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":  DriverTypeSQLite,
@@ -106,7 +108,7 @@ func TestNewCollector(t *testing.T) {
 		{
 			name: "missing_query",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
-			collCfg: map[string]any{
+			cfg: map[string]any{
 				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       DriverTypeSQLite,
@@ -118,7 +120,7 @@ func TestNewCollector(t *testing.T) {
 		{
 			name: "invalid_timeout",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
-			collCfg: map[string]any{
+			cfg: map[string]any{
 				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       DriverTypeSQLite,
@@ -132,7 +134,7 @@ func TestNewCollector(t *testing.T) {
 		{
 			name: "negative_timeout_is_allowed",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
-			collCfg: map[string]any{
+			cfg: map[string]any{
 				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       DriverTypeSQLite,
@@ -146,7 +148,7 @@ func TestNewCollector(t *testing.T) {
 		{
 			name: "happy_path",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
-			collCfg: map[string]any{
+			cfg: map[string]any{
 				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       strings.ToUpper(DriverTypeSQLite), // Test case-insensitivity of the driver type.
@@ -161,7 +163,7 @@ func TestNewCollector(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, gotErr := NewCollector(tt.base, tt.collCfg); (gotErr != nil) != tt.wantErr {
+			if _, gotErr := NewCollector(tt.base, tt.cfg); (gotErr != nil) != tt.wantErr {
 				t.Errorf("NewCollector() error = %v, wantErr %v", gotErr, tt.wantErr)
 			}
 		})
@@ -271,7 +273,7 @@ func TestCollectorStart(t *testing.T) {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
 
-	coll, err := NewCollector(base, map[string]any{
+	c, err := NewCollector(base, map[string]any{
 		"type": config.CollectorTypeSQL,
 		"sql": map[string]any{
 			"type":       DriverTypeSQLite,
@@ -283,14 +285,14 @@ func TestCollectorStart(t *testing.T) {
 		t.Fatalf("NewCollector() error: %v", err)
 	}
 
-	if ok := coll.Start(t.Context()); !ok {
+	if ok := c.Start(t.Context()); !ok {
 		t.Fatal("Collector.Start() failed")
 	}
-	if ok := coll.Start(t.Context()); !ok {
+	if ok := c.Start(t.Context()); !ok {
 		t.Fatal("second Collector.Start() failed (should be idempotent)")
 	}
 
-	<-coll.Done() // Wait for the collector's goroutine to finish its work.
+	<-c.Done() // Wait for the collector's goroutine to finish its work.
 }
 
 func TestCollectorConnectionStringError(t *testing.T) {
@@ -314,7 +316,7 @@ func TestCollectorConnectionStringError(t *testing.T) {
 		t.Run(driver, func(t *testing.T) {
 			t.Parallel()
 
-			coll, err := NewCollector(base, map[string]any{
+			c, err := NewCollector(base, map[string]any{
 				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       driver,
@@ -326,7 +328,7 @@ func TestCollectorConnectionStringError(t *testing.T) {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
 
-			if ok := coll.Start(t.Context()); ok {
+			if ok := c.Start(t.Context()); ok {
 				t.Fatal("Collector.Start() succeeded unexpectedly")
 			}
 		})
@@ -380,7 +382,7 @@ func TestScheduleNextQuery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("config.NewBaseCollector() error: %v", err)
 			}
-			coll, err := NewCollector(base, map[string]any{
+			c, err := NewCollector(base, map[string]any{
 				"type": config.CollectorTypeSQL,
 				"sql": map[string]any{
 					"type":       DriverTypeSQLite,
@@ -400,11 +402,11 @@ func TestScheduleNextQuery(t *testing.T) {
 			}
 
 			if !tt.isAsync {
-				coll.scheduleNextQuery(ctx, time.Now())
+				c.scheduleNextQuery(ctx, time.Now())
 				return
 			}
 
-			go coll.scheduleNextQuery(ctx, time.Now().Add(-5*time.Second))
+			go c.scheduleNextQuery(ctx, time.Now().Add(-5*time.Second))
 			time.Sleep(50 * time.Millisecond)
 			cancel()
 		})
@@ -414,14 +416,10 @@ func TestScheduleNextQuery(t *testing.T) {
 func TestCollectorExecuteQuery(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"})
-	if err != nil {
-		t.Fatalf("config.NewBaseCollector() error: %v", err)
-	}
-
 	tests := []struct {
 		name    string
 		cfg     map[string]any
+		sender  dest.Sender
 		closeDB bool
 		wantOK  bool
 	}{
@@ -462,35 +460,70 @@ func TestCollectorExecuteQuery(t *testing.T) {
 			closeDB: true,
 			wantOK:  false,
 		},
+		{
+			name: "processing_error",
+			cfg: map[string]any{
+				"type":       DriverTypeSQLite,
+				"connection": ":memory:",
+				"query":      "SELECT 1",
+			},
+			sender: fakeSender(errors.New("fake sender error")),
+			wantOK: false,
+		},
+		{
+			name: "happy_path_with_dummy_sender",
+			cfg: map[string]any{
+				"type":       DriverTypeSQLite,
+				"connection": ":memory:",
+				"query":      "SELECT 1",
+			},
+			sender: fakeSender(nil),
+			wantOK: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			coll, err := NewCollector(base, map[string]any{"type": config.CollectorTypeSQL, "sql": tt.cfg})
+			sched, err := cron.Parse("@once", nil)
+			if err != nil {
+				t.Fatalf("cron.Parse() error: %v", err)
+			}
+			base := &config.BaseCollector{
+				Type:     config.CollectorTypeSQL,
+				Schedule: sched,
+				Sender:   tt.sender,
+			}
+			c, err := NewCollector(base, map[string]any{"type": config.CollectorTypeSQL, "sql": tt.cfg})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
-			coll.db, err = sql.Open(coll.driver, coll.conn)
+			c.db, err = sql.Open(c.driver, c.conn)
 			if err != nil {
 				t.Fatalf("sql.Open() error: %v", err)
 			}
 
 			if tt.closeDB {
-				if err := coll.db.Close(); err != nil {
+				if err := c.db.Close(); err != nil {
 					t.Fatalf("sql.DB.Close() error: %v", err)
 				}
 			} else {
-				t.Cleanup(func() { _ = coll.db.Close() })
+				t.Cleanup(func() { _ = c.db.Close() })
 			}
 
-			if gotOK := coll.executeQuery(t.Context()); gotOK != tt.wantOK {
+			if gotOK := c.executeQuery(t.Context()); gotOK != tt.wantOK {
 				t.Errorf("Collector.executeQuery() = %v, want %v", gotOK, tt.wantOK)
 			}
-			if timestampUpdated := !coll.prevStart.IsZero(); timestampUpdated != tt.wantOK {
+			if timestampUpdated := !c.prevStart.IsZero(); timestampUpdated != tt.wantOK {
 				t.Errorf("Collector.prevXXXX checkpoint updated = %v, want %v", timestampUpdated, tt.wantOK)
 			}
 		})
+	}
+}
+
+func fakeSender(err error) dest.Sender {
+	return func(_ context.Context, _ any) error {
+		return err
 	}
 }
 
@@ -509,7 +542,7 @@ func TestProcessResults(t *testing.T) {
 	}
 	_ = rows.Close() // Close rows immediately so [sql.Rows.Columns] fails.
 
-	if _, err := processResults(rows, 1); err == nil {
+	if _, err := processResults(t.Context(), rows, nil, 1); err == nil {
 		t.Error("processResults() error = nil, wantErr = true")
 	}
 }
@@ -559,7 +592,7 @@ func TestProcessResultsWithFakeDriver(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = rows.Close() })
 
-			gotRowCount, gotErr := processResults(rows, 1)
+			gotRowCount, gotErr := processResults(t.Context(), rows, nil, 1)
 			if (gotErr != nil) != tt.wantErr {
 				t.Fatalf("processResults() error = %v, wantErr = %v", gotErr, tt.wantErr)
 			}
@@ -576,22 +609,22 @@ func TestCollectorClose(t *testing.T) {
 	t.Run("unstarted", func(t *testing.T) {
 		t.Parallel()
 
-		coll := &Collector{}
-		coll.Close()
+		c := &Collector{}
+		c.Close()
 	})
 
 	t.Run("fake_pg_pool", func(t *testing.T) {
 		t.Parallel()
 
 		var ctx context.Context
-		coll := &Collector{pgPool: fakePGPool{}, usingPG: true}
-		ctx, coll.cancel = context.WithCancel(t.Context())
-		coll.done = ctx.Done()
+		c := &Collector{pgPool: fakePGPool{}, usingPG: true}
+		ctx, c.cancel = context.WithCancel(t.Context())
+		c.done = ctx.Done()
 
-		coll.Close()
-		coll.Close()
+		c.Close()
+		c.Close()
 
-		<-coll.Done()
+		<-c.Done()
 	})
 
 	t.Run("in_memory_sqlite", func(t *testing.T) {
@@ -603,13 +636,13 @@ func TestCollectorClose(t *testing.T) {
 		}
 
 		var ctx context.Context
-		coll := &Collector{db: db}
-		ctx, coll.cancel = context.WithCancel(t.Context())
-		coll.done = ctx.Done()
+		c := &Collector{db: db}
+		ctx, c.cancel = context.WithCancel(t.Context())
+		c.done = ctx.Done()
 
-		coll.Close()
+		c.Close()
 
-		<-coll.Done()
+		<-c.Done()
 	})
 }
 

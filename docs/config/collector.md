@@ -2,7 +2,7 @@
 
 ## `[collector]` Sections
 
-`type` - what kind of data to collect / how to retrieve it
+`type` - what kind of data to retrieve / how to retrieve it
 
 - Required
 - Options (case insensitive):
@@ -24,6 +24,14 @@
   - `"UTC"` (case insensitive)
   - `"local"` (case insensitive)
   - Any valid identifier from the [IANA Time Zone database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) (case sensitive!), e.g. `"America/Los_Angeles"`
+
+`destination` - where to send the data to
+
+- Optional
+- Default: `"discard"` / `"none"`
+- Options (case insensitive):
+  - `"discard"` / `"none"`
+  - `"stdout"`
 
 ## `[collector.sql]` Sub-Section
 
