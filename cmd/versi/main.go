@@ -3,19 +3,24 @@
 // Versipellis is a versatile, scalable tool for transferring and transforming data reliably
 // across diverse media, protocols, and formats, without altering the data itself.
 //
-// It is not a data pipeline, but rather a powerful, easy-to-use conduit for pipeline inputs and outputs.
+// It is not a data pipeline, but rather a powerful yet easy-to-use conduit for pipeline inputs and outputs.
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"strings"
+	"syscall"
 
 	"github.com/lmittmann/tint"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/sql"
 )
 
 func main() {
@@ -30,12 +35,27 @@ func main() {
 		os.Exit(0)
 	}
 
-	if _, err := config.ParseFile(path); err != nil {
+	cfg, err := config.ParseFile(path)
+	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	initLog(debugLog, structured, info)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	channels, err := initCollectors(ctx, cfg)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		cancel()
+		os.Exit(1)
+	}
+
+	waitForInterrupt(cancel)
+	for _, done := range channels {
+		<-done
+	}
+	slog.Info("shutting down")
 }
 
 func initLog(debugLog, structured bool, info *debug.BuildInfo) {
@@ -71,4 +91,59 @@ func buildAttrs(info *debug.BuildInfo) []any {
 		}
 	}
 	return attrs
+}
+
+func initCollectors(ctx context.Context, cfg map[string]any) ([]<-chan struct{}, error) {
+	var done []<-chan struct{}
+	errs := 0
+
+	for namespace, collector := range config.ExtractSubmaps(cfg, "collector") {
+		base, err := config.NewBaseCollector(collector, namespace)
+		if err != nil {
+			slog.Error("failed to create base collector", slog.Any("error", err), slog.String("name", namespace))
+			errs++
+			continue
+		}
+
+		switch base.Type {
+		case config.CollectorTypeHTTP, config.CollectorTypeHTTP3:
+			slog.Error("HTTP collectors are not implemented yet", slog.String("name", namespace))
+			errs++
+			continue
+
+		case config.CollectorTypeSQL:
+			c, err := sql.NewCollector(base, collector)
+			switch {
+			case err != nil:
+				slog.Error("failed to create SQL collector", slog.Any("error", err), slog.String("name", namespace))
+				errs++
+			case !c.Start(ctx):
+				slog.Error("failed to start SQL collector", slog.String("name", namespace))
+				errs++
+			default:
+				done = append(done, c.Done())
+			}
+		}
+	}
+
+	switch {
+	case errs > 0:
+		msg := fmt.Sprintf("failed to initialize %d collector(s)", errs)
+		return nil, errors.New(msg)
+	case len(done) == 0:
+		// Until we add receivers, we cannot run without collectors.
+		return nil, errors.New("no collectors found in configuration")
+	default:
+		return done, nil
+	}
+}
+
+func waitForInterrupt(cancel context.CancelFunc) {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(ch)
+	sig := <-ch
+
+	slog.Warn("intercepted OS signal", slog.String("type", sig.String()))
+	cancel()
 }

@@ -51,7 +51,9 @@ func (c *Collector) connectToPostgres(ctx context.Context) error {
 func (c *Collector) executePostgresQuery(ctx context.Context, sender dest.Sender) bool {
 	tx, err := c.pgPool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
-		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err), slog.String("driver", c.driver))
+		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err),
+			slog.String("driver", c.driver), slog.String("name", c.Name),
+		)
 		return false
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }() //nolint:contextcheck // Ctx is potentially already canceled.
@@ -59,7 +61,8 @@ func (c *Collector) executePostgresQuery(ctx context.Context, sender dest.Sender
 	start := time.Now()
 	rows, err := tx.Query(ctx, c.query)
 	if err != nil {
-		slog.Warn("failed to execute SQL query", slog.Any("error", err), slog.String("driver", c.driver),
+		slog.Warn("failed to execute SQL query", slog.Any("error", err),
+			slog.String("driver", c.driver), slog.String("name", c.Name),
 			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
 		return false
@@ -69,12 +72,12 @@ func (c *Collector) executePostgresQuery(ctx context.Context, sender dest.Sender
 	end := time.Now()
 	ok := err == nil
 	if !ok {
-		slog.Warn("error while processing SQL query results", slog.Any("error", err),
-			slog.String("driver", c.driver), slog.Int("successfully_processed_rows", rowCount),
+		slog.Warn("error while processing SQL query results", slog.Any("error", err), slog.String("driver", c.driver),
+			slog.String("name", c.Name), slog.Int("successfully_processed_rows", rowCount),
 		)
 	} else {
-		slog.Debug("SQL query completed successfully",
-			slog.String("driver", c.driver), slog.Int("rows", rowCount),
+		slog.Debug("SQL query completed successfully", slog.String("driver", c.driver),
+			slog.String("name", c.Name), slog.Int("rows", rowCount),
 			slog.Time("start_time", start), slog.Duration("exec_duration", end.Sub(start)),
 		)
 	}

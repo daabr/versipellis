@@ -21,7 +21,7 @@ What does a section "type" mean? Versipellis supports 0 or more instances of eac
   key = "value"
   ```
 
-- If you want to have multiple instances of a section type, name each one with unique namespace prefix:
+- If you want to have multiple instances of a section type, name each one with a unique namespace prefix:
 
   ```toml
   [larry.collector]
@@ -30,6 +30,19 @@ What does a section "type" mean? Versipellis supports 0 or more instances of eac
   [lucian.collector]
   key = "value 2"
 
-  [remus.collector]
+  [remus.lupin.collector]
+  key = "value 3"
+  ```
+
+- You can also define a "list" of sections without namespace prefixes:
+
+  ```toml
+  [[collector]]
+  key = "value 1"
+
+  [[collector]]
+  key = "value 2"
+
+  [[collector]]
   key = "value 3"
   ```

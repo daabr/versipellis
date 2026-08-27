@@ -29,6 +29,7 @@ var validCollectorTypes = []string{
 // BaseCollector contains the basic details of any "collector" configuration in the TOML file.
 type BaseCollector struct {
 	Type string
+	Name string
 
 	Cronspec string
 	Schedule *cron.Schedule
@@ -40,9 +41,10 @@ type BaseCollector struct {
 
 // NewBaseCollector creates a new [BaseCollector] from the given configuration, which was read
 // from a TOML file. It checks the details and returns an error if any of them is invalid.
-func NewBaseCollector(cfg map[string]any) (*BaseCollector, error) {
+func NewBaseCollector(cfg map[string]any, namespace string) (*BaseCollector, error) {
 	c := &BaseCollector{
 		Type:        strings.ToLower(strings.TrimSpace(Value(cfg, "type", CollectorTypeNone))),
+		Name:        namespace,
 		Cronspec:    Value(cfg, "schedule", ""),
 		Trigger:     Value(cfg, "trigger", ""),
 		Destination: strings.ToLower(strings.TrimSpace(Value(cfg, "destination", ""))),
