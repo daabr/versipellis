@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
@@ -355,8 +356,6 @@ func TestOpenDBPingFailure(t *testing.T) {
 }
 
 func TestScheduleNextQuery(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name     string
 		schedule string
@@ -376,39 +375,52 @@ func TestScheduleNextQuery(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				base, err := config.NewBaseCollector(map[string]any{
+					"type":     config.CollectorTypeSQL,
+					"schedule": tt.schedule,
+				})
+				if err != nil {
+					t.Fatalf("config.NewBaseCollector() error: %v", err)
+				}
 
-			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": tt.schedule})
-			if err != nil {
-				t.Fatalf("config.NewBaseCollector() error: %v", err)
-			}
-			c, err := NewCollector(base, map[string]any{
-				"type": config.CollectorTypeSQL,
-				"sql": map[string]any{
-					"type":       DriverTypeSQLite,
-					"connection": ":memory:",
-					"query":      "SELECT 1;",
-				},
-			})
-			if err != nil {
-				t.Fatalf("NewCollector() error: %v", err)
-			}
+				c, err := NewCollector(base, map[string]any{
+					"type": config.CollectorTypeSQL,
+					"sql": map[string]any{
+						"type":       DriverTypeSQLite,
+						"connection": ":memory:",
+						"query":      "SELECT 1;",
+					},
+				})
+				if err != nil {
+					t.Fatalf("NewCollector() error: %v", err)
+				}
 
-			ctx, cancel := context.WithCancel(t.Context())
-			if tt.cancel {
+				c.db, err = openDB(t.Context(), c.driver, c.conn)
+				if err != nil {
+					t.Fatalf("openDB() error: %v", err)
+				}
+				t.Cleanup(func() { _ = c.db.Close() })
+
+				ctx, cancel := context.WithCancel(t.Context())
+				c.done = ctx.Done()
+				c.cancel = cancel
+				if tt.cancel {
+					cancel()
+				} else {
+					t.Cleanup(cancel)
+				}
+
+				if !tt.isAsync {
+					c.scheduleNextQuery(ctx, time.Now())
+					return
+				}
+
+				go c.scheduleNextQuery(ctx, time.Now().Add(-5*time.Second))
+				synctest.Wait()
 				cancel()
-			} else {
-				t.Cleanup(cancel)
-			}
-
-			if !tt.isAsync {
-				c.scheduleNextQuery(ctx, time.Now())
-				return
-			}
-
-			go c.scheduleNextQuery(ctx, time.Now().Add(-5*time.Second))
-			time.Sleep(50 * time.Millisecond)
-			cancel()
+				synctest.Wait()
+			})
 		})
 	}
 }
@@ -643,6 +655,23 @@ func TestCollectorClose(t *testing.T) {
 		c.Close()
 
 		<-c.Done()
+	})
+}
+
+func TestCollectorCloseTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := &Collector{
+			driver:  DriverTypePostgres,
+			pgPool:  fakePGPool{closeTimeout: true},
+			usingPG: true,
+		}
+		start := time.Now()
+		c.Close()
+
+		if time.Since(start) != closeTimeout {
+			t.Error("Collector.Close() timeout behaved unexpectedly")
+		}
+		synctest.Sleep(closeTimeout * 2)
 	})
 }
 

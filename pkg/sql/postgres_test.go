@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -294,6 +295,8 @@ type fakePGPool struct {
 	cols []string
 	rows [][]any
 
+	closeTimeout bool
+
 	beginErr error
 	queryErr error
 	finalErr error
@@ -306,7 +309,11 @@ func (p fakePGPool) BeginTx(_ context.Context, _ pgx.TxOptions) (pgx.Tx, error) 
 	return fakePGTx{cols: p.cols, rows: p.rows, queryErr: p.queryErr, finalErr: p.finalErr}, nil
 }
 
-func (p fakePGPool) Close() {}
+func (p fakePGPool) Close() {
+	if p.closeTimeout {
+		synctest.Sleep(closeTimeout * 2)
+	}
+}
 
 // Simple implementation of the [pgx.Tx] interface.
 type fakePGTx struct {
