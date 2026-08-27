@@ -189,7 +189,9 @@ func (c *Collector) Start(ctx context.Context) bool {
 		db, err = openDB(ctx, c.driver, c.conn)
 	}
 	if err != nil {
-		slog.Warn("failed to connect to SQL-based database", slog.Any("err", err), slog.String("driver", c.driver))
+		slog.Warn("failed to connect to SQL-based database", slog.Any("error", err),
+			slog.String("driver", c.driver), slog.String("name", c.Name),
+		)
 		return false
 	}
 
@@ -197,7 +199,9 @@ func (c *Collector) Start(ctx context.Context) bool {
 	ctx, c.cancel = context.WithCancel(ctx)
 	c.done = ctx.Done()
 
-	slog.Info("starting to execute SQL queries", slog.String("driver", c.driver), slog.String("schedule", c.Cronspec))
+	slog.Info("starting to execute SQL queries", slog.String("driver", c.driver),
+		slog.String("schedule", c.Cronspec), slog.String("name", c.Name),
+	)
 	go c.scheduleNextQuery(ctx, time.Now())
 	return true
 }
@@ -227,16 +231,21 @@ func (c *Collector) scheduleNextQuery(ctx context.Context, prev time.Time) {
 		nextStart := c.Schedule.Next(prev)
 		if nextStart.IsZero() {
 			if c.Schedule.RunsOnlyOnce() {
-				slog.Info("SQL collector finished one-time execution", slog.String("driver", c.driver))
+				slog.Info("SQL collector finished one-time execution",
+					slog.String("driver", c.driver), slog.String("name", c.Name),
+				)
 			} else {
-				slog.Error("SQL collector stopped due to scheduler bug - no next instance for: " + c.Cronspec)
+				slog.Error("SQL collector stopped due to scheduler bug - no next instance",
+					slog.String("driver", c.driver), slog.String("name", c.Name),
+					slog.String("schedule", c.Cronspec),
+				)
 			}
 			return
 		}
 		if now := time.Now(); !c.Schedule.RunsOnlyOnce() && now.After(nextStart) {
 			slog.Warn("SQL collector is behind schedule, skipping missed execution",
-				slog.String("driver", c.driver), slog.Time("skipped", nextStart),
-				slog.Duration("gap", now.Sub(nextStart)),
+				slog.String("driver", c.driver), slog.String("name", c.Name),
+				slog.Time("skipped", nextStart), slog.Duration("gap", now.Sub(nextStart)),
 			)
 			prev = nextStart
 			continue
@@ -274,7 +283,9 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 
 	tx, err := c.db.BeginTx(queryCtx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err), slog.String("driver", c.driver))
+		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err),
+			slog.String("driver", c.driver), slog.String("name", c.Name),
+		)
 		return false
 	}
 	defer func() { _ = tx.Rollback() }()
@@ -282,7 +293,8 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	start := time.Now()
 	rows, err := tx.QueryContext(queryCtx, c.query)
 	if err != nil {
-		slog.Warn("failed to execute SQL query", slog.Any("error", err), slog.String("driver", c.driver),
+		slog.Warn("failed to execute SQL query", slog.Any("error", err),
+			slog.String("driver", c.driver), slog.String("name", c.Name),
 			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
 		return false
@@ -294,12 +306,13 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	ok := err == nil
 	if !ok {
 		slog.Warn("error while processing SQL query results", slog.Any("error", err),
-			slog.String("driver", c.driver), slog.Int("successfully_processed_rows", rowCount),
+			slog.String("driver", c.driver), slog.String("name", c.Name),
+			slog.Int("successfully_processed_rows", rowCount),
 		)
 	} else {
 		stats := c.db.Stats()
 		slog.Debug("SQL query execution completed successfully",
-			slog.String("driver", c.driver), slog.Int("rows", rowCount),
+			slog.String("driver", c.driver), slog.String("name", c.Name), slog.Int("rows", rowCount),
 			slog.Time("start_time", start), slog.Duration("exec_duration", end.Sub(start)),
 			slog.Int("in_use_conns", stats.InUse), slog.Int("idle_conns", stats.Idle),
 		)
@@ -406,8 +419,8 @@ func (c *Collector) Close() {
 		case <-done:
 			timer.Stop() // No need to drain since Go 1.23.
 		case <-timer.C:
-			slog.Warn("closing SQL connection pool forcefully",
-				slog.String("driver", c.driver), slog.Duration("timeout", closeTimeout),
+			slog.Warn("closing SQL connection pool forcefully", slog.String("driver", c.driver),
+				slog.String("name", c.Name), slog.Duration("timeout", closeTimeout),
 			)
 		}
 	})

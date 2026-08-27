@@ -269,7 +269,7 @@ func TestCollectorStartNilGuard(t *testing.T) {
 func TestCollectorStart(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"})
+	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "")
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestCollectorStart(t *testing.T) {
 func TestCollectorConnectionStringError(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"})
+	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "")
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
@@ -379,7 +379,7 @@ func TestScheduleNextQuery(t *testing.T) {
 				base, err := config.NewBaseCollector(map[string]any{
 					"type":     config.CollectorTypeSQL,
 					"schedule": tt.schedule,
-				})
+				}, "")
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
 				}

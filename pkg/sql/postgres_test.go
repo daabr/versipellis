@@ -86,7 +86,7 @@ func TestCollectorStartPostgres(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"})
+			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "")
 			if err != nil {
 				t.Fatalf("config.NewBaseCollector() error: %v", err)
 			}
@@ -126,7 +126,7 @@ func TestCollectorStartPostgres(t *testing.T) {
 func TestCollectorExecutePostgresQuery(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"})
+	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "")
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}

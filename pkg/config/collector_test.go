@@ -108,7 +108,7 @@ func TestNewBaseCollector(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := config.NewBaseCollector(tt.cfg); (err != nil) != tt.wantErr {
+			if _, err := config.NewBaseCollector(tt.cfg, "name"); (err != nil) != tt.wantErr {
 				t.Errorf("NewBaseCollector() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})

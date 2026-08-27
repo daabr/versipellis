@@ -73,6 +73,226 @@ func TestParseFile(t *testing.T) {
 	}
 }
 
+func TestExtractSubmaps(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  map[string]any
+		key  string
+		want map[string]map[string]any
+	}{
+		{
+			name: "nil_cfg",
+			cfg:  nil,
+			key:  "target",
+			want: map[string]map[string]any{},
+		},
+		{
+			name: "no_matches",
+			cfg:  map[string]any{},
+			key:  "target",
+			want: map[string]map[string]any{},
+		},
+		{
+			name: "match_with_wrong_type",
+			cfg: map[string]any{
+				"target": "not_a_map",
+			},
+			key:  "target",
+			want: map[string]map[string]any{},
+		},
+		{
+			name: "immediate_match",
+			cfg: map[string]any{
+				"target": map[string]any{
+					"key": "value",
+				},
+			},
+			key: "target",
+			want: map[string]map[string]any{
+				"": {
+					"key": "value",
+				},
+			},
+		},
+		{
+			name: "nested_match",
+			cfg: map[string]any{
+				"level1": map[string]any{
+					"target": map[string]any{
+						"key": "value",
+					},
+				},
+			},
+			key: "target",
+			want: map[string]map[string]any{
+				"level1": {
+					"key": "value",
+				},
+			},
+		},
+		{
+			name: "deeply_nested_match",
+			cfg: map[string]any{
+				"level1": map[string]any{
+					"level2": map[string]any{
+						"target": map[string]any{
+							"key": "value",
+						},
+					},
+				},
+			},
+			key: "target",
+			want: map[string]map[string]any{
+				"level1.level2": {
+					"key": "value",
+				},
+			},
+		},
+		{
+			name: "shallow_array_of_matches",
+			cfg: map[string]any{
+				"target": []any{
+					map[string]any{
+						"key": "value1",
+					},
+					map[string]any{
+						"key": "value2",
+					},
+				},
+			},
+			key: "target",
+			want: map[string]map[string]any{
+				"[1]": {
+					"key": "value1",
+				},
+				"[2]": {
+					"key": "value2",
+				},
+			},
+		},
+		{
+			name: "nested_array_of_matches",
+			cfg: map[string]any{
+				"level1": map[string]any{
+					"level2": map[string]any{
+						"target": []any{
+							map[string]any{
+								"key": "value1",
+							},
+							map[string]any{
+								"key": "value2",
+							},
+						},
+					},
+				},
+			},
+			key: "target",
+			want: map[string]map[string]any{
+				"level1.level2[1]": {
+					"key": "value1",
+				},
+				"level1.level2[2]": {
+					"key": "value2",
+				},
+			},
+		},
+		{
+			name: "nested_match_within_array",
+			cfg: map[string]any{
+				"level1": []any{
+					42,
+					"string",
+					map[string]any{
+						"int":    42,
+						"string": "value",
+						"level2": map[string]any{
+							"target": map[string]any{
+								"key": "value",
+							},
+						},
+					},
+				},
+			},
+			key: "target",
+			want: map[string]map[string]any{
+				"level1[3].level2": {
+					"key": "value",
+				},
+			},
+		},
+		{
+			name: "multiple_matches",
+			cfg: map[string]any{
+				"level1": map[string]any{
+					"target": map[string]any{
+						"key1": "value1",
+					},
+				},
+				"level2": map[string]any{
+					"target": map[string]any{
+						"key2": "value2",
+					},
+				},
+				"level3": map[string]any{
+					"nontarget": map[string]any{
+						"key3": "value3",
+					},
+				},
+				"level4": map[string]any{
+					"target": "not_a_map",
+				},
+				"level5": map[string]any{
+					"level6": map[string]any{
+						"target": map[string]any{
+							"key4": "value4",
+						},
+					},
+				},
+				"target": []any{
+					map[string]any{
+						"key5": "value5",
+					},
+					"normal_string",
+					42,
+					map[string]any{
+						"key6": "value6",
+					},
+				},
+			},
+			key: "target",
+			want: map[string]map[string]any{
+				"level1": {
+					"key1": "value1",
+				},
+				"level2": {
+					"key2": "value2",
+				},
+				"level5.level6": {
+					"key4": "value4",
+				},
+				"[1]": {
+					"key5": "value5",
+				},
+				"[4]": {
+					"key6": "value6",
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := ExtractSubmaps(tt.cfg, tt.key)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ExtractSubmaps() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValue(t *testing.T) {
 	t.Parallel()
 
