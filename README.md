@@ -38,6 +38,7 @@ docker run -d --name my-versi-container \
   - `/app/config` - for Versipellis `.toml` files, ODBC `.ini` files (instead of `/etc`), Oracle `.ora` files, passwords and certificates, etc.
   - `/app/data` - for backup storage of runtime input data
 - Already bundled and tested with:
+  - Oracle Instant Client
   - unixODBC
 
 ### Installation Option 2: Precompiled Executable Binary
@@ -49,7 +50,8 @@ docker run -d --name my-versi-container \
   - macOS (amd64/arm64)
   - Windows (amd64 only)
 - Optional runtime dependencies:
-  - [unixODBC](https://github.com/alexbrainman/odbc/wiki) - needed only for ODBC connections, and only on Linux and macOS
+  - [Oracle Instant Client (basic lite)](https://www.oracle.com/database/technologies/instant-client.html) - needed only for Oracle Database
+  - [unixODBC](https://github.com/alexbrainman/odbc/wiki) - needed only for ODBC, and only on Linux and macOS
 
 ### Installation Option 3: Build From Source
 
@@ -67,7 +69,7 @@ Or:
 CGO_ENABLED=1 go build -tags=odbc ./cmd/versi && ./versi -h
 ```
 
-- `CGO_ENABLED=1` - optional, needed only for unixODBC
+- `CGO_ENABLED=1` - optional, needed only for Oracle Database and unixODBC
 - `-tags=odbc` - optional, needed only for unixODBC
 
 ## Supported Inputs
@@ -82,6 +84,7 @@ Supported SQL-based databases:
 - MySQL
 - ODBC
   - Teradata
+- Oracle Database
 - PostgreSQL
 - SAP HANA
 - Snowflake

@@ -12,15 +12,12 @@ We will be using this TOML configuration from Versipellis's sample file [`config
 [collector]
 type = "SQL"
 schedule = "@every 5s"
+destination = "stdout"
 
 [collector.sql]
 type = "SQLite"
 connection = "file::memory:?cache=shared"
 query = "SELECT 'abc' AS bytes, 123 AS nums, CURRENT_TIMESTAMP AS objs UNION SELECT X'deadbeef', 3.14159, NULL"
-
-# ...
-
-destination = "stdout"
 ```
 
 Start Versipellis:
@@ -50,7 +47,7 @@ Our example query (`query = "SELECT ..."`) uses an in-memory instance (`connecti
 For the sake of simplicity, this query doesn't actually read data from a table, it merely returns 2 disjoint rows of fake static data, which Versipellis dumps to Stdout (`destination = "stdout"`), encoded as [NDJSON, a.k.a. JSONL](https://ndjson.com/):
 
 ```json
-{"bytes":"abc","nums":123,"objs":"2026-08-25 04:12:17"}
+{"bytes":"abc","nums":123,"objs":"2026-01-02 03:04:05"}
 {"bytes":"3q2+7w==","nums":3.14159,"objs":null}
 ```
 

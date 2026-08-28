@@ -4,6 +4,8 @@
 
 ODBC: <https://github.com/alexbrainman/odbc/wiki>
 
+Oracle Database: install the [Oracle Instant Client (basic lite)](https://www.oracle.com/database/technologies/instant-client.html).
+
 Other drivers below don't require any setup prior to running Versipellis.
 
 ## Connection Strings for SQL-Based Databases

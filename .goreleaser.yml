@@ -50,5 +50,13 @@ builds:
           # unixODBC - not required (MinGW handles ODBC natively).
           - CGO_LDFLAGS=-lodbc32
 
+archives:
+  - files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - config/**/*
+      - docs/**/*
+
 checksum:
   name_template: "{{.ProjectName}}_v{{.Version}}_checksums.txt"
