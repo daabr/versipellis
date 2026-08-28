@@ -82,8 +82,8 @@ type Collector struct {
 	closeOnce sync.Once
 }
 
-// Base returns a copy of the collector's static and generic configuration details. Specifically,
-// it does not copy references such as the [BaseCollector.Schedule] and [BaseCollector.Sender] fields.
+// Base returns a copy of the collector's static and generic configuration details.
+// Specifically, it does not copy references such as the Schedule and Sender fields.
 func (c *Collector) Base() *config.BaseCollector {
 	return &config.BaseCollector{
 		Type:        c.Type,

@@ -175,7 +175,8 @@ func startCollectorSafely(ctx context.Context, c collector, results chan<- colle
 	defer func() {
 		if r := recover(); r != nil {
 			b := c.Base()
-			slog.Error("panic during collector initialization", slog.Any("details", r),
+			slog.Error("panic during collector initialization",
+				slog.Any("details", r), slog.String("stack", string(debug.Stack())),
 				slog.String("name", b.Name), slog.String("type", b.Type),
 			)
 			results <- collectorInitResult{}
