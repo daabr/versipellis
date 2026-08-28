@@ -30,6 +30,7 @@ const (
 	DriverTypeMSSQL       = "mssql"
 	DriverTypeMySQL       = "mysql"
 	DriverTypeODBC        = "odbc"
+	DriverTypeOracle      = "oracle"
 	DriverTypePostgres    = "postgres"
 	DriverTypePostgreSQL  = "postgresql"
 	DriverTypeSAPHANA     = "sap_hana"
@@ -44,6 +45,7 @@ var validDriverTypes = []string{
 	DriverTypeMSSQL,
 	DriverTypeMySQL,
 	DriverTypeODBC,
+	DriverTypeOracle,
 	DriverTypePostgres,
 	DriverTypePostgreSQL,
 	DriverTypeSAPHANA,
@@ -195,6 +197,8 @@ func (c *Collector) Start(ctx context.Context) bool {
 		db, err = openDB(ctx, DriverTypeSQLServer, c.conn)
 	case DriverTypeODBC:
 		db, err = connectToODBC(ctx, c.conn)
+	case DriverTypeOracle:
+		db, err = connectToOracle(ctx, c.conn)
 	case DriverTypeSAPHANA:
 		db, err = openDB(ctx, "hdb", c.conn)
 	default:

@@ -44,6 +44,7 @@
   - `"mariadb"` ([MariaDB](https://mariadb.com/))
   - `"mysql"` ([MySQL](https://www.mysql.com/))
   - `"odbc"` ([Open Database Connectivity](https://github.com/Microsoft/ODBC-Specification) - see additional [setup instructions](./sql.md))
+  - `"oracle"` ([Oracle Database](https://www.oracle.com/database/) - see additional [setup instructions](./sql.md))
   - `"postgres"` or `"postgresql"` ([PostgreSQL](https://www.postgresql.org/))
   - `"sap_hana"` ([SAP HANA](https://www.sap.com/products/data-cloud/hana/what-is-sap-hana.html))
   - `"snowflake"` ([Snowflake](https://www.snowflake.com/))

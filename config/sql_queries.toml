@@ -8,14 +8,22 @@ type = "SQLite"
 connection = "file::memory:?cache=shared"
 query = "SELECT 'abc' AS bytes, 123 AS nums, CURRENT_TIMESTAMP AS objs UNION SELECT X'deadbeef', 3.14159, NULL"
 
+# [collector.sql]
 # type = "MariaDB"
 # connection = "larry:woof@tcp(localhost)/versi_db?parseTime=true&timeout=3s"
 # query = "SELECT * FROM input_data"
 
+# [collector.sql]
 # type = "MySQL"
 # connection = "larry:woof@tcp(localhost)/versi_db?parseTime=true&timeout=3s"
 # query = "SELECT * FROM input_data"
 
+# [collector.sql]
+# type = "Oracle"
+# connection = "larry/woof@localhost/FREEPDB1"
+# query = "SELECT * FROM input_data"
+
+# [collector.sql]
 # type = "PostgreSQL"
 # connection = "replace this string with one of the two equivalent options below"
 # # kv_option = "host=localhost dbname=versi_db user=larry passfile=config/.pgpass"

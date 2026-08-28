@@ -9,5 +9,5 @@ import (
 )
 
 func connectToODBC(_ context.Context, _ string) (*sql.DB, error) {
-	return nil, errors.New("this executable was built without ODBC support")
+	return nil, errors.New("this executable was built without CGO enabled or without the ODBC tag")
 }

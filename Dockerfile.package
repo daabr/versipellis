@@ -9,11 +9,31 @@ FROM debian:trixie-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates wget tar unzip unixodbc libaio1t64 && rm -rf /var/lib/apt/lists/*
 
+ARG TARGETARCH
+
+# https://www.oracle.com/database/technologies/instant-client/linux-x86-64-downloads.html
+# https://www.oracle.com/database/technologies/instant-client/linux-arm-aarch64-downloads.html
+WORKDIR /opt/oracle
+RUN if [ "${TARGETARCH}" = "amd64" ]; then \
+        BASIC_URL="https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip"; \
+        ODBC_URL="https://download.oracle.com/otn_software/linux/instantclient/instantclient-odbc-linuxx64.zip"; \
+    elif [ "${TARGETARCH}" = "arm64" ]; then \
+        BASIC_URL="https://download.oracle.com/otn_software/linux/instantclient/2326300/instantclient-basiclite-linux.arm64-23.26.3.0.0.zip"; \
+        ODBC_URL="https://download.oracle.com/otn_software/linux/instantclient/2326300/instantclient-odbc-linux.arm64-23.26.3.0.0.zip"; \
+    else \
+        echo "Error - unsupported architecture: ${TARGETARCH}" && exit 1; \
+    fi && \
+    wget -qO basiclite.zip "${BASIC_URL}" && wget -qO odbc.zip "${ODBC_URL}" && \
+    unzip -oq basiclite.zip && unzip -nq odbc.zip && rm -f *.zip && mv instantclient_* instantclient
+
 # ===========================
 # Stage 2: Distroless Runtime
 # ===========================
 
 FROM gcr.io/distroless/cc-debian13:nonroot
+
+COPY --from=builder /opt/oracle/instantclient/ /opt/oracle/instantclient/
+ENV PATH=/opt/oracle/instantclient:${PATH}
 
 ARG TARGETARCH
 
@@ -24,7 +44,7 @@ ENV USR_LIB_PATH=${USR_LIB_PATH/amd64/x86_64}
 COPY --from=builder ${USR_LIB_PATH}/libaio*  ${USR_LIB_PATH}/
 COPY --from=builder ${USR_LIB_PATH}/libltdl* ${USR_LIB_PATH}/
 COPY --from=builder ${USR_LIB_PATH}/libodbc* ${USR_LIB_PATH}/
-ENV LD_LIBRARY_PATH=${USR_LIB_PATH}
+ENV LD_LIBRARY_PATH=${USR_LIB_PATH}:/opt/oracle/instantclient
 
 USER nonroot:nonroot
 

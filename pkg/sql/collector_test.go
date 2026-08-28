@@ -316,6 +316,7 @@ func TestCollectorConnectionStringError(t *testing.T) {
 		DriverTypeMariaDB,
 		DriverTypeMSSQL,
 		DriverTypeODBC,
+		DriverTypeOracle,
 		DriverTypePostgres,
 		DriverTypePostgreSQL,
 		DriverTypeSAPHANA,
