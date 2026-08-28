@@ -82,6 +82,18 @@ type Collector struct {
 	closeOnce sync.Once
 }
 
+// Base returns a copy of the collector's static and generic configuration details.
+// Specifically, it does not copy references such as the Schedule and Sender fields.
+func (c *Collector) Base() *config.BaseCollector {
+	return &config.BaseCollector{
+		Type:        c.Type,
+		Name:        c.Name,
+		Cronspec:    c.Cronspec,
+		Trigger:     c.Trigger,
+		Destination: c.Destination,
+	}
+}
+
 // NewCollector creates a new [Collector] from the given configuration, which was read from
 // a TOML file. It checks the details and returns an error if any of them is invalid.
 func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, error) {
@@ -254,7 +266,7 @@ func (c *Collector) scheduleNextQuery(ctx context.Context, prev time.Time) {
 		timer := time.NewTimer(time.Until(nextStart))
 		select {
 		case <-ctx.Done():
-			timer.Stop() // No need to drain since Go 1.23.
+			timer.Stop()
 			return
 		case <-timer.C:
 			c.executeQuery(ctx)
@@ -417,7 +429,7 @@ func (c *Collector) Close() {
 		timer := time.NewTimer(closeTimeout)
 		select {
 		case <-done:
-			timer.Stop() // No need to drain since Go 1.23.
+			timer.Stop()
 		case <-timer.C:
 			slog.Warn("closing SQL connection pool forcefully", slog.String("driver", c.driver),
 				slog.String("name", c.Name), slog.Duration("timeout", closeTimeout),

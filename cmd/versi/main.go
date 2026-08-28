@@ -8,7 +8,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -20,13 +19,12 @@ import (
 	"github.com/lmittmann/tint"
 
 	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/sql"
 )
 
 func main() {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		fmt.Println("Error: failed to read build info")
+		fmt.Fprintln(os.Stderr, "Error: failed to read build info")
 		os.Exit(1)
 	}
 
@@ -37,16 +35,15 @@ func main() {
 
 	cfg, err := config.ParseFile(path)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 
 	initLog(debugLog, structured, info)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	channels, err := initCollectors(ctx, cfg)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+	channels, ok := initCollectors(ctx, cfg)
+	if !ok {
 		cancel()
 		os.Exit(1)
 	}
@@ -91,51 +88,6 @@ func buildAttrs(info *debug.BuildInfo) []any {
 		}
 	}
 	return attrs
-}
-
-func initCollectors(ctx context.Context, cfg map[string]any) ([]<-chan struct{}, error) {
-	var done []<-chan struct{}
-	errs := 0
-
-	for namespace, collector := range config.ExtractSubmaps(cfg, "collector") {
-		base, err := config.NewBaseCollector(collector, namespace)
-		if err != nil {
-			slog.Error("failed to create base collector", slog.Any("error", err), slog.String("name", namespace))
-			errs++
-			continue
-		}
-
-		switch base.Type {
-		case config.CollectorTypeHTTP, config.CollectorTypeHTTP3:
-			slog.Error("HTTP collectors are not implemented yet", slog.String("name", namespace))
-			errs++
-			continue
-
-		case config.CollectorTypeSQL:
-			c, err := sql.NewCollector(base, collector)
-			switch {
-			case err != nil:
-				slog.Error("failed to create SQL collector", slog.Any("error", err), slog.String("name", namespace))
-				errs++
-			case !c.Start(ctx):
-				slog.Error("failed to start SQL collector", slog.String("name", namespace))
-				errs++
-			default:
-				done = append(done, c.Done())
-			}
-		}
-	}
-
-	switch {
-	case errs > 0:
-		msg := fmt.Sprintf("failed to initialize %d collector(s)", errs)
-		return nil, errors.New(msg)
-	case len(done) == 0:
-		// Until we add receivers, we cannot run without collectors.
-		return nil, errors.New("no collectors found in configuration")
-	default:
-		return done, nil
-	}
 }
 
 func waitForInterrupt(cancel context.CancelFunc) {

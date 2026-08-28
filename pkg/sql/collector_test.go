@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -164,8 +165,14 @@ func TestNewCollector(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, gotErr := NewCollector(tt.base, tt.cfg); (gotErr != nil) != tt.wantErr {
-				t.Errorf("NewCollector() error = %v, wantErr %v", gotErr, tt.wantErr)
+			c, gotErr := NewCollector(tt.base, tt.cfg)
+			if (gotErr != nil) != tt.wantErr {
+				t.Fatalf("NewCollector() error = %v, wantErr %v", gotErr, tt.wantErr)
+			}
+			if c != nil {
+				if b := c.Base(); !reflect.DeepEqual(b, tt.base) {
+					t.Errorf("Collector.Base() = %v, want %v", b, tt.base)
+				}
 			}
 		})
 	}
