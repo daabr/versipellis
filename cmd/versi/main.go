@@ -1,5 +1,3 @@
-// Versipellis - a "data flow shape shifter".
-//
 // Versipellis is a versatile, scalable tool for transferring and transforming data reliably
 // across diverse media, protocols, and formats, without altering the data itself.
 //
