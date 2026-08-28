@@ -8,11 +8,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -26,7 +26,7 @@ import (
 func main() {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		fmt.Println("Error: failed to read build info")
+		fmt.Fprintln(os.Stderr, "Error: failed to read build info")
 		os.Exit(1)
 	}
 
@@ -37,16 +37,15 @@ func main() {
 
 	cfg, err := config.ParseFile(path)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 
 	initLog(debugLog, structured, info)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	channels, err := initCollectors(ctx, cfg)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+	channels, ok := initCollectors(ctx, cfg)
+	if !ok {
 		cancel()
 		os.Exit(1)
 	}
@@ -93,49 +92,104 @@ func buildAttrs(info *debug.BuildInfo) []any {
 	return attrs
 }
 
-func initCollectors(ctx context.Context, cfg map[string]any) ([]<-chan struct{}, error) {
-	var done []<-chan struct{}
-	errs := 0
+type collector interface {
+	Base() *config.BaseCollector
+	Start(context.Context) bool
+	Done() <-chan struct{}
+}
 
-	for namespace, collector := range config.ExtractSubmaps(cfg, "collector") {
-		base, err := config.NewBaseCollector(collector, namespace)
+type collectorInitResult struct {
+	done <-chan struct{}
+	ok   bool
+}
+
+func initCollectors(ctx context.Context, entireCfg map[string]any) ([]<-chan struct{}, bool) {
+	var collectors []collector
+	for namespace, cfg := range config.ExtractSubmaps(entireCfg, "collector") {
+		base, err := config.NewBaseCollector(cfg, namespace)
 		if err != nil {
 			slog.Error("failed to create base collector", slog.Any("error", err), slog.String("name", namespace))
-			errs++
 			continue
 		}
 
+		var c collector
 		switch base.Type {
 		case config.CollectorTypeHTTP, config.CollectorTypeHTTP3:
-			slog.Error("HTTP collectors are not implemented yet", slog.String("name", namespace))
-			errs++
+			slog.Error("HTTP collector not yet implemented", slog.String("name", base.Name), slog.String("type", base.Type))
 			continue
-
 		case config.CollectorTypeSQL:
-			c, err := sql.NewCollector(base, collector)
-			switch {
-			case err != nil:
-				slog.Error("failed to create SQL collector", slog.Any("error", err), slog.String("name", namespace))
-				errs++
-			case !c.Start(ctx):
-				slog.Error("failed to start SQL collector", slog.String("name", namespace))
-				errs++
-			default:
-				done = append(done, c.Done())
-			}
+			c, err = sql.NewCollector(base, cfg)
+		default:
+			slog.Error("unhandled collector type", slog.String("name", base.Name), slog.String("type", base.Type))
+			continue
+		}
+
+		if err != nil {
+			slog.Error("failed to create collector", slog.Any("error", err),
+				slog.String("name", base.Name), slog.String("type", base.Type),
+			)
+			continue
+		}
+		collectors = append(collectors, c)
+	}
+
+	results := make(chan collectorInitResult, len(collectors))
+	initCollectorsAsync(ctx, collectors, results)
+	var done []<-chan struct{}
+	for range collectors {
+		if res := <-results; res.ok {
+			done = append(done, res.done)
 		}
 	}
+	close(results)
 
-	switch {
-	case errs > 0:
-		msg := fmt.Sprintf("failed to initialize %d collector(s)", errs)
-		return nil, errors.New(msg)
-	case len(done) == 0:
-		// Until we add receivers, we cannot run without collectors.
-		return nil, errors.New("no collectors found in configuration")
-	default:
-		return done, nil
+	// Temporary: until we add receivers, we require at least one collector in order to run.
+	if len(done) == 0 {
+		slog.Error("no collectors were initialized successfully")
+		return nil, false
 	}
+
+	return done, true
+}
+
+// Start all the collectors concurrently, without overwhelming the system or the data sources.
+func initCollectorsAsync(ctx context.Context, collectors []collector, results chan<- collectorInitResult) {
+	limit := min(runtime.GOMAXPROCS(0), len(collectors))
+	workers := make(chan collector, limit)
+
+	for range limit {
+		go func() {
+			for c := range workers {
+				startCollectorSafely(ctx, c, results)
+			}
+		}()
+	}
+
+	for _, c := range collectors {
+		workers <- c // The buffered channel enforces reasonable throttling.
+	}
+	close(workers) // Signal all the goroutines above to terminate when they're done.
+}
+
+func startCollectorSafely(ctx context.Context, c collector, results chan<- collectorInitResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			b := c.Base()
+			slog.Error("panic during collector initialization", slog.Any("details", r),
+				slog.String("name", b.Name), slog.String("type", b.Type),
+			)
+			results <- collectorInitResult{}
+		}
+	}()
+
+	if c.Start(ctx) {
+		results <- collectorInitResult{done: c.Done(), ok: true}
+		return
+	}
+
+	b := c.Base()
+	slog.Error("failed to start collector", slog.String("name", b.Name), slog.String("type", b.Type))
+	results <- collectorInitResult{}
 }
 
 func waitForInterrupt(cancel context.CancelFunc) {
