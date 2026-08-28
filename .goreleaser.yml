@@ -2,6 +2,7 @@ version: 2
 
 builds:
   - main: ./cmd/versi
+    binary: versi
     flags:
       - -trimpath
     goarch:
@@ -29,18 +30,22 @@ builds:
         env:
           - CC=oa64-clang
           - CXX=oa64-clang++
+          # Minimum supported macOS version in unixODBC.
+          - MACOSX_DEPLOYMENT_TARGET=13.0
           # unixODBC - cross-compiled.
-          - CGO_CFLAGS=-I/usr/local/opt/unixodbc/arm64/include
-          - CGO_LDFLAGS=-L/usr/local/opt/unixodbc/arm64/lib -lodbc -liconv
+          - CGO_CFLAGS=-I/opt/unixodbc-arm64/include
+          - CGO_LDFLAGS=-L/opt/unixodbc-arm64/lib -lodbc -liconv
 
       - goos: darwin
         goarch: amd64
         env:
           - CC=o64-clang
           - CXX=o64-clang++
+          # Minimum supported macOS version in unixODBC.
+          - MACOSX_DEPLOYMENT_TARGET=13.0
           # unixODBC - cross-compiled.
-          - CGO_CFLAGS=-I/usr/local/opt/unixodbc/amd64/include
-          - CGO_LDFLAGS=-L/usr/local/opt/unixodbc/amd64/lib -lodbc -liconv
+          - CGO_CFLAGS=-I/opt/unixodbc-amd64/include
+          - CGO_LDFLAGS=-L/opt/unixodbc-amd64/lib -lodbc -liconv
 
       - goos: windows
         goarch: amd64

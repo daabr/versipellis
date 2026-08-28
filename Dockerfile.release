@@ -15,7 +15,7 @@ RUN AR_TOOL=$(ls /usr/local/osxcross/bin/aarch64-apple-darwin*-ar) && \
     RANLIB_TOOL=$(ls /usr/local/osxcross/bin/aarch64-apple-darwin*-ranlib) && \
     cd unixODBC/arm64 && sed -i '/^[[:space:]]*exe[[:space:]]*\\$/d' Makefile.am && \
     autoreconf -ivf && CC=oa64-clang CXX=oa64-clang++ AR=${AR_TOOL} RANLIB=${RANLIB_TOOL} \
-    ./configure --host=aarch64-apple-darwin --prefix=/usr/local/opt/unixodbc/arm64 --enable-static --disable-shared \
+    ./configure --host=aarch64-apple-darwin --prefix=/opt/unixodbc-arm64 --enable-static --disable-shared \
     lt_cv_dlopen=dlopen lt_cv_dlopen_libs= lt_cv_dlopen_self=yes AR=${AR_TOOL} RANLIB=${RANLIB_TOOL} && \
     make install && make clean
 
@@ -24,6 +24,6 @@ RUN AR_TOOL=$(ls /usr/local/osxcross/bin/x86_64-apple-darwin*-ar) && \
     RANLIB_TOOL=$(ls /usr/local/osxcross/bin/x86_64-apple-darwin*-ranlib) && \
     cd unixODBC/amd64 && sed -i '/^[[:space:]]*exe[[:space:]]*\\$/d' Makefile.am && \
     autoreconf -ivf && CC=o64-clang CXX=o64-clang++ AR=${AR_TOOL} RANLIB=${RANLIB_TOOL} \
-    ./configure --host=x86_64-apple-darwin --prefix=/usr/local/opt/unixodbc/amd64 --enable-static --disable-shared \
+    ./configure --host=x86_64-apple-darwin --prefix=/opt/unixodbc-amd64 --enable-static --disable-shared \
     lt_cv_dlopen=dlopen lt_cv_dlopen_libs= lt_cv_dlopen_self=yes AR=${AR_TOOL} RANLIB=${RANLIB_TOOL} && \
     make install && make clean
