@@ -56,7 +56,10 @@ builds:
           - CGO_LDFLAGS=-lodbc32
 
 archives:
-  - files:
+  - format_overrides:
+      - goos: windows
+        format: zip
+    files:
       - LICENSE
       - NOTICE
       - README.md
