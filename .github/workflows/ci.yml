@@ -15,9 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@v7 # https://github.com/marketplace/actions/checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Go
-        uses: actions/setup-go@v7 # https://github.com/marketplace/actions/setup-go-environment
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Install gotestsum
@@ -28,12 +28,12 @@ jobs:
         run: gotestsum -f github-actions -- -race -covermode=atomic -coverprofile=coverage.out ./pkg/...
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v9 # https://github.com/marketplace/actions/golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: latest
           args: --timeout=5m # https://github.com/golangci/golangci-lint-action/issues/308
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v7 # https://github.com/marketplace/actions/codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
