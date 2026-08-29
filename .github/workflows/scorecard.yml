@@ -4,7 +4,7 @@ name: OpenSSF Scorecard supply-chain security
 on:
   # For Branch-Protection check. Only the default branch is supported. See
   # https://github.com/ossf/scorecard/blob/main/docs/checks.md#branch-protection
-  # branch_protection_rule:
+  branch_protection_rule:
   # To guarantee Maintained check is occasionally updated. See
   # https://github.com/ossf/scorecard/blob/main/docs/checks.md#maintained
   schedule:
@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v7 # https://github.com/marketplace/actions/checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -35,19 +35,10 @@ jobs:
         with:
           results_file: results.sarif
           results_format: sarif
-          # (Optional) "write" PAT token. Uncomment the `repo_token` line below if
-          # you want to enable the Branch-Protection check on a *public* repository.
-          # To create the PAT, follow the steps in https://github.com/ossf/scorecard-action?tab=readme-ov-file#authentication-with-fine-grained-pat-optional.
-          # repo_token: ${{ secrets.SCORECARD_TOKEN }}
-
-          # https://github.com/ossf/scorecard-action#publishing-results
-          publish_results: true
-
-          # (Optional) Uncomment file_mode if you have a .gitattributes with files marked export-ignore
-          # file_mode: git
+          publish_results: true # https://github.com/ossf/scorecard-action#publishing-results
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7 # https://github.com/marketplace/actions/upload-a-build-artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: SARIF file
           path: results.sarif
@@ -55,6 +46,6 @@ jobs:
 
       # https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/integrate-with-existing-tools/upload-sarif-file
       - name: Upload to code-scanning dashboard
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:
           sarif_file: results.sarif
