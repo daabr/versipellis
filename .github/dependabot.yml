@@ -1,16 +1,23 @@
 version: 2
+
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: daily
-
-  - package-ecosystem: docker
-    directory: /
-    schedule:
-      interval: daily
+      interval: weekly
+    commit-message:
+      prefix: ":robot: ci(deps)"
 
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: daily
+      interval: weekly
+    commit-message:
+      prefix: ":robot: build(deps)"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ":robot: build(deps)"
