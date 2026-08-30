@@ -12,7 +12,7 @@ func FuzzExtractSubmaps(f *testing.F) {
 	f.Add([]byte("[collector.sql]\ntype = \"sql\"\n"), "collector")
 	f.Add([]byte("[[collector]]\ntype = \"http\"\n[[collector]]\ntype = \"sql\"\n"), "collector")
 
-	f.Fuzz(func(t *testing.T, tomlBytes []byte, key string) {
+	f.Fuzz(func(_ *testing.T, tomlBytes []byte, key string) {
 		var cfg map[string]any
 		if err := toml.Unmarshal(tomlBytes, &cfg); err != nil {
 			return
