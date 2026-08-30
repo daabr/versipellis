@@ -4,7 +4,7 @@
 # Stage 1: Debian Builder
 # =======================
 
-FROM debian:trixie-slim AS builder
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates wget tar unzip unixodbc libaio1t64 && rm -rf /var/lib/apt/lists/*
@@ -30,7 +30,7 @@ RUN if [ "${TARGETARCH}" = "amd64" ]; then \
 # Stage 2: Distroless Runtime
 # ===========================
 
-FROM gcr.io/distroless/cc-debian13:nonroot
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:c31ff9abcb1910f3ab25c7957bdaf0bfe12a01eb546e8df2282f1c8f682b606c
 
 COPY --from=builder /opt/oracle/instantclient/ /opt/oracle/instantclient/
 ENV PATH=/opt/oracle/instantclient:${PATH}
