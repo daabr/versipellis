@@ -2,11 +2,13 @@
 
 # Versipellis - The Data Flow Shape Shifter
 
-[![Code Wiki](https://img.shields.io/badge/Code_Wiki-gold?logo=googlegemini)](https://codewiki.google/github.com/daabr/versipellis)
+[![Code Wiki](https://img.shields.io/badge/Gemini-code_wiki-007d9c?logo=googlegemini)](https://codewiki.google/github.com/daabr/versipellis)
 [![Go Reference](https://pkg.go.dev/badge/github.com/daabr/versipellis.svg)](https://pkg.go.dev/github.com/daabr/versipellis)
 [![Codecov](https://codecov.io/gh/daabr/versipellis/graph/badge.svg?token=IZFQXL47EM)](https://codecov.io/gh/daabr/versipellis)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14316/badge)](https://www.bestpractices.dev/projects/14316)
+<!-- Waiting for the badge to show the score instead of "invalid repo path" (the viewer link already works)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/daabr/versipellis/badge)](https://scorecard.dev/viewer/?uri=github.com/daabr/versipellis)
+-->
 
 Versipellis is a versatile, scalable tool for transferring and transforming data reliably across diverse media, protocols, and formats, without altering the data itself.
 
