@@ -6,8 +6,11 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/daabr/versipellis.svg)](https://pkg.go.dev/github.com/daabr/versipellis)
 [![Codecov](https://codecov.io/gh/daabr/versipellis/graph/badge.svg?token=IZFQXL47EM)](https://codecov.io/gh/daabr/versipellis)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14316/badge)](https://www.bestpractices.dev/projects/14316)
-<!-- Waiting for the badge to show the score instead of "invalid repo path" (the viewer link already works)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/daabr/versipellis/badge)](https://scorecard.dev/viewer/?uri=github.com/daabr/versipellis)
+[![OpenSSF Scorecard](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.scorecard.dev%2Fprojects%2Fgithub.com%2Fdaabr%2Fversipellis&query=%24.score&label=openssf%20scorecard&color=blue)](https://scorecard.dev/viewer/?uri=github.com/daabr/versipellis)
+<!--
+https://api.scorecard.dev/projects/github.com/daabr/versipellis/badge
+still renders "invalid repo path" instead of the actual score,
+using a workaround until OpenSSF indexes this repo correctly.
 -->
 
 Versipellis is a versatile, scalable tool for transferring and transforming data reliably across diverse media, protocols, and formats, without altering the data itself.
