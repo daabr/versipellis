@@ -75,7 +75,7 @@ func fastCleanup[K comparable, V comparable](ref weak.Pointer[FastCache[K, V]], 
 				return true
 			})
 
-		// [Cache.StopCleanupWorker] or [stopWorkerAfterGC] have been called.
+		// [Cache.StopCleanupWorker] or [stopGoroutine] have been called.
 		case <-stop:
 			return
 		}

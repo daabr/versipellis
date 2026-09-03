@@ -452,7 +452,7 @@ func TestCacheReplaceKeepsExactTTL(t *testing.T) {
 					t.Errorf("Cache.Replace() did not update the value: got %q, want %q", item2.Value, v2)
 				}
 				if item2.Expiration != item1.Expiration {
-					t.Errorf("Cache.Replace() caused a TTL drift: got expirat. %v, want %v", item2.Expiration, item1.Expiration)
+					t.Errorf("Cache.Replace() caused a TTL drift: got exp. %v, want %v", item2.Expiration, item1.Expiration)
 				}
 			})
 		})

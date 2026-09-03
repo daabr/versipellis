@@ -100,7 +100,7 @@ func leanCleanup[K comparable, V comparable](ref weak.Pointer[LeanCache[K, V]], 
 				strongRef.mu.Unlock()
 			}
 
-		// [Cache.StopCleanupWorker] or [stopWorkerAfterGC] have been called.
+		// [Cache.StopCleanupWorker] or [stopGoroutine] have been called.
 		case <-stop:
 			return
 		}
