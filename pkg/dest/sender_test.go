@@ -1,7 +1,9 @@
-package dest
+package dest_test
 
 import (
 	"testing"
+
+	"github.com/daabr/versipellis/pkg/dest"
 )
 
 func TestSenders(t *testing.T) {
@@ -48,7 +50,7 @@ func TestSenders(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, gotOK := Senders[tt.key]
+			got, gotOK := dest.Senders[tt.key]
 			if (got == nil) != tt.wantNil {
 				t.Errorf("Senders[%q] = %v, wantNil %v", tt.key, got, tt.wantNil)
 			}

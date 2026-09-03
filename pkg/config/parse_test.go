@@ -1,10 +1,12 @@
-package config
+package config_test
 
 import (
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/daabr/versipellis/pkg/config"
 )
 
 func TestParseFile(t *testing.T) {
@@ -30,7 +32,7 @@ func TestParseFile(t *testing.T) {
 	}{
 		{
 			name:    "default_file_not_found",
-			path:    DefaultFilePath,
+			path:    config.DefaultFilePath,
 			want:    nil,
 			wantErr: false,
 		},
@@ -61,7 +63,7 @@ func TestParseFile(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, gotErr := ParseFile(tt.path)
+			got, gotErr := config.ParseFile(tt.path)
 			if (gotErr != nil) != tt.wantErr {
 				t.Errorf("ParseFile() error = %v, want %v", gotErr, tt.wantErr)
 				return
@@ -285,7 +287,7 @@ func TestExtractSubmaps(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := ExtractSubmaps(tt.cfg, tt.key)
+			got := config.ExtractSubmaps(tt.cfg, tt.key)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ExtractSubmaps() = %v, want %v", got, tt.want)
 			}
@@ -338,11 +340,11 @@ func TestValue(t *testing.T) {
 
 			switch def := tt.def.(type) {
 			case string:
-				if got := Value(cfg, tt.key, def); got != tt.want {
+				if got := config.Value(cfg, tt.key, def); got != tt.want {
 					t.Errorf("Value(%q) = %v, want %v", tt.key, got, tt.want)
 				}
 			case int:
-				if got := Value(cfg, tt.key, def); got != tt.want {
+				if got := config.Value(cfg, tt.key, def); got != tt.want {
 					t.Errorf("Value(%q) = %v, want %v", tt.key, got, tt.want)
 				}
 			default:
