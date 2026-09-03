@@ -12,9 +12,9 @@ Versipellis recognizes the following section **types**. They are all optional, a
 - 🚧 **Coming soon:** Receiver
 - 🚧 **Coming soon:** Sender
 
-What does a section "type" mean? Versipellis supports 0 or more instances of each section type.
+What does a section "type" mean? Versipellis supports 0 or **more** instances of each section listed above.
 
-- If you want to have just one instance of a section type, simply name it by its type name:
+- If you want to have just one instance of a section, simply name it by its type name:
 
   ```toml
   [collector]
@@ -34,7 +34,7 @@ What does a section "type" mean? Versipellis supports 0 or more instances of eac
   key = "value 3"
   ```
 
-- You can also define a "list" of sections without namespace prefixes:
+- You can also define an "anonymous list" of sections with sequential numeric IDs instead of namespace prefixes:
 
   ```toml
   [[collector]]

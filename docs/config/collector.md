@@ -23,7 +23,7 @@
 - Options:
   - `"UTC"` (case insensitive)
   - `"local"` (case insensitive)
-  - Any valid identifier from the [IANA Time Zone database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) (case sensitive!), e.g. `"America/Los_Angeles"`
+  - Any valid identifier from the [IANA Time Zone database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) (case sensitive!), e.g., `"America/Los_Angeles"`
 
 `destination` - where to send the data to
 
