@@ -34,15 +34,15 @@ What does a section "type" mean? Versipellis supports 0 or **more** instances of
   key = "value 3"
   ```
 
-- You can also define an "anonymous list" of sections (TOML array-of-tables) instead of namespace prefixes; entries are implicitly numbered (e.g., `collector[1]`, `collector[2]`, ...):
+- You can also define an "anonymous list" of sections (a.k.a. [TOML array of tables](https://toml.io/en/v1.1.0#array-of-tables)) instead of namespace prefixes, in which sections are named implicitly by their order (e.g., `collector[1]`, `collector[2]`, ...):
 
   ```toml
   [[collector]]
-  key = "value 1"
+  key = "value A"
 
   [[collector]]
-  key = "value 2"
+  key = "value B"
 
   [[collector]]
-  key = "value 3"
+  key = "value C"
   ```
