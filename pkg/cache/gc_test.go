@@ -68,6 +68,7 @@ func newFastCacheWorker(done chan struct{}) {
 	c := &FastCache[string, string]{stop: make(chan struct{})}
 	ref := weak.Make(c)
 	stop := c.stop
+	c = nil
 
 	go func() {
 		defer close(done)
@@ -79,6 +80,7 @@ func newLeanCacheWorker(done chan struct{}) {
 	c := &LeanCache[string, string]{stop: make(chan struct{}), data: make(map[string]Item[string])}
 	ref := weak.Make(c)
 	stop := c.stop
+	c = nil
 
 	go func() {
 		defer close(done)
