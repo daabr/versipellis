@@ -34,7 +34,7 @@ What does a section "type" mean? Versipellis supports 0 or **more** instances of
   key = "value 3"
   ```
 
-- You can also define an "anonymous list" of sections with sequential numeric IDs instead of namespace prefixes:
+- You can also define an "anonymous list" of sections (TOML array-of-tables) instead of namespace prefixes; entries are implicitly numbered (e.g., `collector[1]`, `collector[2]`, ...):
 
   ```toml
   [[collector]]
