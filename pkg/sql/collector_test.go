@@ -181,7 +181,7 @@ func TestNewCollector(t *testing.T) {
 func TestLoadAndCheckQuery(t *testing.T) {
 	t.Parallel()
 
-	queryWithSpaces := "\nSELECT 1  \n\n"
+	queryWithSpaces := "\n SELECT 1  \n\n"
 	tempDir := t.TempDir()
 	err := os.WriteFile(filepath.Join(tempDir, "empty.sql"), []byte{}, 0o600) //gosec:disable G304 // Unit test.
 	if err != nil {

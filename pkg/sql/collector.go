@@ -103,7 +103,7 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	case base == nil:
 		return nil, errors.New("base collector cannot be nil")
 	case base.Type != config.CollectorTypeSQL:
-		return nil, fmt.Errorf("this collector type is %q, but must be %q", base.Type, config.CollectorTypeSQL)
+		return nil, fmt.Errorf("collector type is %q, but must be %q", base.Type, config.CollectorTypeSQL)
 	case cfg == nil || cfg["sql"] == nil:
 		return nil, errors.New("[collector.sql] TOML config section is missing")
 	}
@@ -172,7 +172,7 @@ func checkQuery(query string, err error) (string, error) {
 	return query, nil
 }
 
-// Start connects to the configured SQL-based database and starts collecting data from it.
+// Start connects to the configured SQL-based database and starts sending queries to it.
 // This function returns immediately, and the collector runs asynchronously in the background.
 // This function is idempotent: only the first call will actually start a goroutine. However,
 // it is not meant to be safe for concurrency, initialize collectors only in the main goroutine.
@@ -216,7 +216,7 @@ func (c *Collector) Start(ctx context.Context) bool {
 	c.done = ctx.Done()
 
 	slog.Info("starting to execute SQL queries", slog.String("driver", c.driver),
-		slog.String("schedule", c.Cronspec), slog.String("name", c.Name),
+		slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
 	)
 	go c.scheduleNextQuery(ctx, time.Now())
 	return true
@@ -267,20 +267,18 @@ func (c *Collector) scheduleNextQuery(ctx context.Context, prev time.Time) {
 			continue
 		}
 
-		timer := time.NewTimer(time.Until(nextStart))
 		select {
 		case <-ctx.Done():
-			timer.Stop()
 			return
-		case <-timer.C:
+		case <-time.After(time.Until(nextStart)):
 			c.executeQuery(ctx)
 			prev = nextStart
 		}
 	}
 }
 
-// This is never called directly, only through [Collector.scheduleNextQuery]. Therefore, it's safe to assume
-// that either [Collector.db] or [Collector.pgPool] are non-nil, given that [Collector.Start] had to succeed first.
+// This is never called directly, only through [Collector.scheduleNextQuery]. Therefore, it's safe to assume that
+// either [Collector.db] or [Collector.pgPool] are non-nil, given that [Collector.Start] had to succeed first.
 func (c *Collector) executeQuery(ctx context.Context) bool {
 	queryCtx := ctx
 	var cancel context.CancelFunc
@@ -430,11 +428,10 @@ func (c *Collector) Close() {
 			}
 		}()
 
-		timer := time.NewTimer(closeTimeout)
 		select {
 		case <-done:
-			timer.Stop()
-		case <-timer.C:
+			// All done.
+		case <-time.After(closeTimeout):
 			slog.Warn("closing SQL connection pool forcefully", slog.String("driver", c.driver),
 				slog.String("name", c.Name), slog.Duration("timeout", closeTimeout),
 			)

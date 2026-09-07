@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/http"
 	"github.com/daabr/versipellis/pkg/sql"
 )
 
@@ -33,8 +34,7 @@ func initCollectors(ctx context.Context, entireCfg map[string]any) ([]<-chan str
 		var c collector
 		switch base.Type {
 		case config.CollectorTypeHTTP, config.CollectorTypeHTTP3:
-			slog.Error("HTTP collector not yet implemented", slog.String("name", base.Name), slog.String("type", base.Type))
-			continue
+			c, err = http.NewCollector(base, cfg)
 		case config.CollectorTypeSQL:
 			c, err = sql.NewCollector(base, cfg)
 		default:

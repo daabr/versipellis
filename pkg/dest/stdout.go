@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"sync"
 )
@@ -20,15 +21,32 @@ var (
 	encoder *json.Encoder
 )
 
-// Stdout prints any input data to [os.Stdout]. Simple data types are printed as-is, while
-// complex structures are encoded as JSON, if possible. Because this destination is intended
-// for demo and testing purposes, it is guaranteed to be concurrency-safe but not necessarily
-// performant. For the same reason, JSON encoding errors are logged, but not exposed.
+// Stdout prints any input data to [os.Stdout]. Simple data types are printed as-is, while complex structures
+// are encoded as JSON, if possible. Some types (e.g., HTTP requests and responses) have special handling.
+// Because this destination is intended for demo and testing purposes, it is guaranteed to be concurrency-safe
+// but not necessarily performant. For the same reason, JSON encoding errors are logged, but not exposed.
 func Stdout(_ context.Context, data any) error {
+	if data == nil {
+		return nil // Don't log nil data, other senders may use it as a sentinel marking end-of-batch.
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 
 	once.Do(lazyInit)
+
+	switch v := data.(type) {
+	case *http.Request:
+		_ = v.Write(writer)
+		if v.Body != nil {
+			_ = v.Body.Close()
+		}
+		return nil
+	case *http.Response:
+		_ = v.Write(writer)
+		_ = v.Body.Close() // Never nil - see Collector.processResponse() in the file pkg/http/client.go.
+		return nil
+	}
 
 	if err := encoder.Encode(data); err != nil {
 		slog.Error("cannot encode data", slog.Any("error", err), slog.String("data_type", fmt.Sprintf("%T", data)))
