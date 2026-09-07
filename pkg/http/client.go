@@ -184,7 +184,7 @@ func (c *Collector) processResponse(r *http.Response) *http.Response {
 	}
 
 	cpy := *r
-	cpy.ContentLength = 0
+	cpy.ContentLength = int64(len(body))
 	cpy.Body = io.NopCloser(bytes.NewReader(body))
 	return &cpy
 }

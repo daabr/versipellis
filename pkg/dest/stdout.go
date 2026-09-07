@@ -44,7 +44,9 @@ func Stdout(_ context.Context, data any) error {
 		return nil
 	case *http.Response:
 		_ = v.Write(writer)
-		_ = v.Body.Close() // Never nil - see Collector.processResponse() in the file pkg/http/client.go.
+		if v.Body != nil { // Never nil - see Collector.processResponse() in pkg/http/client.go - but just in case.
+			_ = v.Body.Close()
+		}
 		return nil
 	}
 

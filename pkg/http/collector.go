@@ -308,6 +308,7 @@ func fixHeaders(h http.Header) http.Header {
 		// https://datatracker.ietf.org/doc/html/rfc6797#section-6.1
 		case "Keep-Alive", "Te", "Trailer", "Transfer-Encoding", "Upgrade", "Strict-Transport-Security":
 			headers.Del(k)
+		// Reminder: revisit this case when we support additional non-default encoding types.
 		case "Content-Encoding", "Content-Length", "Set-Cookie":
 			headers.Del(k)
 		}
@@ -325,9 +326,15 @@ func (c *Collector) Done() <-chan struct{} {
 // anymore. It is safe (though useless) to call even if [Collector.Start] was never called, but either
 // way it is meant to be called only in the same goroutine as [Collector.scheduleNextRequest].
 func (c *Collector) Close() {
+	if c == nil || c.cancel == nil {
+		return
+	}
 	c.closeOnce.Do(func() {
-		if c.cancel != nil {
-			defer c.cancel()
-		}
+		defer c.cancel()
+
+		// Reminder: wait for any in-flight request to complete, like in SQL collectors,
+		// before letting [Collector.done] signal that this collector is really done.
+
+		c.client.CloseIdleConnections()
 	})
 }

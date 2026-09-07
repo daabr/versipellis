@@ -407,10 +407,11 @@ func (c *Collector) Done() <-chan struct{} {
 // It is safe (though useless) to call even if [Collector.Start] was never called, but either
 // way it is meant to be called only in the same goroutine as [Collector.scheduleNextQuery].
 func (c *Collector) Close() {
+	if c == nil || c.cancel == nil {
+		return
+	}
 	c.closeOnce.Do(func() {
-		if c.cancel != nil {
-			defer c.cancel()
-		}
+		defer c.cancel()
 
 		if c.db == nil && !c.usingPG {
 			return
