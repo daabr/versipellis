@@ -413,8 +413,18 @@ func TestParseHeaders(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "invalid_key",
+			cfg:     map[string]any{" ": "value"},
+			wantErr: true,
+		},
+		{
 			name:    "value_not_a_string",
-			cfg:     map[string]any{"Accept": 1},
+			cfg:     map[string]any{"Key": 1},
+			wantErr: true,
+		},
+		{
+			name:    "invalid_value",
+			cfg:     map[string]any{"Key": "text/plain\napplication/json"},
 			wantErr: true,
 		},
 	}
@@ -475,7 +485,7 @@ func TestLoadBody(t *testing.T) {
 		{
 			name: "valid_inline_body",
 			body: bodyWithSpaces,
-			want: "text",
+			want: bodyWithSpaces,
 		},
 		{
 			name:    "body_file_not_found",
@@ -501,7 +511,7 @@ func TestLoadBody(t *testing.T) {
 		{
 			name: "valid_body_file",
 			path: filepath.Join(tempDir, "body.txt"),
-			want: bodyWithSpaces, // Not trimming leading/trailing whitespaces, because this could be binary payload.
+			want: bodyWithSpaces,
 		},
 	}
 	for _, tt := range tests {

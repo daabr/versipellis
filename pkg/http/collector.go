@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/net/http/httpguts"
+
 	"github.com/daabr/versipellis/pkg/config"
 )
 
@@ -123,7 +125,7 @@ func parseURL(rawURL string, protoVer string) (*url.URL, error) {
 		return nil, errors.New("HTTP collector URL must have an HTTP/S scheme")
 	case u.Opaque != "":
 		return nil, fmt.Errorf(`HTTP collector URL must have "//" after the "%s:" scheme`, u.Scheme)
-	case u.Host == "":
+	case u.Hostname() == "":
 		return nil, errors.New("HTTP collector URL must have a host address")
 	case u.Port() != "":
 		// [url.Parse] returns an error for negative and non-numeric values, but not out-of-range numbers.
@@ -182,18 +184,24 @@ func parseHeaders(cfg any) (http.Header, error) {
 
 	headers := make(http.Header, len(table))
 	for key, value := range table {
-		if v, ok := value.(string); ok {
-			headers.Set(key, v)
-			continue
+		if !httpguts.ValidHeaderFieldName(key) {
+			return nil, fmt.Errorf("invalid HTTP header field name %q", key)
 		}
-		return nil, fmt.Errorf("header %q must be a string, got %T", key, value)
+		v, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("HTTP header field value %q must be a string, got %T", key, value)
+		}
+		if !httpguts.ValidHeaderFieldValue(v) {
+			return nil, fmt.Errorf("invalid HTTP header field value for header %q", key)
+		}
+		headers.Set(key, v)
 	}
 
 	return headers, nil
 }
 
 func loadBody(cfg map[string]any, method string) ([]byte, error) {
-	inline := strings.TrimSpace(config.Value(cfg, "body", ""))
+	inline := config.Value(cfg, "body", "") // Not trimming leading/trailing whitespaces because this payload may be signed.
 	path := strings.TrimSpace(config.Value(cfg, "body_file", ""))
 
 	switch {
@@ -214,7 +222,7 @@ func loadBody(cfg map[string]any, method string) ([]byte, error) {
 	if len(body) == 0 {
 		return nil, errors.New("specified HTTP body file is empty: " + path)
 	}
-	return body, nil
+	return body, nil // Not trimming leading/trailing whitespaces because this payload may be binary.
 }
 
 // Start connects to the configured HTTP server and starts sending requests to it.
