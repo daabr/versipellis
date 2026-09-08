@@ -104,6 +104,18 @@
   - Inline - usually when the content is small and simple
   - Relative or absolute path to a file (e.g., `"config/body.json"` or `"/path/body.xml"`) - when it's large, complex, or sensitive
 
+`max_body_size` - maximum byte size of server response bodies
+
+- Optional
+- Default: `10485760` (10,485,760 bytes = 10 MiB)
+- Non-positive numbers (`0` and negative values) are normalized to the default
+
+`max_header_size` - maximum byte size of server response headers (as a whole, not each key-value pair)
+
+- Optional
+- Default: `10485760` (10,485,760 bytes = 10 MiB)
+- Non-positive numbers (`0` and negative values) are normalized to the default
+
 `timeout` - maximum duration of time for each HTTP client request to complete
 
 - Optional

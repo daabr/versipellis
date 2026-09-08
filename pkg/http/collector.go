@@ -32,12 +32,14 @@ const (
 type Collector struct {
 	config.BaseCollector
 
-	url     *url.URL
-	method  string
-	headers http.Header
-	body    []byte
-	timeout time.Duration
-	retries int // Reminder: extend this to a policy struct & make it configurable in a separate PR.
+	url           *url.URL
+	method        string
+	headers       http.Header
+	body          []byte
+	maxBodySize   int64
+	maxHeaderSize int64         // Reminder: this should be a factor in the transportID hash.
+	timeout       time.Duration // Reminder: this should be a factor in the transportID hash.
+	retries       int           // Reminder: extend this to a policy struct & make it configurable in a separate PR.
 
 	client      *http.Client
 	transportID string // Reminder: add configurable TLS in a separate PR.
@@ -95,6 +97,8 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	if c.body, err = loadBody(httpCfg, c.method); err != nil {
 		return nil, err
 	}
+	c.maxBodySize = parseByteSize(httpCfg, "max_body_size", defaultMaxBodySize)
+	c.maxHeaderSize = parseByteSize(httpCfg, "max_header_size", defaultMaxHeaderSize)
 	if c.timeout, err = time.ParseDuration(config.Value(httpCfg, "timeout", defaultRequestTimeout.String())); err != nil {
 		return nil, fmt.Errorf("invalid timeout duration: %w", err)
 	}
@@ -185,14 +189,14 @@ func parseHeaders(cfg any) (http.Header, error) {
 	headers := make(http.Header, len(table))
 	for key, value := range table {
 		if !httpguts.ValidHeaderFieldName(key) {
-			return nil, fmt.Errorf("invalid HTTP header field name %q", key)
+			return nil, fmt.Errorf("invalid HTTP header name %q", key)
 		}
 		v, ok := value.(string)
 		if !ok {
-			return nil, fmt.Errorf("HTTP header field value %q must be a string, got %T", key, value)
+			return nil, fmt.Errorf("HTTP header value for %q must be a string, got %T", key, value)
 		}
 		if !httpguts.ValidHeaderFieldValue(v) {
-			return nil, fmt.Errorf("invalid HTTP header field value for header %q", key)
+			return nil, fmt.Errorf("invalid HTTP header value for %q", key)
 		}
 		headers.Set(key, v)
 	}
@@ -225,6 +229,18 @@ func loadBody(cfg map[string]any, method string) ([]byte, error) {
 	return body, nil // Not trimming leading/trailing whitespaces because this payload may be binary.
 }
 
+func parseByteSize(cfg map[string]any, key string, defaultValue int64) int64 {
+	parsedValue := config.Value(cfg, key, defaultValue)
+	if parsedValue > 0 {
+		return parsedValue
+	}
+
+	slog.Warn("invalid (non-positive) value for TOML config key, using default value",
+		slog.String("key", key), slog.Int64("actual", parsedValue), slog.Int64("default", defaultValue),
+	)
+	return defaultValue
+}
+
 // Start connects to the configured HTTP server and starts sending requests to it.
 // This function returns immediately, and the collector runs asynchronously in the background.
 // This function is idempotent: only the first call will actually start a goroutine. However,
@@ -243,9 +259,9 @@ func (c *Collector) Start(ctx context.Context) bool {
 
 	switch c.Type {
 	case config.CollectorTypeHTTP:
-		c.client = clientH2(cfg, c.transportID, c.timeout)
+		c.client = clientH2(cfg, c.maxHeaderSize, c.timeout, c.transportID)
 	case config.CollectorTypeHTTP3:
-		c.client = clientH3(cfg, c.transportID, c.timeout)
+		c.client = clientH3(cfg, c.maxHeaderSize, c.timeout, c.transportID)
 	}
 	ctx, c.cancel = context.WithCancel(ctx)
 	c.done = ctx.Done()

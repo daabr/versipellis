@@ -36,23 +36,22 @@ func Stdout(_ context.Context, data any) error {
 	once.Do(lazyInit)
 
 	var err error
-	switch v := data.(type) {
-	case *http.Request:
-		err = v.Write(writer)
-		if v.Body != nil {
-			_ = v.Body.Close()
+	if req, ok := data.(*http.Request); ok && req != nil {
+		err = req.Write(writer)
+		if req.Body != nil {
+			_ = req.Body.Close()
 		}
-	case *http.Response:
-		err = v.Write(writer)
-		if v.Body != nil { // Never nil - see Collector.processResponse() in pkg/http/client.go - but just in case.
-			_ = v.Body.Close()
+	} else if resp, ok := data.(*http.Response); ok && resp != nil {
+		err = resp.Write(writer)
+		if resp.Body != nil {
+			_ = resp.Body.Close()
 		}
-	default:
+	} else {
 		err = encoder.Encode(data)
 	}
 
 	if err != nil {
-		slog.Error("cannot encode data", slog.Any("error", err), slog.String("data_type", fmt.Sprintf("%T", data)))
+		slog.Error("cannot encode or print data", slog.Any("error", err), slog.String("data_type", fmt.Sprintf("%T", data)))
 		// Log this kind of error, but...
 	}
 

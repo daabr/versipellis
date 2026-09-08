@@ -530,6 +530,51 @@ func TestLoadBody(t *testing.T) {
 	}
 }
 
+func TestParseByteSize(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  map[string]any
+		want int64
+	}{
+		{
+			name: "valid_positive_number",
+			cfg:  map[string]any{"size": int64(123)},
+			want: 123,
+		},
+		{
+			name: "invalid_zero",
+			cfg:  map[string]any{"size": int64(0)},
+			want: 456,
+		},
+		{
+			name: "invalid_negative_number",
+			cfg:  map[string]any{"size": int64(-123)},
+			want: 456,
+		},
+		{
+			name: "invalid_non_number",
+			cfg:  map[string]any{"size": "not-a-number"},
+			want: 456,
+		},
+		{
+			name: "missing_key",
+			cfg:  map[string]any{},
+			want: 456,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := parseByteSize(tt.cfg, "size", int64(456)); got != tt.want {
+				t.Errorf("parseByteSize() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCollectorStartNilGuard(t *testing.T) {
 	var nilCollector *Collector
 	if ok := nilCollector.Start(t.Context()); ok {
@@ -660,7 +705,7 @@ func TestScheduleNextRequest(t *testing.T) {
 					t.Fatalf("NewCollector() error: %v", err)
 				}
 
-				c.client = clientH2(&tls.Config{}, tt.name, c.timeout)
+				c.client = clientH2(&tls.Config{}, 0, c.timeout, tt.name)
 				ctx, cancel := context.WithCancel(t.Context())
 				c.done = ctx.Done()
 				c.cancel = cancel
@@ -765,7 +810,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 				// Test case 2: Close() after Start() should block until current request is done / the timeout expires.
 				_, c.cancel = context.WithCancel(t.Context())
 				if tt.start {
-					c.client = clientH2(&tls.Config{}, tt.name, c.timeout)
+					c.client = clientH2(&tls.Config{}, 0, c.timeout, tt.name)
 					c.inFlight.Go(func() {
 						synctest.Sleep(CloseTimeout * 2)
 					})

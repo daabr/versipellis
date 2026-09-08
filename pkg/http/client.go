@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"time"
@@ -21,13 +22,14 @@ var (
 	transportH2 = cache.NewFastCache[string, *http.Transport]()
 	transportH3 = cache.NewFastCache[string, *http3.Transport]()
 
-	maxBodyBytes int64 = 10 << 20 // 10 MiB.
+	defaultMaxBodySize   int64 = 10 << 20 // 10 MiB.
+	defaultMaxHeaderSize int64 = 10 << 20 // 10 MiB.
 )
 
 // clientH2 constructs a client that supports both HTTP/1.1 and HTTP/2. It reuses [http.Transport]
 // instances with the same TLS configuration, to optimize connection pooling. HTTP/2 requires TLS, so
 // if the provided TLS configuration is nil, this function returns a client that only supports HTTP/1.1.
-func clientH2(cfg *tls.Config, transportID string, timeout time.Duration) *http.Client {
+func clientH2(cfg *tls.Config, maxHeaderSize int64, timeout time.Duration, transportID string) *http.Client {
 	d := &net.Dialer{
 		Timeout:   timeout / 2,
 		KeepAlive: 30 * time.Second,
@@ -37,11 +39,12 @@ func clientH2(cfg *tls.Config, transportID string, timeout time.Duration) *http.
 		DialContext:     d.DialContext,
 		TLSClientConfig: cfg,
 
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   100,
-		TLSHandshakeTimeout:   timeout / 2,
-		IdleConnTimeout:       90 * time.Second,
-		ExpectContinueTimeout: time.Second,
+		MaxIdleConns:           100,
+		MaxIdleConnsPerHost:    100,
+		TLSHandshakeTimeout:    timeout / 2,
+		IdleConnTimeout:        90 * time.Second,
+		ExpectContinueTimeout:  time.Second,
+		MaxResponseHeaderBytes: maxHeaderSize,
 	}
 	t.Protocols = &http.Protocols{}
 	t.Protocols.SetHTTP1(true)
@@ -58,14 +61,15 @@ func clientH2(cfg *tls.Config, transportID string, timeout time.Duration) *http.
 // clientH3 constructs an HTTP/3 client. It reuses [http3.Transport] instances with
 // the same TLS configuration, to optimize connection pooling. HTTP/3 requires TLS, so
 // unlike [clientH2], this function returns nil if the provided TLS configuration is nil.
-func clientH3(cfg *tls.Config, transportID string, timeout time.Duration) *http.Client {
+func clientH3(cfg *tls.Config, maxHeaderSize int64, timeout time.Duration, transportID string) *http.Client {
 	if cfg == nil {
 		slog.Warn("TLS configuration is required for HTTP/3 clients")
 		return nil
 	}
 
 	t := &http3.Transport{
-		TLSClientConfig: cfg,
+		TLSClientConfig:        cfg,
+		MaxResponseHeaderBytes: int(min(maxHeaderSize, math.MaxInt)),
 		QUICConfig: &quic.Config{
 			HandshakeIdleTimeout: 5 * time.Second,
 			MaxIdleTimeout:       30 * time.Second,
@@ -166,20 +170,20 @@ func (c *Collector) processResponse(r *http.Response) *http.Response {
 	if r.StatusCode >= http.StatusBadRequest {
 		return newErrorResponse(r.StatusCode)
 	}
-	if r.ContentLength > maxBodyBytes {
-		slog.Warn("didn't read HTTP response body: too large",
-			slog.String("name", c.Name), slog.Int64("content_length", r.ContentLength),
+	if r.ContentLength > c.maxBodySize {
+		slog.Warn("didn't read HTTP response body: too large", slog.String("name", c.Name),
+			slog.Int64("content_length", r.ContentLength), slog.Int64("max_size", c.maxBodySize),
 		)
 		return newErrorResponse(http.StatusRequestEntityTooLarge)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, c.maxBodySize+1))
 	if err != nil {
 		slog.Warn("failed to read HTTP response body", slog.Any("error", err), slog.String("name", c.Name))
 		return newErrorResponse(http.StatusBadGateway)
 	}
-	if int64(len(body)) > maxBodyBytes {
-		slog.Warn("HTTP response body is too large", slog.String("name", c.Name), slog.Int64("max_size", maxBodyBytes))
+	if int64(len(body)) > c.maxBodySize {
+		slog.Warn("HTTP response body is too large", slog.String("name", c.Name), slog.Int64("max_size", c.maxBodySize))
 		return newErrorResponse(http.StatusRequestEntityTooLarge)
 	}
 
