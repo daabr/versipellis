@@ -55,8 +55,12 @@ var validDriverTypes = []string{
 }
 
 const (
-	pingTimeout  = 5 * time.Second
-	closeTimeout = 5 * time.Second
+	// CloseTimeout is the maximum duration to wait for in-flight queries to finish, during [Collector.Close].
+	// If this timeout is reached, the collector will forcefully shut down the database connection pool.
+	// It is intentionally short and not configurable, to enable quick process restarts.
+	CloseTimeout = 5 * time.Second
+
+	pingTimeout = 5 * time.Second
 
 	defaultQueryTimeout = time.Minute
 )
@@ -401,11 +405,10 @@ func (c *Collector) Done() <-chan struct{} {
 	return c.done
 }
 
-// Close closes the database connection pool, prevents new queries from starting, and waits for
-// all queries that have started processing on the server to finish (up to a point). It then
-// signals through the [Collector.Done] channel that the collector isn't executing queries anymore.
-// It is safe (though useless) to call even if [Collector.Start] was never called, but either
-// way it is meant to be called only in the same goroutine as [Collector.scheduleNextQuery].
+// Close closes the database connection pool, prevents new queries from starting, and waits (up to [CloseTimeout]) for all
+// queries that are currently in flight to finish. It then signals through the [Collector.Done] channel that the collector
+// isn't executing queries anymore. It is safe (though useless) to call multiple times, even if [Collector.Start] was
+// never called, but either way it's meant to be called only in the same goroutine as [Collector.scheduleNextQuery].
 func (c *Collector) Close() {
 	if c == nil || c.cancel == nil {
 		return
@@ -433,9 +436,9 @@ func (c *Collector) Close() {
 		select {
 		case <-done:
 			// All done.
-		case <-time.After(closeTimeout):
+		case <-time.After(CloseTimeout):
 			slog.Warn("closing SQL connection pool forcefully", slog.String("driver", c.driver),
-				slog.String("name", c.Name), slog.Duration("timeout", closeTimeout),
+				slog.String("name", c.Name), slog.Duration("timeout", CloseTimeout),
 			)
 		}
 	})

@@ -675,7 +675,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 		{
 			name:   "with_fake_pg_pool",
 			pgPool: fakePGPool{closeTimeout: true},
-			want2:  closeTimeout,
+			want2:  CloseTimeout,
 		},
 		{
 			name:   "without_any_db",
@@ -690,7 +690,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 					driver:  DriverTypePostgres,
 					pgPool:  tt.pgPool,
 					usingPG: tt.pgPool != nil,
-					timeout: closeTimeout * 2,
+					timeout: CloseTimeout * 2,
 				}
 
 				// Test case 1: Close() before Start() should return immediately and have no effect.
@@ -709,7 +709,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 					t.Errorf("Collector.Close(2) timeout behaved unexpectedly: got %v, want %v", got, tt.want2)
 				}
 
-				synctest.Sleep(closeTimeout * 3)
+				synctest.Sleep(CloseTimeout * 3)
 			})
 		})
 	}

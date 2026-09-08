@@ -724,7 +724,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 		{
 			name:  "with_client",
 			start: true,
-			want:  closeTimeout,
+			want:  CloseTimeout,
 		},
 		{
 			name:  "without_client",
@@ -739,7 +739,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 				c, err := NewCollector(base, map[string]any{
 					"type":    config.CollectorTypeHTTP,
 					"http":    map[string]any{"method": http.MethodGet, "url": "https://example.com"},
-					"timeout": closeTimeout * 2,
+					"timeout": CloseTimeout * 2,
 				})
 				if err != nil {
 					t.Fatalf("NewCollector() error: %v", err)
@@ -757,7 +757,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 				if tt.start {
 					c.client = clientH2(&tls.Config{}, tt.name, c.timeout)
 					c.inFlight.Go(func() {
-						synctest.Sleep(closeTimeout * 2)
+						synctest.Sleep(CloseTimeout * 2)
 					})
 				}
 
@@ -767,7 +767,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 					t.Errorf("Collector.Close(2) timeout behaved unexpectedly: got %v, want %v", got, tt.want)
 				}
 
-				synctest.Sleep(closeTimeout * 3)
+				synctest.Sleep(CloseTimeout * 3)
 			})
 		})
 	}

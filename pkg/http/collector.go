@@ -18,7 +18,10 @@ import (
 )
 
 const (
-	closeTimeout = 5 * time.Second
+	// CloseTimeout is the maximum duration to wait for in-flight requests to finish, during [Collector.Close].
+	// If this timeout is reached, the collector will forcefully shut down the connection, as well as any
+	// idle ones. It is intentionally short and not configurable, to enable quick process restarts.
+	CloseTimeout = 5 * time.Second
 
 	defaultRequestTimeout = 5 * time.Second
 )
@@ -327,10 +330,10 @@ func (c *Collector) Done() <-chan struct{} {
 	return c.done
 }
 
-// Close stops any requests that are currently in flight, and prevents new ones from being sent.
-// It then signals through the [Collector.Done] channel that the collector isn't executing requests
-// anymore. It is safe (though useless) to call even if [Collector.Start] was never called, but either
-// way it is meant to be called only in the same goroutine as [Collector.scheduleNextRequest].
+// Close waits (up to [CloseTimeout]) for requests that are currently in flight to finish, and prevents new ones
+// from starting. It then signals through the [Collector.Done] channel that the collector isn't executing requests
+// anymore. It is safe (though useless) to call multiple times, even if [Collector.Start] was never called,
+// but either way it's meant to be called only in the same goroutine as [Collector.scheduleNextRequest].
 func (c *Collector) Close() {
 	if c == nil || c.cancel == nil {
 		return
@@ -352,9 +355,9 @@ func (c *Collector) Close() {
 		select {
 		case <-done:
 			// All done.
-		case <-time.After(closeTimeout):
+		case <-time.After(CloseTimeout):
 			slog.Warn("closing HTTP collector forcefully",
-				slog.String("name", c.Name), slog.Duration("timeout", closeTimeout),
+				slog.String("name", c.Name), slog.Duration("timeout", CloseTimeout),
 			)
 		}
 
