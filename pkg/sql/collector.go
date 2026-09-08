@@ -410,6 +410,7 @@ func (c *Collector) Close() {
 	if c == nil || c.cancel == nil {
 		return
 	}
+
 	c.closeOnce.Do(func() {
 		defer c.cancel()
 
