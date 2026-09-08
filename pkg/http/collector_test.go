@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -528,14 +529,22 @@ func TestCollectorStartNilGuard(t *testing.T) {
 
 func TestCollectorStart(t *testing.T) {
 	tests := []struct {
-		name  string
-		proto string
-		tls   bool
+		name   string
+		proto  string
+		tls    bool
+		sender dest.Sender
 	}{
 		{
-			name:  "http1_success",
-			proto: config.CollectorTypeHTTP,
-			tls:   false,
+			name:   "http1_success",
+			proto:  config.CollectorTypeHTTP,
+			tls:    false,
+			sender: fakeSender(nil),
+		},
+		{
+			name:   "sender_error",
+			proto:  config.CollectorTypeHTTP,
+			tls:    false,
+			sender: fakeSender(errors.New("fake sender error")),
 		},
 		{
 			name:  "http2_success",
@@ -550,7 +559,12 @@ func TestCollectorStart(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewUnstartedServer(fakeHandler(t, tt.tls, 0, http.StatusOK, ""))
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tt.tls && r.TLS == nil {
+					t.Errorf("expected TLS connection, got nil")
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
 			if tt.tls {
 				server.EnableHTTP2 = true
 				server.StartTLS()
@@ -563,12 +577,12 @@ func TestCollectorStart(t *testing.T) {
 			fakeTransport, _ := fakeClient.Transport.(*http.Transport)
 			transportH2.Set("", fakeTransport)
 
-			base, err := config.NewBaseCollector(map[string]any{"type": tt.proto, "schedule": "@once"}, "name")
+			base, err := config.NewBaseCollector(map[string]any{"type": tt.proto, "schedule": "@once"}, tt.name)
 			if err != nil {
 				t.Fatalf("config.NewBaseCollector() error: %v", err)
 			}
 			if !tt.tls {
-				base.Sender = dest.Stdout // Just for coverage.
+				base.Sender = tt.sender // For extra coverage.
 			}
 
 			c, err := NewCollector(base, map[string]any{
@@ -590,6 +604,12 @@ func TestCollectorStart(t *testing.T) {
 
 			<-c.Done() // Wait for the collector's goroutine to finish its work.
 		})
+	}
+}
+
+func fakeSender(err error) dest.Sender {
+	return func(_ context.Context, _ any) error {
+		return err
 	}
 }
 
@@ -617,7 +637,7 @@ func TestScheduleNextRequest(t *testing.T) {
 				base, err := config.NewBaseCollector(map[string]any{
 					"type":     config.CollectorTypeHTTP,
 					"schedule": tt.schedule,
-				}, "")
+				}, tt.name)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
 				}
@@ -630,7 +650,7 @@ func TestScheduleNextRequest(t *testing.T) {
 					t.Fatalf("NewCollector() error: %v", err)
 				}
 
-				c.client = clientH2(&tls.Config{}, c.transportID, c.timeout)
+				c.client = clientH2(&tls.Config{}, tt.name, c.timeout)
 				ctx, cancel := context.WithCancel(t.Context())
 				c.done = ctx.Done()
 				c.cancel = cancel
@@ -691,6 +711,64 @@ func TestFixHeaders(t *testing.T) {
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("fixHeaders() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestCollectorCloseTimeout(t *testing.T) {
+	tests := []struct {
+		name  string
+		start bool
+		want  time.Duration
+	}{
+		{
+			name:  "with_client",
+			start: true,
+			want:  closeTimeout,
+		},
+		{
+			name:  "without_client",
+			start: false,
+			want:  0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				base := &config.BaseCollector{Type: config.CollectorTypeHTTP}
+				c, err := NewCollector(base, map[string]any{
+					"type":    config.CollectorTypeHTTP,
+					"http":    map[string]any{"method": http.MethodGet, "url": "https://example.com"},
+					"timeout": closeTimeout * 2,
+				})
+				if err != nil {
+					t.Fatalf("NewCollector() error: %v", err)
+				}
+
+				// Test case 1: Close() before Start() should return immediately and have no effect.
+				start := time.Now()
+				c.Close()
+				if got := time.Since(start); got != 0 {
+					t.Fatalf("Collector.Close(1) timeout behaved unexpectedly: got %v, want %v", got, 0)
+				}
+
+				// Test case 2: Close() after Start() should block until current request is done / the timeout expires.
+				_, c.cancel = context.WithCancel(t.Context())
+				if tt.start {
+					c.client = clientH2(&tls.Config{}, tt.name, c.timeout)
+					c.inFlight.Go(func() {
+						synctest.Sleep(closeTimeout * 2)
+					})
+				}
+
+				start = time.Now()
+				c.Close()
+				if got := time.Since(start); got != tt.want {
+					t.Errorf("Collector.Close(2) timeout behaved unexpectedly: got %v, want %v", got, tt.want)
+				}
+
+				synctest.Sleep(closeTimeout * 3)
+			})
 		})
 	}
 }

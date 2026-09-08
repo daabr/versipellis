@@ -690,21 +690,21 @@ func TestCollectorCloseTimeout(t *testing.T) {
 					driver:  DriverTypePostgres,
 					pgPool:  tt.pgPool,
 					usingPG: tt.pgPool != nil,
+					timeout: closeTimeout * 2,
 				}
 
 				// Test case 1: Close() before Start() should return immediately and have no effect.
 				start := time.Now()
 				c.Close()
-
 				if got := time.Since(start); got != 0 {
 					t.Fatalf("Collector.Close(1) timeout behaved unexpectedly: got %v, want %v", got, 0)
 				}
 
 				// Test case 2: Close() after Start() should block until the DB is closed / the timeout expires.
 				_, c.cancel = context.WithCancel(t.Context())
+
 				start = time.Now()
 				c.Close()
-
 				if got := time.Since(start); got != tt.want2 {
 					t.Errorf("Collector.Close(2) timeout behaved unexpectedly: got %v, want %v", got, tt.want2)
 				}

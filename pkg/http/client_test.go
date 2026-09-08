@@ -14,14 +14,14 @@ import (
 )
 
 func TestClientH3WithoutTLS(t *testing.T) {
-	client := clientH3(nil, "test", time.Second)
+	client := clientH3(nil, "TestClientH3WithoutTLS", time.Second)
 	if client != nil {
 		t.Errorf("Expected nil client for HTTP/3 without TLS, got: %#v", client)
 	}
 }
 
 func TestRequestWithRetriesNonRetryableError(t *testing.T) {
-	_ = clientH2(&tls.Config{}, "test", time.Second)
+	_ = clientH2(&tls.Config{}, "TestRequestWithRetriesNonRetryableError", time.Second)
 
 	tests := []struct {
 		name   string
@@ -35,13 +35,10 @@ func TestRequestWithRetriesNonRetryableError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			transportH2.Clear()
-			t.Cleanup(transportH2.Clear)
-
-			server := httptest.NewServer(fakeHandler(t, false, 0, tt.status, "Should not retry"))
+			server := httptest.NewServer(fakeHandler(t, 0, tt.status, "Should not retry"))
 			t.Cleanup(server.Close)
 
-			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"}, "name")
+			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"}, tt.name)
 			if err != nil {
 				t.Fatalf("config.NewBaseCollector() error: %v", err)
 			}
@@ -81,13 +78,10 @@ func TestRequestOnceEdgeCases(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			transportH2.Clear()
-			t.Cleanup(transportH2.Clear)
-
-			server := httptest.NewServer(fakeHandler(t, false, 0, http.StatusOK, tt.body))
+			server := httptest.NewServer(fakeHandler(t, 0, http.StatusOK, tt.body))
 			t.Cleanup(server.Close)
 
-			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"}, "name")
+			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"}, tt.name)
 			if err != nil {
 				t.Fatalf("config.NewBaseCollector() error: %v", err)
 			}
@@ -100,7 +94,7 @@ func TestRequestOnceEdgeCases(t *testing.T) {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
 
-			c.client = clientH2(&tls.Config{}, "test", 0)
+			c.client = clientH2(&tls.Config{}, tt.name, 0)
 			if tt.methodErr {
 				c.method = "???"
 			}
@@ -155,14 +149,11 @@ func TestProcessResponseErrors(t *testing.T) {
 			maxBodyBytes = tt.maxSize // Package variable.
 			t.Cleanup(func() { maxBodyBytes = 10 << 20 })
 
-			transportH2.Clear()
-			t.Cleanup(transportH2.Clear)
-
 			body := strings.Repeat("A", tt.bodySize)
-			server := httptest.NewServer(fakeHandler(t, false, tt.contentLen, http.StatusOK, body))
+			server := httptest.NewServer(fakeHandler(t, tt.contentLen, http.StatusOK, body))
 			t.Cleanup(server.Close)
 
-			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"}, "name")
+			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"}, tt.name)
 			if err != nil {
 				t.Fatalf("config.NewBaseCollector() error: %v", err)
 			}
@@ -175,7 +166,7 @@ func TestProcessResponseErrors(t *testing.T) {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
 
-			c.client = clientH2(&tls.Config{}, "test", 0)
+			c.client = clientH2(&tls.Config{}, tt.name, 0)
 			ctx, cancel := context.WithCancel(t.Context())
 			c.done = ctx.Done()
 			c.cancel = cancel
@@ -191,14 +182,10 @@ func TestProcessResponseErrors(t *testing.T) {
 	}
 }
 
-func fakeHandler(t *testing.T, tls bool, contentLength, statusCode int, body string) http.HandlerFunc {
+func fakeHandler(t *testing.T, contentLength, statusCode int, body string) http.HandlerFunc {
 	t.Helper()
 
-	return func(w http.ResponseWriter, r *http.Request) {
-		if tls && r.TLS == nil {
-			t.Errorf("expected TLS connection, got nil")
-		}
-
+	return func(w http.ResponseWriter, _ *http.Request) {
 		if contentLength >= 0 {
 			w.Header().Set("Content-Length", strconv.Itoa(contentLength))
 		}
