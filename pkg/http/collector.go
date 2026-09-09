@@ -122,11 +122,11 @@ func parseURL(rawURL string, protoVer string) (*url.URL, error) {
 		return nil, errors.New("HTTP collector URL must be absolute (start with a scheme)")
 	}
 
-	scheme := strings.ToLower(u.Scheme)
+	u.Scheme = strings.ToLower(u.Scheme)
 	switch {
-	case scheme != "https" && protoVer == config.CollectorTypeHTTP3:
+	case u.Scheme != "https" && protoVer == config.CollectorTypeHTTP3:
 		return nil, errors.New("HTTP collector URL must have an HTTPS scheme for HTTP/3")
-	case scheme != "https" && scheme != "http":
+	case u.Scheme != "https" && u.Scheme != "http":
 		return nil, errors.New("HTTP collector URL must have an HTTP/S scheme")
 	case u.Opaque != "":
 		return nil, fmt.Errorf(`HTTP collector URL must have "//" after the "%s:" scheme`, u.Scheme)
@@ -287,6 +287,7 @@ func (c *Collector) scheduleNext(ctx, execCtx context.Context, prev time.Time) {
 		nextStart := c.Schedule.Next(prev)
 		if nextStart.IsZero() {
 			if c.Schedule.RunsOnlyOnce() {
+				c.inProgress.Wait()
 				slog.Info("HTTP collector finished one-time execution",
 					slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
 				)

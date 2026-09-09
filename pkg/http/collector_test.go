@@ -773,19 +773,28 @@ func TestFixHeaders(t *testing.T) {
 func TestCollectorCloseTimeout(t *testing.T) {
 	testTimeout := 5 * time.Second
 	tests := []struct {
-		name  string
-		start bool
-		want  time.Duration
+		name    string
+		start   bool
+		timeout time.Duration
+		want    time.Duration
 	}{
 		{
-			name:  "with_client",
-			start: true,
-			want:  testTimeout,
+			name:    "with_client",
+			start:   true,
+			timeout: testTimeout,
+			want:    testTimeout,
 		},
 		{
-			name:  "without_client",
-			start: false,
-			want:  0,
+			name:    "negative_timeout",
+			start:   true,
+			timeout: -1 * time.Second,
+			want:    testTimeout,
+		},
+		{
+			name:    "without_client",
+			timeout: testTimeout,
+			start:   false,
+			want:    0,
 		},
 	}
 	for _, tt := range tests {
@@ -793,9 +802,12 @@ func TestCollectorCloseTimeout(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				base := &config.BaseCollector{Type: config.CollectorTypeHTTP}
 				c, err := NewCollector(base, map[string]any{
-					"type":    config.CollectorTypeHTTP,
-					"http":    map[string]any{"method": http.MethodGet, "url": "https://example.com"},
-					"timeout": testTimeout.String(),
+					"type": config.CollectorTypeHTTP,
+					"http": map[string]any{
+						"method":  http.MethodGet,
+						"url":     "https://example.com",
+						"timeout": tt.timeout.String(),
+					},
 				})
 				if err != nil {
 					t.Fatalf("NewCollector() error: %v", err)

@@ -21,23 +21,30 @@ func TestClientH3WithoutTLSReturnsNil(t *testing.T) {
 	}
 }
 
-func TestRequestWithRetriesNonRetryableError(t *testing.T) {
-	_ = clientH2(&tls.Config{}, 0, time.Second, "TestRequestWithRetriesNonRetryableError")
+func TestRequestWithRetries(t *testing.T) {
+	_ = clientH2(&tls.Config{}, 0, time.Second, "TestRequestWithRetries")
 
 	tests := []struct {
-		name   string
-		status int
+		name      string
+		status    int
+		retryable bool
 	}{
-		{"400", http.StatusBadRequest},
-		{"404", http.StatusNotFound},
-		{"405", http.StatusMethodNotAllowed},
-		{"413", http.StatusRequestEntityTooLarge},
-		{"431", http.StatusRequestHeaderFieldsTooLarge},
-		{"501", http.StatusNotImplemented},
+		{"400", http.StatusBadRequest, false},
+		{"404", http.StatusNotFound, false},
+		{"405", http.StatusMethodNotAllowed, false},
+		{"413", http.StatusRequestEntityTooLarge, false},
+		{"431", http.StatusRequestHeaderFieldsTooLarge, false},
+		{"501", http.StatusNotImplemented, false},
+		{"503_retryable", http.StatusServiceUnavailable, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(fakeHandler(t, 0, tt.status, "should not retry"))
+			var requests atomic.Int32
+			handler := fakeHandler(t, 0, tt.status, "response body")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				handler(w, r)
+			}))
 			t.Cleanup(server.Close)
 
 			base, err := config.NewBaseCollector(map[string]any{
@@ -61,6 +68,14 @@ func TestRequestWithRetriesNonRetryableError(t *testing.T) {
 			}
 
 			<-c.Done() // Wait for the collector's goroutine to finish its work.
+
+			wantRequests := 1
+			if tt.retryable {
+				wantRequests = c.retries + 1
+			}
+			if got := int(requests.Load()); got != wantRequests {
+				t.Errorf("handler received %d requests, want %d", got, wantRequests)
+			}
 		})
 	}
 }
