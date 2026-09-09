@@ -429,7 +429,7 @@ func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
 	return row, nil
 }
 
-// Done returns a channel that signals when the collector has finished its work and is no longer running.
+// Done returns a channel that closes when shutdown completes or its grace period expires.
 func (c *Collector) Done() <-chan struct{} {
 	return c.closeDone
 }
