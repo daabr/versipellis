@@ -13,14 +13,12 @@ import (
 
 // CollectorType* constants represent all the available types of "collector" configurations in the TOML file.
 const (
-	CollectorTypeNone  = "none"
 	CollectorTypeHTTP  = "http"
-	CollectorTypeHTTP3 = "http/3"
+	CollectorTypeHTTP3 = "http3"
 	CollectorTypeSQL   = "sql"
 )
 
 var validCollectorTypes = []string{
-	CollectorTypeNone,
 	CollectorTypeHTTP,
 	CollectorTypeHTTP3,
 	CollectorTypeSQL,
@@ -31,9 +29,10 @@ type BaseCollector struct {
 	Type string
 	Name string
 
-	Cronspec string
-	Schedule *cron.Schedule
-	Trigger  string // Not fully implemented yet, but reserved for future use.
+	Cronspec    string
+	Schedule    *cron.Schedule
+	Trigger     string // Not fully implemented yet, but reserved for future use.
+	Concurrency int
 
 	Destination string
 	Sender      dest.Sender
@@ -43,24 +42,25 @@ type BaseCollector struct {
 // from a TOML file. It checks the details and returns an error if any of them is invalid.
 func NewBaseCollector(cfg map[string]any, namespace string) (*BaseCollector, error) {
 	c := &BaseCollector{
-		Type:        strings.ToLower(strings.TrimSpace(Value(cfg, "type", CollectorTypeNone))),
+		Type:        strings.ToLower(strings.TrimSpace(Value(cfg, "type", ""))),
 		Name:        namespace,
 		Cronspec:    Value(cfg, "schedule", ""),
 		Trigger:     Value(cfg, "trigger", ""),
+		Concurrency: concurrencyLimit(cfg, namespace),
 		Destination: strings.ToLower(strings.TrimSpace(Value(cfg, "destination", ""))),
 	}
 	var senderFound bool
 	c.Sender, senderFound = dest.Senders[c.Destination]
 
 	switch {
-	case !slices.Contains(validCollectorTypes, c.Type):
+	case c.Type != "" && !slices.Contains(validCollectorTypes, c.Type):
 		return nil, fmt.Errorf("unrecognized collector type %q", c.Type)
 	case !senderFound:
 		return nil, fmt.Errorf("unrecognized destination %q", c.Destination)
-	case c.Type == CollectorTypeNone && c.Cronspec == "" && c.Trigger == "" && c.Sender == nil:
+	case c.Type == "" && c.Cronspec == "" && c.Trigger == "" && c.Sender == nil:
 		return c, nil
-	case c.Type == CollectorTypeNone: // Cronspec != "" || Trigger != "" || Sender != nil.
-		return nil, errors.New("collector configuration of type 'none' cannot have a schedule, a trigger, or a destination")
+	case c.Type == "": // Cronspec != "" || Trigger != "" || Sender != nil.
+		return nil, errors.New("all collector configurations require a type specification")
 	case c.Cronspec != "" && c.Trigger != "":
 		return nil, errors.New("collector configuration cannot have both a schedule and a trigger")
 	case c.Trigger != "":

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -27,7 +28,7 @@ func TestStdout(t *testing.T) {
 		{
 			name: "nil",
 			data: nil,
-			want: "null\n",
+			want: "",
 		},
 		{
 			name: "int",
@@ -54,6 +55,40 @@ func TestStdout(t *testing.T) {
 			name: "unencoded_html",
 			data: "& < >",
 			want: `"& < >"` + "\n",
+		},
+		{
+			name: "http_request_with_body",
+			data: func() *http.Request {
+				body := strings.NewReader("body")
+				req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.com", body)
+				return req
+			}(),
+			want: "POST / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Go-http-client/1.1\r\nContent-Length: 4\r\n\r\nbody",
+		},
+		{
+			name: "http_request_without_body",
+			data: func() *http.Request {
+				req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.com", nil)
+				return req
+			}(),
+			want: "POST / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Go-http-client/1.1\r\nContent-Length: 0\r\n\r\n",
+		},
+		{
+			name: "http_response",
+			data: func() *http.Response {
+				body := strings.NewReader("body")
+				req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/path", body)
+				return &http.Response{
+					Request:    req,
+					Status:     "200 OK",
+					StatusCode: http.StatusOK,
+					Proto:      "HTTP/1.1",
+					ProtoMajor: 1,
+					ProtoMinor: 1,
+					Body:       io.NopCloser(body),
+				}
+			}(), //nolint:bodyclose // The [Stdout] function will close the response body during the test.
+			want: "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nbody",
 		},
 	}
 	for _, tt := range tests {

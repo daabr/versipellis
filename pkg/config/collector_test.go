@@ -25,33 +25,28 @@ func TestNewBaseCollector(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "explicit_type_none",
-			cfg:     map[string]any{"type": "none"},
-			wantErr: false,
-		},
-		{
-			name:    "type_none_with_schedule",
-			cfg:     map[string]any{"type": "none", "schedule": "* * * * *"},
+			name:    "schedule_without_type",
+			cfg:     map[string]any{"type": "", "schedule": "* * * * *"},
 			wantErr: true,
 		},
 		{
-			name:    "type_none_with_trigger",
-			cfg:     map[string]any{"type": "none", "trigger": "my_trigger"},
+			name:    "trigger_without_type",
+			cfg:     map[string]any{"type": "", "trigger": "my_trigger"},
 			wantErr: true,
 		},
 		{
-			name:    "type_none_with_destination",
-			cfg:     map[string]any{"type": "none", "destination": "stdout"},
+			name:    "destination_without_type",
+			cfg:     map[string]any{"type": "", "destination": "stdout"},
 			wantErr: true,
 		},
 		{
 			name:    "http_without_schedule_or_trigger",
-			cfg:     map[string]any{"type": "http"},
+			cfg:     map[string]any{"type": config.CollectorTypeHTTP},
 			wantErr: true,
 		},
 		{
 			name:    "http_with_schedule",
-			cfg:     map[string]any{"type": "http", "schedule": "@hourly"},
+			cfg:     map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@hourly"},
 			wantErr: false,
 		},
 		{
@@ -62,7 +57,7 @@ func TestNewBaseCollector(t *testing.T) {
 		{
 			name: "both_schedule_and_trigger",
 			cfg: map[string]any{
-				"type":     "http",
+				"type":     config.CollectorTypeHTTP,
 				"schedule": "@daily",
 				"trigger":  "my_trigger",
 			},
@@ -70,37 +65,37 @@ func TestNewBaseCollector(t *testing.T) {
 		},
 		{
 			name:    "http3_with_invalid_timezone",
-			cfg:     map[string]any{"type": "http/3", "schedule": "@hourly", "timezone": "invalid"},
+			cfg:     map[string]any{"type": config.CollectorTypeHTTP3, "schedule": "@hourly", "timezone": "invalid"},
 			wantErr: true,
 		},
 		{
 			name:    "http3_with_invalid_schedule",
-			cfg:     map[string]any{"type": "http/3", "schedule": "invalid"},
+			cfg:     map[string]any{"type": config.CollectorTypeHTTP3, "schedule": "invalid"},
 			wantErr: true,
 		},
 		{
 			name:    "schedule_syntactically_valid_but_semantically_invalid",
-			cfg:     map[string]any{"type": "http/3", "schedule": "0 0 31 2 *"},
+			cfg:     map[string]any{"type": config.CollectorTypeHTTP3, "schedule": "0 0 31 2 *"},
 			wantErr: true,
 		},
 		{
 			name:    "implicit_destination_none",
-			cfg:     map[string]any{"type": "sql", "schedule": "@every 1h"},
+			cfg:     map[string]any{"type": config.CollectorTypeSQL, "schedule": "@every 1h"},
 			wantErr: false,
 		},
 		{
 			name:    "explicit_destination_none",
-			cfg:     map[string]any{"type": "sql", "trigger": "boo!", "destination": "none"},
+			cfg:     map[string]any{"type": config.CollectorTypeSQL, "trigger": "boo!", "destination": "none"},
 			wantErr: false,
 		},
 		{
 			name:    "explicit_destination_discard",
-			cfg:     map[string]any{"type": "sql", "trigger": "boo!", "destination": "discard"},
+			cfg:     map[string]any{"type": config.CollectorTypeSQL, "trigger": "boo!", "destination": "discard"},
 			wantErr: false,
 		},
 		{
 			name:    "invalid_destination",
-			cfg:     map[string]any{"type": "sql", "trigger": "boo!", "destination": "invalid"},
+			cfg:     map[string]any{"type": config.CollectorTypeSQL, "trigger": "boo!", "destination": "invalid"},
 			wantErr: true,
 		},
 	}

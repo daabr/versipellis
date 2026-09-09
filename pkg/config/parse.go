@@ -100,3 +100,29 @@ func Value[T any](cfg map[string]any, key string, defaultValue T) T {
 	)
 	return defaultValue
 }
+
+const (
+	defaultConcurrencyLimit int64 = 1
+
+	noConcurrency  = 0
+	maxConcurrency = 100
+)
+
+func concurrencyLimit(cfg map[string]any, name string) int {
+	n := Value(cfg, "concurrency_limit", defaultConcurrencyLimit)
+
+	if n < noConcurrency {
+		slog.Warn("using minimum collector concurrency limit", slog.String("name", name),
+			slog.Int64("below_min", n), slog.Int("new_min", noConcurrency),
+		)
+		n = noConcurrency
+	}
+	if n > maxConcurrency {
+		slog.Warn("using maximum collector concurrency limit", slog.String("name", name),
+			slog.Int64("above_max", n), slog.Int("new_max", maxConcurrency),
+		)
+		n = maxConcurrency
+	}
+
+	return int(n)
+}

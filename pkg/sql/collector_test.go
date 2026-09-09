@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -181,7 +182,7 @@ func TestNewCollector(t *testing.T) {
 func TestLoadAndCheckQuery(t *testing.T) {
 	t.Parallel()
 
-	queryWithSpaces := "\nSELECT 1  \n\n"
+	queryWithSpaces := "\n SELECT 1  \n\n"
 	tempDir := t.TempDir()
 	err := os.WriteFile(filepath.Join(tempDir, "empty.sql"), []byte{}, 0o600) //gosec:disable G304 // Unit test.
 	if err != nil {
@@ -387,7 +388,7 @@ func TestScheduleNextQuery(t *testing.T) {
 				base, err := config.NewBaseCollector(map[string]any{
 					"type":     config.CollectorTypeSQL,
 					"schedule": tt.schedule,
-				}, "")
+				}, tt.name)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
 				}
@@ -411,8 +412,7 @@ func TestScheduleNextQuery(t *testing.T) {
 				t.Cleanup(func() { _ = c.db.Close() })
 
 				ctx, cancel := context.WithCancel(t.Context())
-				c.done = ctx.Done()
-				c.cancel = cancel
+				c.cancelSched = cancel
 				if tt.cancel {
 					cancel()
 				} else {
@@ -420,11 +420,11 @@ func TestScheduleNextQuery(t *testing.T) {
 				}
 
 				if !tt.isAsync {
-					c.scheduleNextQuery(ctx, time.Now())
+					c.scheduleNext(ctx, ctx, time.Now())
 					return
 				}
 
-				go c.scheduleNextQuery(ctx, time.Now().Add(-5*time.Second))
+				go c.scheduleNext(ctx, ctx, time.Now().Add(-5*time.Second))
 				synctest.Wait()
 				cancel()
 				synctest.Wait()
@@ -509,11 +509,7 @@ func TestCollectorExecuteQuery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("cron.Parse() error: %v", err)
 			}
-			base := &config.BaseCollector{
-				Type:     config.CollectorTypeSQL,
-				Schedule: sched,
-				Sender:   tt.sender,
-			}
+			base := &config.BaseCollector{Type: config.CollectorTypeSQL, Schedule: sched, Sender: tt.sender}
 			c, err := NewCollector(base, map[string]any{"type": config.CollectorTypeSQL, "sql": tt.cfg})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
@@ -569,6 +565,7 @@ func TestProcessResults(t *testing.T) {
 
 func TestProcessResultsWithFakeDriver(t *testing.T) {
 	t.Parallel()
+
 	registerFakeSQLDriver()
 
 	tests := []struct {
@@ -636,10 +633,10 @@ func TestCollectorClose(t *testing.T) {
 	t.Run("fake_pg_pool", func(t *testing.T) {
 		t.Parallel()
 
-		var ctx context.Context
 		c := &Collector{pgPool: fakePGPool{}, usingPG: true}
-		ctx, c.cancel = context.WithCancel(t.Context())
-		c.done = ctx.Done()
+		_, c.cancelSched = context.WithCancel(t.Context())
+		c.closeDone = make(chan struct{})
+		t.Cleanup(c.cancelSched)
 
 		c.Close()
 		c.Close()
@@ -655,10 +652,9 @@ func TestCollectorClose(t *testing.T) {
 			t.Fatalf("sql.Open() error: %v", err)
 		}
 
-		var ctx context.Context
 		c := &Collector{db: db}
-		ctx, c.cancel = context.WithCancel(t.Context())
-		c.done = ctx.Done()
+		_, c.cancelSched = context.WithCancel(t.Context())
+		c.closeDone = make(chan struct{})
 
 		c.Close()
 
@@ -667,20 +663,54 @@ func TestCollectorClose(t *testing.T) {
 }
 
 func TestCollectorCloseTimeout(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		c := &Collector{
-			driver:  DriverTypePostgres,
-			pgPool:  fakePGPool{closeTimeout: true},
-			usingPG: true,
-		}
-		start := time.Now()
-		c.Close()
+	testTimeout := 5 * time.Second
 
-		if time.Since(start) != closeTimeout {
-			t.Error("Collector.Close() timeout behaved unexpectedly")
-		}
-		synctest.Sleep(closeTimeout * 2)
-	})
+	tests := []struct {
+		name   string
+		pgPool pgPool
+		want2  time.Duration
+	}{
+		{
+			name:   "with_fake_pg_pool",
+			pgPool: fakePGPool{closeTimeout: true},
+			want2:  testTimeout,
+		},
+		{
+			name:   "without_any_db",
+			pgPool: nil,
+			want2:  0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c := &Collector{
+					driver:  DriverTypePostgres,
+					pgPool:  tt.pgPool,
+					usingPG: tt.pgPool != nil,
+					timeout: testTimeout,
+				}
+
+				// Test case 1: Close() before Start() should return immediately and have no effect.
+				start := time.Now()
+				c.Close()
+				if got := time.Since(start); got != 0 {
+					t.Fatalf("Collector.Close(1) timeout behaved unexpectedly: got %v, want %v", got, 0)
+				}
+
+				// Test case 2: Close() after Start() should block until the DB is closed / the timeout expires.
+				_, c.cancelSched = context.WithCancel(t.Context())
+
+				start = time.Now()
+				c.Close()
+				if got := time.Since(start); got != tt.want2 {
+					t.Errorf("Collector.Close(2) timeout behaved unexpectedly: got %v, want %v", got, tt.want2)
+				}
+
+				synctest.Sleep(testTimeout * 3)
+			})
+		})
+	}
 }
 
 const (
@@ -774,4 +804,121 @@ func (r *fakeSQLRows) NextResultSet() error {
 	r.set++
 	r.read = false
 	return nil
+}
+
+func TestCollectorConcurrencyLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		limit     int64
+		wantCount int32
+	}{
+		{
+			name:      "0_no_concurrency",
+			limit:     0,
+			wantCount: 1,
+		},
+		{
+			name:      "1_no_concurrency",
+			limit:     1,
+			wantCount: 1,
+		},
+		{
+			name:      "2_bounded_concurrency",
+			limit:     2,
+			wantCount: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				base, err := config.NewBaseCollector(map[string]any{
+					"type":              config.CollectorTypeSQL,
+					"schedule":          "@every 1s",
+					"concurrency_limit": tt.limit,
+				}, tt.name)
+				if err != nil {
+					t.Fatalf("config.NewBaseCollector() error: %v", err)
+				}
+
+				started := make(chan struct{}, 10)
+				unblock := make(chan struct{})
+				var count atomic.Int32
+
+				base.Sender = func(_ context.Context, _ any) error {
+					count.Add(1)
+					select {
+					case started <- struct{}{}:
+					default:
+					}
+					<-unblock
+					return nil
+				}
+
+				c, err := NewCollector(base, map[string]any{
+					"type": config.CollectorTypeSQL,
+					"sql": map[string]any{
+						"type":       DriverTypeSQLite,
+						"connection": ":memory:",
+						"query":      "SELECT 1;",
+					},
+				})
+				if err != nil {
+					t.Fatalf("NewCollector() error: %v", err)
+				}
+
+				c.db, err = openDB(t.Context(), c.driver, c.conn)
+				if err != nil {
+					t.Fatalf("openDB() error: %v", err)
+				}
+				t.Cleanup(func() { _ = c.db.Close() })
+
+				ctx, cancel := context.WithCancel(t.Context())
+				c.cancelSched = cancel
+
+				go c.scheduleNext(ctx, ctx, time.Now())
+
+				// Advance to 1st tick.
+				synctest.Sleep(time.Second)
+				<-started
+
+				// Advance to 2nd tick.
+				synctest.Sleep(time.Second)
+				if tt.limit > 1 {
+					<-started
+				}
+
+				// Unblock in-flight queries and let them finish.
+				close(unblock)
+				synctest.Sleep(10 * time.Millisecond)
+
+				cancel()
+				synctest.Wait()
+
+				if got := count.Load(); got != tt.wantCount {
+					t.Errorf("executed queries = %d, want %d", got, tt.wantCount)
+				}
+			})
+		})
+	}
+}
+
+func TestCollectorCheckConcurrencyCanceled(t *testing.T) {
+	t.Parallel()
+
+	c := &Collector{}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	sem := make(chan struct{}, 1)
+	sem <- struct{}{}
+
+	c.checkConcurrency(ctx, t.Context(), sem, time.Now())
+
+	if len(sem) != 1 {
+		t.Errorf("len(sem) = %d, want 1", len(sem))
+	}
 }

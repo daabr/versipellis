@@ -79,6 +79,12 @@ CGO_ENABLED=1 go build -tags=odbc ./cmd/versi && ./versi -h
 
 ## Supported Inputs
 
+### HTTP Input
+
+- Protocols: HTTP/1.1, HTTP/2, and HTTP/3
+- Directions: pull (send requests to servers)
+- Content encoding: `identity` (none), `gzip`
+
 ### SQL Input
 
 Supported SQL-based databases:
