@@ -254,7 +254,15 @@ func (c *Collector) scheduleNext(ctx, execCtx context.Context, prev time.Time) {
 		nextStart := c.Schedule.Next(prev)
 		if nextStart.IsZero() {
 			if c.Schedule.RunsOnlyOnce() {
-				c.inProgress.Wait()
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					c.inProgress.Wait()
+				}()
+				select {
+				case <-ctx.Done():
+				case <-done:
+				}
 				slog.Info("SQL collector finished one-time execution",
 					slog.String("driver", c.driver), slog.String("name", c.Name),
 				)
