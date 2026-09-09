@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -707,8 +708,7 @@ func TestScheduleNextRequest(t *testing.T) {
 
 				c.client = clientH2(&tls.Config{}, 0, c.timeout, tt.name)
 				ctx, cancel := context.WithCancel(t.Context())
-				c.done = ctx.Done()
-				c.cancel = cancel
+				c.cancelSched = cancel
 				if tt.cancel {
 					cancel()
 				} else {
@@ -716,11 +716,11 @@ func TestScheduleNextRequest(t *testing.T) {
 				}
 
 				if !tt.isAsync {
-					c.scheduleNextRequest(ctx, time.Now())
+					c.scheduleNext(ctx, ctx, time.Now())
 					return
 				}
 
-				go c.scheduleNextRequest(ctx, time.Now().Add(-5*time.Second))
+				go c.scheduleNext(ctx, ctx, time.Now().Add(-5*time.Second))
 				synctest.Wait()
 				cancel()
 				synctest.Wait()
@@ -771,6 +771,7 @@ func TestFixHeaders(t *testing.T) {
 }
 
 func TestCollectorCloseTimeout(t *testing.T) {
+	testTimeout := 5 * time.Second
 	tests := []struct {
 		name  string
 		start bool
@@ -779,7 +780,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 		{
 			name:  "with_client",
 			start: true,
-			want:  CloseTimeout,
+			want:  testTimeout,
 		},
 		{
 			name:  "without_client",
@@ -794,7 +795,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 				c, err := NewCollector(base, map[string]any{
 					"type":    config.CollectorTypeHTTP,
 					"http":    map[string]any{"method": http.MethodGet, "url": "https://example.com"},
-					"timeout": CloseTimeout * 2,
+					"timeout": testTimeout.String(),
 				})
 				if err != nil {
 					t.Fatalf("NewCollector() error: %v", err)
@@ -808,11 +809,11 @@ func TestCollectorCloseTimeout(t *testing.T) {
 				}
 
 				// Test case 2: Close() after Start() should block until current request is done / the timeout expires.
-				_, c.cancel = context.WithCancel(t.Context())
+				_, c.cancelSched = context.WithCancel(t.Context())
 				if tt.start {
 					c.client = clientH2(&tls.Config{}, 0, c.timeout, tt.name)
-					c.inFlight.Go(func() {
-						synctest.Sleep(CloseTimeout * 2)
+					c.inProgress.Go(func() {
+						synctest.Sleep(testTimeout * 2)
 					})
 				}
 
@@ -822,8 +823,125 @@ func TestCollectorCloseTimeout(t *testing.T) {
 					t.Errorf("Collector.Close(2) timeout behaved unexpectedly: got %v, want %v", got, tt.want)
 				}
 
-				synctest.Sleep(CloseTimeout * 3)
+				synctest.Sleep(testTimeout * 3)
 			})
 		})
+	}
+}
+
+type fakeBlockingTransport struct {
+	started chan struct{}
+	unblock chan struct{}
+	count   atomic.Int32
+}
+
+func (f *fakeBlockingTransport) RoundTrip(_ *http.Request) (*http.Response, error) {
+	f.count.Add(1)
+
+	select {
+	case f.started <- struct{}{}:
+	default:
+	}
+
+	<-f.unblock
+
+	return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
+}
+
+func TestCollectorConcurrencyLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		limit     int64
+		wantCount int32
+	}{
+		{
+			name:      "0_no_concurrency",
+			limit:     0,
+			wantCount: 1,
+		},
+		{
+			name:      "1_no_concurrency",
+			limit:     1,
+			wantCount: 1,
+		},
+		{
+			name:      "2_bounded_concurrency",
+			limit:     2,
+			wantCount: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				base, err := config.NewBaseCollector(map[string]any{
+					"type":              config.CollectorTypeHTTP,
+					"schedule":          "@every 1s",
+					"concurrency_limit": tt.limit,
+				}, tt.name)
+				if err != nil {
+					t.Fatalf("config.NewBaseCollector() error: %v", err)
+				}
+
+				c, err := NewCollector(base, map[string]any{
+					"type": config.CollectorTypeHTTP,
+					"http": map[string]any{"method": http.MethodGet, "url": "https://example.com"},
+				})
+				if err != nil {
+					t.Fatalf("NewCollector() error: %v", err)
+				}
+
+				transport := &fakeBlockingTransport{
+					started: make(chan struct{}, 10),
+					unblock: make(chan struct{}),
+				}
+				c.client = &http.Client{Transport: transport}
+				ctx, cancel := context.WithCancel(t.Context())
+				c.cancelSched = cancel
+
+				go c.scheduleNext(ctx, ctx, time.Now())
+
+				// Advance to 1st tick.
+				synctest.Sleep(time.Second)
+				<-transport.started
+
+				// Advance to 2nd tick.
+				synctest.Sleep(time.Second)
+				if tt.limit > 1 {
+					<-transport.started
+				}
+
+				// Unblock in-flight requests and let them finish.
+				close(transport.unblock)
+				synctest.Sleep(10 * time.Millisecond)
+
+				cancel()
+				synctest.Wait()
+
+				if got := transport.count.Load(); got != tt.wantCount {
+					t.Errorf("executed requests = %d, want %d", got, tt.wantCount)
+				}
+			})
+		})
+	}
+}
+
+func TestCollectorCheckConcurrencyCanceled(t *testing.T) {
+	t.Parallel()
+
+	c := &Collector{}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	sem := make(chan struct{}, 1)
+	sem <- struct{}{}
+
+	c.checkConcurrency(ctx, t.Context(), sem, time.Now())
+
+	if len(sem) != 1 {
+		t.Errorf("len(sem) = %d, want 1", len(sem))
 	}
 }

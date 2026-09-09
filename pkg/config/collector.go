@@ -29,9 +29,10 @@ type BaseCollector struct {
 	Type string
 	Name string
 
-	Cronspec string
-	Schedule *cron.Schedule
-	Trigger  string // Not fully implemented yet, but reserved for future use.
+	Cronspec    string
+	Schedule    *cron.Schedule
+	Trigger     string // Not fully implemented yet, but reserved for future use.
+	Concurrency int
 
 	Destination string
 	Sender      dest.Sender
@@ -45,6 +46,7 @@ func NewBaseCollector(cfg map[string]any, namespace string) (*BaseCollector, err
 		Name:        namespace,
 		Cronspec:    Value(cfg, "schedule", ""),
 		Trigger:     Value(cfg, "trigger", ""),
+		Concurrency: concurrencyLimit(cfg, namespace),
 		Destination: strings.ToLower(strings.TrimSpace(Value(cfg, "destination", ""))),
 	}
 	var senderFound bool

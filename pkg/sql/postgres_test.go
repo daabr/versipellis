@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 	"testing/synctest"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/dest"
@@ -69,58 +69,30 @@ func TestCollectorConnectToPostgres(t *testing.T) {
 func TestCollectorStartPostgres(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name    string
-		usingPG bool
-	}{
-		{
-			name:    "using_pg",
-			usingPG: true,
-		},
-		{
-			name:    "not_using_pg",
-			usingPG: false,
-		},
+	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "")
+	if err != nil {
+		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 
-			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "")
-			if err != nil {
-				t.Fatalf("config.NewBaseCollector() error: %v", err)
-			}
-
-			c, err := NewCollector(base, map[string]any{
-				"type": config.CollectorTypeSQL,
-				"sql": map[string]any{
-					"type":       DriverTypePostgres,
-					"connection": "postgres://localhost:5432/dbname",
-					"query":      "SELECT 1",
-				},
-			})
-			if err != nil {
-				t.Fatalf("NewCollector() error: %v", err)
-			}
-
-			c.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
-			c.usingPG = tt.usingPG
-			ctx := t.Context()
-			if tt.usingPG {
-				ctx, c.cancel = context.WithCancel(t.Context())
-				c.done = ctx.Done()
-			}
-
-			if ok := c.Start(ctx); !ok {
-				t.Fatal("Collector.Start() failed")
-			}
-			if tt.usingPG {
-				go c.scheduleNextQuery(ctx, time.Now())
-			}
-
-			<-c.Done() // Wait for the collector's goroutine to finish its work.
-		})
+	c, err := NewCollector(base, map[string]any{
+		"type": config.CollectorTypeSQL,
+		"sql": map[string]any{
+			"type":       DriverTypePostgres,
+			"connection": "postgres://localhost:5432/dbname",
+			"query":      "SELECT 1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewCollector() error: %v", err)
 	}
+
+	c.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
+
+	if ok := c.Start(t.Context()); !ok {
+		t.Fatal("Collector.Start() failed")
+	}
+
+	<-c.Done() // Wait for the collector's goroutine to finish its work.
 }
 
 func TestCollectorExecutePostgresQuery(t *testing.T) {
@@ -311,7 +283,7 @@ func (p fakePGPool) BeginTx(_ context.Context, _ pgx.TxOptions) (pgx.Tx, error) 
 
 func (p fakePGPool) Close() {
 	if p.closeTimeout {
-		synctest.Sleep(CloseTimeout * 2)
+		synctest.Sleep(2 * closeTimeout)
 	}
 }
 
@@ -392,6 +364,22 @@ type fakePGRows struct {
 	finalErr error
 }
 
+// Close closes the rows, making the connection ready for use again.
+// It is safe to call Close after rows is already closed.
+func (r *fakePGRows) Close() {}
+
+// Err returns any error that occurred while executing a query or reading its results. Err must be called after
+// the Rows is closed (either by calling Close or by Next returning false) to check if the query was successful.
+// If it is called before the Rows is closed it may return nil even if the query failed on the server.
+func (r *fakePGRows) Err() error {
+	return r.finalErr
+}
+
+// CommandTag returns the command tag from this query. It is only available after Rows is closed.
+func (r *fakePGRows) CommandTag() pgconn.CommandTag {
+	return pgconn.CommandTag{} // Not implemented.
+}
+
 // FieldDescriptions returns the field descriptions of the columns. It may return nil.
 // In particular this can occur when there was an error executing the query.
 func (r *fakePGRows) FieldDescriptions() []pgconn.FieldDescription {
@@ -413,12 +401,6 @@ func (r *fakePGRows) FieldDescriptions() []pgconn.FieldDescription {
 func (r *fakePGRows) Next() bool {
 	r.index++
 	return r.index < len(r.rows)
-}
-
-// Values returns the decoded row values. As with [pgx.Rows.Scan], it is an error to call
-// [pgx.Rows.Values] without first calling [pgx.Rows.Next] and checking that it returned true.
-func (r *fakePGRows) Values() ([]any, error) {
-	return r.rows[r.index], nil
 }
 
 // Scan reads the values from the current row into dest values positionally. Dest can include pointers to core types, values
@@ -446,20 +428,10 @@ func (r *fakePGRows) Scan(dest ...any) error {
 	return nil
 }
 
-// Err returns any error that occurred while executing a query or reading its results. Err must be called after
-// the Rows is closed (either by calling Close or by Next returning false) to check if the query was successful.
-// If it is called before the Rows is closed it may return nil even if the query failed on the server.
-func (r *fakePGRows) Err() error {
-	return r.finalErr
-}
-
-// Close closes the rows, making the connection ready for use again.
-// It is safe to call Close after rows is already closed.
-func (r *fakePGRows) Close() {}
-
-// CommandTag returns the command tag from this query. It is only available after Rows is closed.
-func (r *fakePGRows) CommandTag() pgconn.CommandTag {
-	return pgconn.CommandTag{} // Not implemented.
+// Values returns the decoded row values. As with [pgx.Rows.Scan], it is an error to call
+// [pgx.Rows.Values] without first calling [pgx.Rows.Next] and checking that it returned true.
+func (r *fakePGRows) Values() ([]any, error) {
+	return r.rows[r.index], nil
 }
 
 // RawValues returns the unparsed bytes of the row values. The returned
@@ -471,5 +443,12 @@ func (r *fakePGRows) RawValues() [][]byte {
 // Conn returns the underlying *Conn on which the query was executed. This may return nil
 // if Rows did not come from a *Conn (e.g., if it was created by RowsFromResultReader).
 func (r *fakePGRows) Conn() *pgx.Conn {
+	return nil // Not implemented.
+}
+
+// TypeMap returns the [pgtype.Map] the values of this Rows are decoded with. It is available
+// even when [Rows.Conn] is nil, such as for a Rows created by [RowsFromResultReader]. It may
+// return nil if the Rows carries no values, such as one representing only an error.
+func (r *fakePGRows) TypeMap() *pgtype.Map {
 	return nil // Not implemented.
 }

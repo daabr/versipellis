@@ -353,3 +353,57 @@ func TestValue(t *testing.T) {
 		})
 	}
 }
+
+func TestConcurrencyLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  map[string]any
+		want int
+	}{
+		{
+			name: "default_when_omitted",
+			cfg:  map[string]any{},
+			want: 1,
+		},
+		{
+			name: "explicit_zero",
+			cfg:  map[string]any{"concurrency_limit": int64(0)},
+			want: 0,
+		},
+		{
+			name: "negative_to_min",
+			cfg:  map[string]any{"concurrency_limit": int64(-1)},
+			want: 0,
+		},
+		{
+			name: "positive_in_range",
+			cfg:  map[string]any{"concurrency_limit": int64(100)},
+			want: 100,
+		},
+		{
+			name: "overflow_to_max",
+			cfg:  map[string]any{"concurrency_limit": int64(101)},
+			want: 100,
+		},
+		{
+			name: "invalid_type_to_default",
+			cfg:  map[string]any{"concurrency_limit": "invalid"},
+			want: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			base, err := config.NewBaseCollector(tt.cfg, tt.name)
+			if err != nil {
+				t.Fatalf("NewBaseCollector() error = %v", err)
+			}
+			if base.Concurrency != tt.want {
+				t.Errorf("BaseCollector.ConcurrencyLimit = %d, want %d", base.Concurrency, tt.want)
+			}
+		})
+	}
+}

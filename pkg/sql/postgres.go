@@ -83,8 +83,12 @@ func (c *Collector) executePostgresQuery(ctx context.Context, sender dest.Sender
 	}
 
 	if ok || rowCount > 0 {
-		c.prevStart = start.UTC()
-		c.prevEnd = end.UTC()
+		c.checkpointMu.Lock()
+		if start.UTC().After(c.prevStart) {
+			c.prevStart = start.UTC()
+			c.prevEnd = end.UTC()
+		}
+		c.checkpointMu.Unlock()
 	}
 	return ok
 }
@@ -102,6 +106,9 @@ func processPostgresResults(ctx context.Context, rows pgx.Rows, sender dest.Send
 
 	rowCount := 0
 	_, err := pgx.ForEachRow(rows, ptrs, func() error { // [pgx.ForEachRow] closes [pgx.Rows] automatically.
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("query result processing canceled: %w", err)
+		}
 		row := make(map[string]any, size)
 		for i, col := range cols {
 			row[col.Name] = vals[i]

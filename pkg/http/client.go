@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -85,13 +87,23 @@ func clientH3(cfg *tls.Config, maxHeaderSize int64, timeout time.Duration, trans
 	return &http.Client{Transport: reusable, Timeout: timeout}
 }
 
-func (c *Collector) requestWithRetries(ctx context.Context) *http.Response {
+// requestWithRetries executes an HTTP request, retrying on transient errors based on [Collector.retries].
+// In-flight execution is governed by execCtx, giving attempt 0 a [Collector.timeout] grace period to complete
+// during graceful shutdown. Subsequent retries (i > 0) also check schedCtx: if collector shutdown has
+// already been initiated, retrying against a failing service is aborted to ensure prompt termination.
+func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.Response {
 	resp := newErrorResponse(http.StatusGatewayTimeout)
 	start := time.Now()
 
-	for i := 0; i < c.retries+1 && ctx.Err() == nil; i++ {
+	for i := range c.retries + 1 {
+		// Attempt 0 was already scheduled and runs under execCtx (up to [Collector.timeout]).
+		// Retries (i > 0) abort if either execCtx or schedCtx (shutdown requested) is done.
+		if execCtx.Err() != nil || (i > 0 && schedCtx.Err() != nil) {
+			return resp
+		}
+
 		var retry bool
-		resp, retry = c.requestOnce(ctx)
+		resp, retry = c.requestOnce(execCtx)
 		if resp != nil && resp.StatusCode < http.StatusBadRequest {
 			slog.Debug("HTTP request completed successfully",
 				slog.String("name", c.Name), slog.Int("attempt", i+1), slog.String("status", resp.Status),
@@ -144,6 +156,9 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 	resp, err := c.client.Do(req)
 	if err != nil {
 		slog.Warn("failed to send HTTP request", slog.Any("error", err), slog.String("name", c.Name))
+		if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+			return newErrorResponse(http.StatusGatewayTimeout), true
+		}
 		return newErrorResponse(http.StatusBadGateway), true
 	}
 

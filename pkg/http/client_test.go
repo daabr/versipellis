@@ -7,13 +7,14 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
 )
 
-func TestClientH3WithoutTLS(t *testing.T) {
+func TestClientH3WithoutTLSReturnsNil(t *testing.T) {
 	client := clientH3(nil, 0, time.Second, "TestClientH3WithoutTLS")
 	if client != nil {
 		t.Errorf("Expected nil client for HTTP/3 without TLS, got: %#v", client)
@@ -27,6 +28,7 @@ func TestRequestWithRetriesNonRetryableError(t *testing.T) {
 		name   string
 		status int
 	}{
+		{"400", http.StatusBadRequest},
 		{"404", http.StatusNotFound},
 		{"405", http.StatusMethodNotAllowed},
 		{"413", http.StatusRequestEntityTooLarge},
@@ -35,7 +37,7 @@ func TestRequestWithRetriesNonRetryableError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(fakeHandler(t, 0, tt.status, "Should not retry"))
+			server := httptest.NewServer(fakeHandler(t, 0, tt.status, "should not retry"))
 			t.Cleanup(server.Close)
 
 			base, err := config.NewBaseCollector(map[string]any{
@@ -53,6 +55,7 @@ func TestRequestWithRetriesNonRetryableError(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
+
 			if !c.Start(t.Context()) {
 				t.Fatal("Collector.Start() = false, want true")
 			}
@@ -74,9 +77,9 @@ func TestRequestOnceEdgeCases(t *testing.T) {
 			methodErr: true,
 		},
 		{
-			name:    "with_body_and_host_header",
-			body:    "test body",
+			name:    "with_host_header_and_body",
 			headers: http.Header{"Host": []string{"example.com"}},
+			body:    "test body",
 		},
 	}
 	for _, tt := range tests {
@@ -103,12 +106,8 @@ func TestRequestOnceEdgeCases(t *testing.T) {
 			if tt.body != "" {
 				c.body = []byte(tt.body)
 			}
-			ctx, cancel := context.WithCancel(t.Context())
-			c.done = ctx.Done()
-			c.cancel = cancel
-			t.Cleanup(cancel)
 
-			gotResp, gotRetry := c.requestOnce(ctx)
+			gotResp, gotRetry := c.requestOnce(t.Context())
 			_ = gotResp.Body.Close()
 			if gotRetry {
 				t.Error("requestOnce() bool = true, want false")
@@ -157,14 +156,9 @@ func TestProcessResponseErrors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
-
 			c.client = clientH2(&tls.Config{}, 0, 0, tt.name)
-			ctx, cancel := context.WithCancel(t.Context())
-			c.done = ctx.Done()
-			c.cancel = cancel
-			t.Cleanup(cancel)
 
-			resp, _ := c.requestOnce(ctx)
+			resp, _ := c.requestOnce(t.Context())
 			_ = resp.Body.Close()
 
 			if resp.ContentLength == 10 || resp.StatusCode == http.StatusOK {
@@ -188,4 +182,150 @@ func fakeHandler(t *testing.T, contentLength, statusCode int, body string) http.
 			flusher.Flush()
 		}
 	}
+}
+
+func TestRequestWithRetriesShutdown(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		shutdownBefore bool
+		shutdownDuring bool
+		cancelBefore   bool
+	}{
+		{
+			name:           "shutdown_before_first_request",
+			shutdownBefore: true,
+		},
+		{
+			name:           "shutdown_during_retries",
+			shutdownDuring: true,
+		},
+		{
+			name:         "cancel_before_first_request",
+			cancelBefore: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			schedCtx, cancelSched := context.WithCancel(t.Context())
+			t.Cleanup(cancelSched)
+			execCtx, cancelExec := context.WithCancel(t.Context())
+			t.Cleanup(cancelExec)
+
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				if tt.shutdownDuring {
+					cancelSched() // Trigger shutdown on the first attempt so retries are aborted.
+					w.WriteHeader(http.StatusServiceUnavailable)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			base := &config.BaseCollector{Type: config.CollectorTypeHTTP, Name: tt.name}
+			c, err := NewCollector(base, map[string]any{
+				"type": config.CollectorTypeHTTP,
+				"http": map[string]any{"method": http.MethodGet, "url": server.URL},
+			})
+			if err != nil {
+				t.Fatalf("NewCollector() error: %v", err)
+			}
+			c.client = clientH2(&tls.Config{}, 0, 0, tt.name)
+			c.retries = 3
+
+			if tt.shutdownBefore || tt.cancelBefore {
+				cancelExec() // Trigger cancellation of execution context immediately.
+			}
+
+			resp := c.requestWithRetries(schedCtx, execCtx)
+			_ = resp.Body.Close()
+
+			var wantRequests, wantStatusCode int
+			switch {
+			case tt.shutdownBefore, tt.cancelBefore:
+				wantRequests, wantStatusCode = 0, http.StatusGatewayTimeout
+			case tt.shutdownDuring:
+				wantRequests, wantStatusCode = 1, http.StatusServiceUnavailable
+			}
+
+			if gotRequests := requests.Load(); gotRequests != int32(wantRequests) {
+				t.Errorf("requestWithRetries() sent %d requests, want %d", gotRequests, wantRequests)
+			}
+			if resp.StatusCode != wantStatusCode {
+				t.Errorf("requestWithRetries() status = %d, want %d", resp.StatusCode, wantStatusCode)
+			}
+		})
+	}
+}
+
+func TestRequestOnceNetworkErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("timeout_returns_504", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(2 * time.Second):
+				w.WriteHeader(http.StatusOK)
+			}
+		}))
+		t.Cleanup(server.Close)
+
+		base := &config.BaseCollector{Type: config.CollectorTypeHTTP, Name: "timeout_test"}
+		c, err := NewCollector(base, map[string]any{
+			"type": config.CollectorTypeHTTP,
+			"http": map[string]any{
+				"method":  http.MethodGet,
+				"url":     server.URL,
+				"timeout": "25ms",
+			},
+		})
+		if err != nil {
+			t.Fatalf("NewCollector() error: %v", err)
+		}
+		c.client = clientH2(&tls.Config{}, 0, c.timeout, "TestRequestOnceTimeout")
+
+		resp, retry := c.requestOnce(t.Context())
+		t.Cleanup(func() { _ = resp.Body.Close() })
+
+		if resp.StatusCode != http.StatusGatewayTimeout {
+			t.Errorf("StatusCode = %d, want %d", resp.StatusCode, http.StatusGatewayTimeout)
+		}
+		if !retry {
+			t.Errorf("retry = false, want true")
+		}
+	})
+
+	t.Run("connection_refused_returns_502", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
+		serverURL := server.URL
+		server.Close()
+
+		base := &config.BaseCollector{Type: config.CollectorTypeHTTP, Name: "refused_test"}
+		c, err := NewCollector(base, map[string]any{
+			"type": config.CollectorTypeHTTP,
+			"http": map[string]any{"method": http.MethodGet, "url": serverURL},
+		})
+		if err != nil {
+			t.Fatalf("NewCollector() error: %v", err)
+		}
+		c.client = clientH2(&tls.Config{}, 0, time.Second, "TestRequestOnceRefused")
+
+		resp, retry := c.requestOnce(t.Context())
+		t.Cleanup(func() { _ = resp.Body.Close() })
+
+		if resp.StatusCode != http.StatusBadGateway {
+			t.Errorf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadGateway)
+		}
+		if !retry {
+			t.Errorf("retry = false, want true")
+		}
+	})
 }

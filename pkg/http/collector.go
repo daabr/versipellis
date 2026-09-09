@@ -20,10 +20,7 @@ import (
 )
 
 const (
-	// CloseTimeout is the maximum duration to wait for in-flight requests to finish, during [Collector.Close].
-	// If this timeout is reached, the collector will forcefully shut down the connection, as well as any
-	// idle ones. It is intentionally short and not configurable, to enable quick process restarts.
-	CloseTimeout = 5 * time.Second
+	closeTimeout = 5 * time.Second
 
 	defaultRequestTimeout = 5 * time.Second
 )
@@ -32,22 +29,24 @@ const (
 type Collector struct {
 	config.BaseCollector
 
-	url           *url.URL
-	method        string
-	headers       http.Header
-	body          []byte
-	maxBodySize   int64
+	url         *url.URL
+	method      string
+	headers     http.Header
+	body        []byte
+	maxBodySize int64
+	retries     int // Reminder: extend this to a policy struct & make it configurable in a separate PR.
+
 	maxHeaderSize int64         // Reminder: this should be a factor in the transportID hash.
 	timeout       time.Duration // Reminder: this should be a factor in the transportID hash.
-	retries       int           // Reminder: extend this to a policy struct & make it configurable in a separate PR.
+	transportID   string        // Reminder: add configurable TLS in a separate PR.
 
-	client      *http.Client
-	transportID string // Reminder: add configurable TLS in a separate PR.
+	client *http.Client
 
-	cancel    context.CancelFunc
-	done      <-chan struct{}
-	inFlight  sync.WaitGroup
-	closeOnce sync.Once
+	cancelSched context.CancelFunc
+	cancelExec  context.CancelFunc
+	closeDone   chan struct{}
+	inProgress  sync.WaitGroup
+	closeOnce   sync.Once
 }
 
 // Base returns a copy of the collector's static and generic configuration details.
@@ -58,6 +57,7 @@ func (c *Collector) Base() *config.BaseCollector {
 		Name:        c.Name,
 		Cronspec:    c.Cronspec,
 		Trigger:     c.Trigger,
+		Concurrency: c.Concurrency,
 		Destination: c.Destination,
 	}
 }
@@ -102,7 +102,7 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	if c.timeout, err = time.ParseDuration(config.Value(httpCfg, "timeout", defaultRequestTimeout.String())); err != nil {
 		return nil, fmt.Errorf("invalid timeout duration: %w", err)
 	}
-	// For us, 0 is the same as negative values, but not for Go, so this normalization simplifies HTTP client construction.
+	// For us, 0 is the same as negative values, but not in Go. This normalization simplifies HTTP client construction.
 	c.timeout = max(c.timeout, 0)
 
 	return c, nil
@@ -241,16 +241,17 @@ func parseByteSize(cfg map[string]any, key string, defaultValue int64) int64 {
 	return defaultValue
 }
 
-// Start connects to the configured HTTP server and starts sending requests to it.
-// This function returns immediately, and the collector runs asynchronously in the background.
-// This function is idempotent: only the first call will actually start a goroutine. However,
-// it is not meant to be safe for concurrency, initialize collectors only in the main goroutine.
+// Start connects to the configured HTTP server and starts sending requests to it. This function
+// returns immediately, and the collector runs asynchronously in the background. This function is
+// idempotent: only the first call will actually start a goroutine. However, it is not meant to be
+// safe for concurrency, initialize collectors only in the main goroutine. Lastly, the collector
+// obeys the cancellation of the provided context, but with a grace period of [Collector.timeout].
 func (c *Collector) Start(ctx context.Context) bool {
 	if c == nil {
 		slog.Error("HTTP collector is misconfigured")
 		return false
 	}
-	if c.cancel != nil {
+	if c.cancelSched != nil {
 		slog.Error("HTTP collector already started") // This is a programming error...
 		return true                                  // ...But a harmless one.
 	}
@@ -263,16 +264,23 @@ func (c *Collector) Start(ctx context.Context) bool {
 	case config.CollectorTypeHTTP3:
 		c.client = clientH3(cfg, c.maxHeaderSize, c.timeout, c.transportID)
 	}
-	ctx, c.cancel = context.WithCancel(ctx)
-	c.done = ctx.Done()
 
-	slog.Info("starting to send HTTP requests", slog.String("name", c.Name), slog.String("schedule", c.Cronspec))
-	go c.scheduleNextRequest(ctx, time.Now())
+	var schedCtx, execCtx context.Context
+	schedCtx, c.cancelSched = context.WithCancel(ctx)
+	execCtx, c.cancelExec = context.WithCancel(context.WithoutCancel(ctx))
+	c.closeDone = make(chan struct{})
+
+	slog.Info("starting to send HTTP requests",
+		slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
+	)
+	go c.scheduleNext(schedCtx, execCtx, time.Now())
 	return true
 }
 
-func (c *Collector) scheduleNextRequest(ctx context.Context, prev time.Time) {
+func (c *Collector) scheduleNext(ctx, execCtx context.Context, prev time.Time) {
+	sem := make(chan struct{}, max(c.Concurrency, 1))
 	defer c.Close()
+
 	for {
 		nextStart := c.Schedule.Next(prev)
 		if nextStart.IsZero() {
@@ -302,21 +310,37 @@ func (c *Collector) scheduleNextRequest(ctx context.Context, prev time.Time) {
 		case <-ctx.Done():
 			return
 		case <-time.After(time.Until(nextStart)):
-			c.sendRequest(ctx)
+			c.checkConcurrency(ctx, execCtx, sem, nextStart)
 			prev = nextStart
 		}
 	}
 }
 
-func (c *Collector) sendRequest(ctx context.Context) {
-	c.inFlight.Add(1)
-	defer c.inFlight.Done()
+func (c *Collector) checkConcurrency(ctx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
+	select {
+	case <-ctx.Done():
+		return
+	case sem <- struct{}{}:
+		c.inProgress.Go(func() {
+			defer func() { <-sem }()
+			c.sendRequest(ctx, execCtx)
+		})
+	default:
+		slog.Warn("HTTP collector is at its concurrency limit, skipping request",
+			slog.String("name", c.Name), slog.Int("limit", cap(sem)), slog.Time("skipped", scheduled),
+		)
+	}
+}
 
-	resp := c.requestWithRetries(ctx) //nolint:bodyclose // See [Collector.requestOnce] and [Collector.processResponse].
+// sendRequest sends a single scheduled HTTP request and forwards its response to the sender.
+// SchedCtx indicates if collector scheduling is active (aborting future retries on shutdown),
+// while execCtx governs the in-flight network call up to [Collector.timeout].
+func (c *Collector) sendRequest(schedCtx, execCtx context.Context) {
+	resp := c.requestWithRetries(schedCtx, execCtx) //nolint:bodyclose // See [Collector.requestOnce].
 
 	if resp.StatusCode < http.StatusBadRequest && c.Sender != nil {
 		resp.Header = fixHeaders(resp.Header)
-		if err := c.Sender(ctx, resp); err != nil {
+		if err := c.Sender(execCtx, resp); err != nil {
 			slog.Warn("failed to process HTTP response", slog.Any("error", err), slog.String("name", c.Name))
 		}
 	}
@@ -349,42 +373,48 @@ func fixHeaders(h http.Header) http.Header {
 	return headers
 }
 
-// Done returns a channel that signals and gets closed when the collector has finished its work and is no longer running.
+// Done returns a channel that signals when the collector has finished its work and is no longer running.
 func (c *Collector) Done() <-chan struct{} {
-	return c.done
+	return c.closeDone
 }
 
-// Close waits (up to [CloseTimeout]) for requests that are currently in flight to finish, and prevents new ones
-// from starting. It then signals through the [Collector.Done] channel that the collector isn't executing requests
-// anymore. It is safe (though useless) to call multiple times, even if [Collector.Start] was never called,
-// but either way it's meant to be called only in the same goroutine as [Collector.scheduleNextRequest].
+// Close waits (up to [Collector.timeout]) for requests that are in progress to finish, after new ones are no longer being
+// scheduled. It is safe to call multiple times, even if [Collector.Start] wasn't called, but it's meant to be called only
+// at the end of the [Collector.scheduleNext] goroutine. If there are still pending requests after the timeout, the collector
+// will forcefully close their connections. It then signals through the [Collector.Done] channel that it's ready to shut down.
 func (c *Collector) Close() {
-	if c == nil || c.cancel == nil {
+	if c == nil || c.cancelSched == nil {
 		return
 	}
 
 	c.closeOnce.Do(func() {
-		defer c.cancel()
-
-		if c.client == nil {
-			return
-		}
+		c.cancelSched()
 
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			c.inFlight.Wait()
+			c.inProgress.Wait()
 		}()
+
+		timeout := c.timeout
+		if timeout <= 0 || timeout > closeTimeout {
+			timeout = closeTimeout // Ensure the timeout is within acceptable bounds.
+		}
 
 		select {
 		case <-done:
 			// All done.
-		case <-time.After(CloseTimeout):
+		case <-time.After(timeout):
 			slog.Warn("closing HTTP collector forcefully",
-				slog.String("name", c.Name), slog.Duration("timeout", CloseTimeout),
+				slog.String("name", c.Name), slog.Duration("timeout", timeout),
 			)
+			if c.cancelExec != nil {
+				c.cancelExec()
+			}
 		}
 
-		c.client.CloseIdleConnections()
+		if c.closeDone != nil {
+			close(c.closeDone)
+		}
 	})
 }
