@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -230,7 +231,8 @@ func loadBody(cfg map[string]any, method string) ([]byte, error) {
 }
 
 func parseByteSize(cfg map[string]any, key string, defaultValue int64) int64 {
-	parsedValue := config.Value(cfg, key, defaultValue)
+	// Why [min] with [math.MaxInt64]-1? To avoid overflows in [Collector.processResponse].
+	parsedValue := min(config.Value(cfg, key, defaultValue), math.MaxInt64-1)
 	if parsedValue > 0 {
 		return parsedValue
 	}
@@ -317,9 +319,10 @@ func (c *Collector) scheduleNext(ctx, execCtx context.Context, prev time.Time) {
 }
 
 func (c *Collector) checkConcurrency(ctx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
-	select {
-	case <-ctx.Done():
+	if ctx.Err() != nil { // Instead of ctx.Done() in the select block below - to check ctx before sem.
 		return
+	}
+	select {
 	case sem <- struct{}{}:
 		c.inProgress.Go(func() {
 			defer func() { <-sem }()
@@ -340,6 +343,9 @@ func (c *Collector) sendRequest(schedCtx, execCtx context.Context) {
 
 	if resp.StatusCode < http.StatusBadRequest && c.Sender != nil {
 		resp.Header = fixHeaders(resp.Header)
+		resp.Close = false
+		resp.Trailer = nil
+		resp.TransferEncoding = nil
 		if err := c.Sender(execCtx, resp); err != nil {
 			slog.Warn("failed to process HTTP response", slog.Any("error", err), slog.String("name", c.Name))
 		}

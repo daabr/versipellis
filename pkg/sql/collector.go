@@ -284,9 +284,10 @@ func (c *Collector) scheduleNext(ctx, execCtx context.Context, prev time.Time) {
 }
 
 func (c *Collector) checkConcurrency(ctx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
-	select {
-	case <-ctx.Done():
+	if ctx.Err() != nil { // Instead of ctx.Done() in the select block below - to check ctx before sem.
 		return
+	}
+	select {
 	case sem <- struct{}{}:
 		c.inProgress.Go(func() {
 			defer func() { <-sem }()
