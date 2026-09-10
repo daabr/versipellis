@@ -49,9 +49,18 @@ jobs:
             release --clean
 
       - name: Generate attestation for binaries
+        id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-checksums: ./dist/versipellis_${{ github.ref_name }}_checksums.txt
+      - name: Upload attestation as release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          gh release upload --clobber "${RELEASE_TAG}" \
+            "${ATTESTATION_BUNDLE}#versipellis_${RELEASE_TAG}_checksums_attestation.sigstore.json"
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
