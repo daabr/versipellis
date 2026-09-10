@@ -54,12 +54,13 @@ jobs:
         with:
           subject-checksums: ./dist/versipellis_${{ github.ref_name }}_checksums.txt
       - name: Upload attestation as release asset
+        env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
-          gh release upload --clobber "$RELEASE_TAG" \
-            "$ATTESTATION_BUNDLE#versipellis_${RELEASE_TAG}_checksums_attestation.sigstore.json"
+          gh release upload --clobber "${RELEASE_TAG}" \
+            "${ATTESTATION_BUNDLE}#versipellis_${RELEASE_TAG}_checksums_attestation.sigstore.json"
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
