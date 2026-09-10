@@ -61,7 +61,7 @@ builds:
 archives:
   - format_overrides:
       - goos: windows
-        format: zip
+        formats: zip
     files:
       - LICENSE
       - NOTICE
