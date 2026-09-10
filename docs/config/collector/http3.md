@@ -122,3 +122,7 @@
 - Default: `"5s"` (5 seconds)
 - Format: string containing 1-3 numbers, each with a unit suffix: `h` (hours), `m` (minutes), and `s` (seconds)
 - Special case: `"0"` and negative values (e.g., `"-1s"`) = no client-side timeout
+
+## `[collector.http3.tls]` Sub-Section
+
+[See this dedicated page](../tls.md).

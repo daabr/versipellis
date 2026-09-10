@@ -81,8 +81,9 @@ CGO_ENABLED=1 go build -tags=odbc ./cmd/versi && ./versi -h
 
 ### HTTP Input
 
-- Protocols: HTTP/1.1, HTTP/2, and HTTP/3
-- Directions: pull (send requests to servers)
+- Protocols: HTTP/1.1 and HTTP/2 (TCP), HTTP/3 (QUIC/UDP)
+- Directions: pull (retrieve from servers)
+- Encryption: none, TLS, mTLS
 - Content encoding: `identity` (none), `gzip`
 
 ### SQL Input
@@ -94,9 +95,14 @@ Supported SQL-based databases:
 - Microsoft SQL Server
 - MySQL
 - ODBC
-  - Teradata
 - Oracle Database
 - PostgreSQL
 - SAP HANA
 - Snowflake
 - SQLite
+
+## Supported Outputs
+
+### Zero Config
+
+- Stdout

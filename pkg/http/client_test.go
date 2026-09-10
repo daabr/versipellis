@@ -3,8 +3,12 @@ package http
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -343,4 +347,134 @@ func TestRequestOnceNetworkErrors(t *testing.T) {
 			t.Errorf("retry = false, want true")
 		}
 	})
+}
+
+func TestTLSClient(t *testing.T) {
+	t.Parallel()
+
+	var count atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		count.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	path := filepath.Join(t.TempDir(), "server_cert.pem")
+	pemBlock := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	if err := os.WriteFile(path, pemBlock, 0o600); err != nil {
+		t.Fatalf("failed to write CA certificate: %v", err)
+	}
+
+	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"}, "TestTLSClient")
+	if err != nil {
+		t.Fatalf("config.NewBaseCollector() error: %v", err)
+	}
+
+	c, err := NewCollector(base, map[string]any{
+		"type": config.CollectorTypeHTTP,
+		"http": map[string]any{
+			"method": http.MethodGet,
+			"url":    server.URL,
+			"tls": map[string]any{
+				"server_ca_cert_file": path,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewCollector() error: %v", err)
+	}
+
+	if !c.Start(t.Context()) {
+		t.Fatalf("failed to start collector")
+	}
+
+	<-c.Done()
+
+	if n := count.Load(); n != 1 {
+		t.Errorf("expected server to be called exactly once, got %d", n)
+	}
+
+	resp, retry := c.requestOnce(t.Context())
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if retry {
+		t.Errorf("retry = true, want false")
+	}
+	if n := count.Load(); n != 2 {
+		t.Errorf("expected server to be called exactly twice, got %d", n)
+	}
+}
+
+func TestMTLSClientAndServer(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+
+	caPEM, _, caCert, caKey := generateTestCert(t, true, nil, nil)
+	clientPEM, clientKeyPEM, _, _ := generateTestCert(t, false, caCert, caKey)
+	serverPEM, serverKeyPEM, _, _ := generateTestCert(t, false, caCert, caKey)
+
+	serverCert, err := tls.X509KeyPair(serverPEM, serverKeyPEM)
+	if err != nil {
+		t.Fatalf("tls.X509KeyPair() error: %v", err)
+	}
+	clientPool := x509.NewCertPool()
+	clientPool.AppendCertsFromPEM(caPEM)
+
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	server.TLS = &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientPool,
+	}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+
+	caFile := filepath.Join(tempDir, "ca.pem")
+	certFile := filepath.Join(tempDir, "client.pem")
+	keyFile := filepath.Join(tempDir, "client.key")
+	writeTestFile(t, caFile, caPEM)
+	writeTestFile(t, certFile, clientPEM)
+	writeTestFile(t, keyFile, clientKeyPEM)
+
+	cfg := map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"}
+	base, err := config.NewBaseCollector(cfg, "TestMTLSClientAndServer")
+	if err != nil {
+		t.Fatalf("config.NewBaseCollector() error: %v", err)
+	}
+
+	c, err := NewCollector(base, map[string]any{
+		"type": config.CollectorTypeHTTP,
+		"http": map[string]any{
+			"method": http.MethodGet,
+			"url":    server.URL,
+			"tls": map[string]any{
+				"server_ca_cert_file":   caFile,
+				"mtls_client_cert_file": certFile,
+				"mtls_client_key_file":  keyFile,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewCollector error: %v", err)
+	}
+
+	if !c.Start(t.Context()) {
+		t.Fatalf("failed to start collector")
+	}
+	<-c.Done()
+
+	resp, retry := c.requestOnce(t.Context())
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK || retry {
+		t.Fatalf("mTLS request failed with status %d, retry=%v", resp.StatusCode, retry)
+	}
 }

@@ -24,7 +24,7 @@ func ParseFile(path string) (map[string]any, error) {
 	case err != nil:
 		return nil, err
 	case info.IsDir():
-		return nil, errors.New("configuration path should be a TOML file, not a directory: " + path)
+		return nil, errors.New("config path should be a TOML file, not a directory: " + path)
 	}
 
 	f, err := os.Open(path) //gosec:disable G304 // Modifiable by design.
@@ -93,7 +93,7 @@ func Value[T any](cfg map[string]any, key string, defaultValue T) T {
 	if typedValue, ok := anyValue.(T); ok {
 		return typedValue
 	}
-	slog.Warn("unexpected type for TOML config key, using default value",
+	slog.Warn("TOML config field has an unexpected type, using default value",
 		slog.String("key", key), slog.Any("default", defaultValue),
 		slog.String("expected_type", fmt.Sprintf("%T", defaultValue)),
 		slog.String("actual_type", fmt.Sprintf("%T", anyValue)),

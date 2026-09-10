@@ -30,18 +30,18 @@ const (
 type Collector struct {
 	config.BaseCollector
 
-	url         *url.URL
-	method      string
-	headers     http.Header
-	body        []byte
-	maxBodySize int64
-	retries     int // Reminder: extend this to a policy struct & make it configurable in a separate PR.
+	url           *url.URL
+	method        string
+	headers       http.Header
+	body          []byte
+	maxBodySize   int64
+	maxHeaderSize int64
+	timeout       time.Duration
+	tls           *tls.Config
+	retries       int // Reminder: extend this to a policy struct & make it configurable in a separate PR.
 
-	maxHeaderSize int64         // Reminder: this should be a factor in the transportID hash.
-	timeout       time.Duration // Reminder: this should be a factor in the transportID hash.
-	transportID   string        // Reminder: add configurable TLS in a separate PR.
-
-	client *http.Client
+	transportID string
+	client      *http.Client
 
 	cancelSched context.CancelFunc
 	cancelExec  context.CancelFunc
@@ -98,6 +98,16 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	if c.body, err = loadBody(httpCfg, c.method); err != nil {
 		return nil, err
 	}
+
+	if c.tls, c.transportID, err = loadClientTLSConfig(httpCfg["tls"], base.Type); err != nil {
+		return nil, err
+	}
+	if c.url.Scheme == "http" && httpCfg["tls"] != nil {
+		slog.Warn("TLS config details are ineffective because URL scheme is unencrypted HTTP",
+			slog.String("name", c.Name), slog.String("url", c.url.String()),
+		)
+	}
+
 	c.maxBodySize = parseByteSize(httpCfg, "max_body_size", defaultMaxBodySize)
 	c.maxHeaderSize = parseByteSize(httpCfg, "max_header_size", defaultMaxHeaderSize)
 	if c.timeout, err = time.ParseDuration(config.Value(httpCfg, "timeout", defaultRequestTimeout.String())); err != nil {
@@ -105,6 +115,9 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	}
 	// For us, 0 is the same as negative values, but not in Go. This normalization simplifies HTTP client construction.
 	c.timeout = max(c.timeout, 0)
+	// HTTP transport configuration is affected by TLS, maximum header size, and timeout
+	// settings, so this prevents clients with different configurations from sharing transports.
+	c.transportID = fmt.Sprintf("%s,%d,%s", c.transportID, c.maxHeaderSize, c.timeout)
 
 	return c, nil
 }
@@ -178,17 +191,17 @@ func parseQuery(u *url.URL, cfg any) error {
 	return nil
 }
 
-func parseHeaders(cfg any) (http.Header, error) {
-	if cfg == nil {
+func parseHeaders(rawCfg any) (http.Header, error) {
+	if rawCfg == nil {
 		return nil, nil
 	}
-	table, ok := cfg.(map[string]any)
+	cfg, ok := rawCfg.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf(`HTTP collector "headers" must be a table of string key-value pairs, got %T`, cfg)
+		return nil, fmt.Errorf(`HTTP collector "headers" must be a table of string key-value pairs, got %T`, rawCfg)
 	}
 
-	headers := make(http.Header, len(table))
-	for key, value := range table {
+	headers := make(http.Header, len(cfg))
+	for key, value := range cfg {
 		if !httpguts.ValidHeaderFieldName(key) {
 			return nil, fmt.Errorf("invalid HTTP header name %q", key)
 		}
@@ -237,7 +250,7 @@ func parseByteSize(cfg map[string]any, key string, defaultValue int64) int64 {
 		return parsedValue
 	}
 
-	slog.Warn("invalid (non-positive) value for TOML config key, using default value",
+	slog.Warn("TOML config field has an invalid (non-positive) value, using default value",
 		slog.String("key", key), slog.Int64("actual", parsedValue), slog.Int64("default", defaultValue),
 	)
 	return defaultValue
@@ -258,13 +271,11 @@ func (c *Collector) Start(ctx context.Context) bool {
 		return true                                  // ...But a harmless one.
 	}
 
-	cfg := &tls.Config{} // Reminder: add configurable TLS in a separate PR.
-
 	switch c.Type {
 	case config.CollectorTypeHTTP:
-		c.client = clientH2(cfg, c.maxHeaderSize, c.timeout, c.transportID)
+		c.client = clientH2(c.tls.Clone(), c.maxHeaderSize, c.timeout, c.transportID)
 	case config.CollectorTypeHTTP3:
-		c.client = clientH3(cfg, c.maxHeaderSize, c.timeout, c.transportID)
+		c.client = clientH3(c.tls.Clone(), c.maxHeaderSize, c.timeout, c.transportID)
 	}
 
 	var schedCtx, execCtx context.Context
