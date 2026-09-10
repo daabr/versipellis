@@ -100,6 +100,26 @@ func TestNewCollector(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "tls_not_a_table",
+			base: httpBase,
+			cfg: map[string]any{
+				"http": map[string]any{"url": "https://example.com", "tls": "invalid"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "http_url_with_tls_config",
+			base: httpBase,
+			cfg: map[string]any{
+				"http": map[string]any{"url": "http://example.com", "tls": map[string]any{}},
+			},
+			wantErr:     false, // Warning log.
+			wantURL:     "http://example.com",
+			wantMethod:  http.MethodGet,
+			wantHeaders: nil,
+			wantTimeout: defaultRequestTimeout,
+		},
+		{
 			name: "invalid_timeout",
 			base: httpBase,
 			cfg: map[string]any{
@@ -629,10 +649,6 @@ func TestCollectorStart(t *testing.T) {
 			}
 			t.Cleanup(server.Close)
 
-			fakeClient := server.Client()
-			fakeTransport, _ := fakeClient.Transport.(*http.Transport)
-			transportH2.Set("", fakeTransport)
-
 			base, err := config.NewBaseCollector(map[string]any{"type": tt.proto, "schedule": "@once"}, tt.name)
 			if err != nil {
 				t.Fatalf("config.NewBaseCollector() error: %v", err)
@@ -643,13 +659,16 @@ func TestCollectorStart(t *testing.T) {
 
 			c, err := NewCollector(base, map[string]any{
 				"type":   tt.proto,
-				tt.proto: map[string]any{"method": http.MethodGet, "url": server.URL},
+				tt.proto: map[string]any{"method": http.MethodGet, "url": server.URL, "timeout": "1s"},
 			})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
 			c.retries = 1
-			c.timeout = time.Second / 4
+
+			fakeClient := server.Client()
+			fakeTransport, _ := fakeClient.Transport.(*http.Transport)
+			transportH2.Set(c.transportID, fakeTransport)
 
 			if !c.Start(t.Context()) {
 				t.Fatal("Collector.Start(1) = false, want true")
