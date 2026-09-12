@@ -105,7 +105,7 @@ func TestParseRetries(t *testing.T) {
 			want:   &retries{MaxAttempts: 1},
 		},
 		{
-			name:   "max_attempts_above_min",
+			name:   "max_attempts_above_max",
 			rawCfg: map[string]any{"max_attempts": int64(1000)},
 			want: &retries{
 				MaxAttempts: 10,

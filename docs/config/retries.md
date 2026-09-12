@@ -37,7 +37,8 @@ It is entirely optional, but some fields may be required in some use-cases.
 - Default: `"1s"` (1 second)
 - Valid range: between `"1ms"` (1 millisecond) and `"1m"` (1 minute)
 - Format: string containing decimal numbers, each with a unit suffix, e.g., `s` (seconds), and `ms` (milliseconds)
-- When `type = "backoff"`, a jitter of ±10% is applied to each delay interval
+- When `type = "backoff"`, a jitter of ±10% is applied to each delay interval,\
+  unless `max_interval ≤ interval`, which effectively forces `type = "static"`
 
 `max_interval` - when the backoff interval exceeds this (it's multiplied by 2 on every iteration), reset it back to the initial `interval`
 
@@ -45,3 +46,4 @@ It is entirely optional, but some fields may be required in some use-cases.
 - Default: `"20s"`
 - Range: between whatever the `interval` value is and `"5m"`
 - Format: string containing decimal numbers, each with a unit suffix, e.g., `s` (seconds), and `ms` (milliseconds)
+- If `max_interval ≤ interval` then `max_interval` is normalized to `interval`, which effectively forces `type = "static"`

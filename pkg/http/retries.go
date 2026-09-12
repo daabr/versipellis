@@ -144,8 +144,8 @@ func (r *retries) waitBeforeRetry(schedCtx, execCtx context.Context, attempt int
 // which means that [parseRetries] guarantees these invariants:
 // [retries.MaxInterval] >= [retries.Interval] >= 1ms.
 //
-// Also, attempt is always a non-negative integer less than [retries.MaxAttempts] here.
-// If [retries.MaxAttempts] == 0 ([retries.Coefficient] < 2), this function never gets called.
+// The caller only invokes this method for [retryCoeffBackoff] policies, with attempt
+// as a non-negative integer less than [retries.MaxAttempts].
 func (r *retries) exponentialBackoffInterval(attempt int, withJitter bool) time.Duration {
 	iterations := bits.Len64(uint64(r.MaxInterval / r.Interval)) //gosec:disable G115 // Checked above.
 	interval := r.Interval * (1 << (attempt % iterations))
