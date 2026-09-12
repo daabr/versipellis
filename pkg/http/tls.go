@@ -25,7 +25,6 @@ const (
 // the configurable parameters, which is used by clients as caching keys for reusable [http.Transport]s.
 // This enables connection pooling, while preventing clients from using different configurations.
 func loadClientTLSConfig(rawCfg any, httpVer string) (*tls.Config, string, error) {
-	t := &tls.Config{}
 	if rawCfg == nil {
 		rawCfg = map[string]any{}
 	}
@@ -39,8 +38,10 @@ func loadClientTLSConfig(rawCfg any, httpVer string) (*tls.Config, string, error
 		}
 	}
 
+	t := &tls.Config{}
 	var err error
 	hash := sha256.New()
+
 	if t.MinVersion, err = parseTLSMinVersion(config.Value(cfg, "min_version", defaultTLSMinVersion), httpVer); err != nil {
 		return nil, "", err
 	}
@@ -75,7 +76,6 @@ func loadClientTLSConfig(rawCfg any, httpVer string) (*tls.Config, string, error
 }
 
 func loadServerTLSConfig(rawCfg any, httpVer string) (*tls.Config, error) {
-	t := &tls.Config{}
 	if rawCfg == nil {
 		return nil, nil
 	}
@@ -89,7 +89,9 @@ func loadServerTLSConfig(rawCfg any, httpVer string) (*tls.Config, error) {
 		}
 	}
 
+	t := &tls.Config{}
 	var err error
+
 	if t.MinVersion, err = parseTLSMinVersion(config.Value(cfg, "min_version", defaultTLSMinVersion), httpVer); err != nil {
 		return nil, err
 	}
@@ -127,7 +129,7 @@ func parseTLSMinVersion(tlsVer, httpVer string) (uint16, error) {
 	case tlsVer == "1.2" && httpVer == config.CollectorTypeHTTP3:
 		return 0, errors.New("HTTP/3 (QUIC) does not support TLS 1.2")
 	case tlsVer == "1.0" || tlsVer == "1.1":
-		return 0, errors.New("deprecated TLS version: " + tlsVer)
+		return 0, fmt.Errorf("TLS version %s is deprecated", tlsVer)
 	default:
 		return 0, errors.New("invalid TLS version: " + tlsVer)
 	}

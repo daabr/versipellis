@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -96,6 +97,14 @@ func TestNewCollector(t *testing.T) {
 			base: httpBase,
 			cfg: map[string]any{
 				"http": map[string]any{"url": "https://example.com", "body_file": "/nonexistent/file"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid_retries",
+			base: httpBase,
+			cfg: map[string]any{
+				"http": map[string]any{"url": "https://example.com", "retries": "invalid"},
 			},
 			wantErr: true,
 		},
@@ -565,6 +574,11 @@ func TestParseByteSize(t *testing.T) {
 			want: 123,
 		},
 		{
+			name: "invalid_positive_number",
+			cfg:  map[string]any{"size": int64(math.MaxInt64)},
+			want: maxByteSize,
+		},
+		{
 			name: "invalid_zero",
 			cfg:  map[string]any{"size": int64(0)},
 			want: 456,
@@ -589,7 +603,7 @@ func TestParseByteSize(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := parseByteSize(tt.cfg, "size", int64(456)); got != tt.want {
+			if got := parseByteSize(tt.cfg, "size", tt.name, int64(456)); got != tt.want {
 				t.Errorf("parseByteSize() = %d, want %d", got, tt.want)
 			}
 		})
@@ -658,13 +672,15 @@ func TestCollectorStart(t *testing.T) {
 			}
 
 			c, err := NewCollector(base, map[string]any{
-				"type":   tt.proto,
-				tt.proto: map[string]any{"method": http.MethodGet, "url": server.URL, "timeout": "1s"},
+				"type": tt.proto,
+				tt.proto: map[string]any{
+					"method": http.MethodGet, "url": server.URL, "timeout": "100ms",
+					"retries": map[string]any{"type": retryTypeStatic, "max_attempts": int64(2), "interval": "1ms"},
+				},
 			})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
-			c.retries = 1
 
 			fakeClient := server.Client()
 			fakeTransport, _ := fakeClient.Transport.(*http.Transport)
@@ -719,7 +735,10 @@ func TestScheduleNextRequest(t *testing.T) {
 
 				c, err := NewCollector(base, map[string]any{
 					"type": config.CollectorTypeHTTP,
-					"http": map[string]any{"method": http.MethodGet, "url": "https://example.com"},
+					"http": map[string]any{
+						"method": http.MethodGet,
+						"url":    "https://example.com",
+					},
 				})
 				if err != nil {
 					t.Fatalf("NewCollector() error: %v", err)

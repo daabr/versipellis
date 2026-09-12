@@ -354,6 +354,50 @@ func TestValue(t *testing.T) {
 	}
 }
 
+func TestBoundedInt(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		value    int64
+		minValue int64
+		maxValue int64
+		want     int
+	}{
+		{
+			name:     "below_min",
+			value:    -1,
+			minValue: 0,
+			maxValue: 10,
+			want:     0,
+		},
+		{
+			name:     "above_max",
+			value:    11,
+			minValue: 0,
+			maxValue: 10,
+			want:     10,
+		},
+		{
+			name:     "within_bounds",
+			value:    5,
+			minValue: 0,
+			maxValue: 10,
+			want:     5,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := config.BoundedInt(tt.value, tt.minValue, tt.maxValue, tt.name, tt.name)
+			if got != tt.want {
+				t.Errorf("BoundedInt() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConcurrencyLimit(t *testing.T) {
 	t.Parallel()
 
@@ -402,7 +446,7 @@ func TestConcurrencyLimit(t *testing.T) {
 				t.Fatalf("NewBaseCollector() error = %v", err)
 			}
 			if base.Concurrency != tt.want {
-				t.Errorf("BaseCollector.ConcurrencyLimit = %d, want %d", base.Concurrency, tt.want)
+				t.Errorf("concurrencyLimit = %d, want %d", base.Concurrency, tt.want)
 			}
 		})
 	}
