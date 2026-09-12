@@ -53,14 +53,12 @@ func NewBaseCollector(cfg map[string]any, namespace string) (*BaseCollector, err
 	c.Sender, senderFound = dest.Senders[c.Destination]
 
 	switch {
+	case c.Type == "":
+		return nil, errors.New("all collector configurations require a type specification")
 	case c.Type != "" && !slices.Contains(validCollectorTypes, c.Type):
 		return nil, fmt.Errorf("unrecognized collector type %q", c.Type)
 	case !senderFound:
 		return nil, fmt.Errorf("unrecognized destination %q", c.Destination)
-	case c.Type == "" && c.Cronspec == "" && c.Trigger == "" && c.Sender == nil:
-		return c, nil
-	case c.Type == "": // Cronspec != "" || Trigger != "" || Sender != nil.
-		return nil, errors.New("all collector configurations require a type specification")
 	case c.Cronspec != "" && c.Trigger != "":
 		return nil, errors.New("collector configuration cannot have both a schedule and a trigger")
 	case c.Trigger != "":

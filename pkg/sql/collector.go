@@ -149,7 +149,7 @@ func loadQuery(cfg map[string]any) (string, error) {
 
 	switch {
 	case query == "" && path == "":
-		return "", errors.New("no SQL query provided")
+		return "", errors.New("query for SQL collector must be specified")
 	case query != "" && path != "":
 		return "", errors.New("both SQL query string and SQL query file provided, specify only one")
 	case query != "" && path == "":

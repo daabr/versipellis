@@ -25,6 +25,10 @@ type collectorInitResult struct {
 func initCollectors(ctx context.Context, entireCfg map[string]any) ([]<-chan struct{}, bool) {
 	var collectors []collector
 	for namespace, cfg := range config.ExtractSubmaps(entireCfg, "collector") {
+		if len(cfg) == 0 {
+			continue // Ignore empty collector configuration sections.
+		}
+
 		base, err := config.NewBaseCollector(cfg, namespace)
 		if err != nil {
 			slog.Error("failed to create base collector", slog.Any("error", err), slog.String("name", namespace))

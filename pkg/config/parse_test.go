@@ -408,32 +408,32 @@ func TestConcurrencyLimit(t *testing.T) {
 	}{
 		{
 			name: "default_when_omitted",
-			cfg:  map[string]any{},
+			cfg:  map[string]any{"type": "http", "trigger": "none"},
 			want: 1,
 		},
 		{
 			name: "explicit_zero",
-			cfg:  map[string]any{"concurrency_limit": int64(0)},
+			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(0)},
 			want: 0,
 		},
 		{
 			name: "negative_to_min",
-			cfg:  map[string]any{"concurrency_limit": int64(-1)},
+			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(-1)},
 			want: 0,
 		},
 		{
 			name: "positive_in_range",
-			cfg:  map[string]any{"concurrency_limit": int64(100)},
+			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(100)},
 			want: 100,
 		},
 		{
 			name: "overflow_to_max",
-			cfg:  map[string]any{"concurrency_limit": int64(101)},
+			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(101)},
 			want: 100,
 		},
 		{
 			name: "invalid_type_to_default",
-			cfg:  map[string]any{"concurrency_limit": "invalid"},
+			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": "invalid"},
 			want: 1,
 		},
 	}

@@ -73,7 +73,7 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	case base.Type != config.CollectorTypeHTTP && base.Type != config.CollectorTypeHTTP3:
 		msg := "collector type is %q, but must be %q or %q"
 		return nil, fmt.Errorf(msg, base.Type, config.CollectorTypeHTTP, config.CollectorTypeHTTP3)
-	case cfg == nil:
+	case cfg == nil || cfg[base.Type] == nil:
 		return nil, fmt.Errorf("[collector.%s] TOML config section is missing", base.Type)
 	}
 
@@ -107,9 +107,11 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 		return nil, err
 	}
 	if c.url.Scheme == "http" && httpCfg["tls"] != nil {
-		slog.Warn("TLS config details are ineffective because URL scheme is unencrypted HTTP",
-			slog.String("name", c.Name), slog.String("url", c.url.String()),
-		)
+		if m, ok := httpCfg["tls"].(map[string]any); ok && len(m) > 0 {
+			slog.Warn("TLS config details are ineffective because URL scheme is unencrypted HTTP",
+				slog.String("name", c.Name), slog.String("url", c.url.String()),
+			)
+		}
 	}
 
 	c.maxBodySize = parseByteSize(httpCfg, "max_body_size", c.Name, defaultMaxBodySize)
@@ -173,17 +175,20 @@ func parseMethod(rawMethod string) (string, error) {
 // parseQuery adds "query" key-value pairs (if there are any) to the URL's query.
 // It overrides any existing parameters from the original URL with the same name,
 // and returns an error if the type of any configured value isn't a string.
-func parseQuery(u *url.URL, cfg any) error {
-	if cfg == nil {
+func parseQuery(u *url.URL, rawCfg any) error {
+	if rawCfg == nil {
 		return nil
 	}
-	table, ok := cfg.(map[string]any)
+	cfg, ok := rawCfg.(map[string]any)
 	if !ok {
-		return fmt.Errorf(`HTTP collector's "query" must be a table of string key-value pairs, got %T`, cfg)
+		return fmt.Errorf(`HTTP collector's "query" must be a table of string key-value pairs, got %T`, rawCfg)
+	}
+	if len(cfg) == 0 {
+		return nil
 	}
 
 	values := u.Query()
-	for key, rawValue := range table {
+	for key, rawValue := range cfg {
 		if v, ok := rawValue.(string); ok {
 			values.Set(key, v)
 			continue
