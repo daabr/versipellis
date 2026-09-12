@@ -107,21 +107,29 @@
 
 - Optional
 - Default: `10485760` (10,485,760 bytes = 10 MiB)
-- Non-positive numbers (`0` and negative values) are normalized to the default
+- Valid range: any positive integer up to `1073741824` (1 GiB)
+- `0` and negative integers are normalized to the default
+- Integers greater than the maximum are normalized to the maximum
 
-`max_header_size` - maximum byte size of server response headers (as a whole, not each key-value pair)
+`max_headers_size` - maximum byte size of server response headers (as a whole, not each key-value pair)
 
 - Optional
 - Default: `10485760` (10,485,760 bytes = 10 MiB)
-- Non-positive numbers (`0` and negative values) are normalized to the default
+- Valid range: any positive integer up to `1073741824` (1 GiB)
+- `0` and negative integers are normalized to the default
+- Integers greater than the maximum are normalized to the maximum
 
 `timeout` - maximum duration of time for each HTTP client request to complete
 
 - Optional
 - Default: `"5s"` (5 seconds)
-- Format: string containing 1-3 numbers, each with a unit suffix: `h` (hours), `m` (minutes), and `s` (seconds)
+- Format: string containing decimal numbers, each with a unit suffix, e.g., `h` (hours), `m` (minutes), and `s` (seconds)
 - Special case: `"0"` and negative values (e.g., `"-1s"`) = no client-side timeout
 
 ## `[collector.http.tls]` Sub-Section
 
 [See this dedicated page](../tls.md).
+
+## `[collector.http.retries]` Sub-Section
+
+[See this dedicated page](../retries.md).

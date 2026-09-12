@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,6 +23,8 @@ const (
 	closeTimeout = 5 * time.Second
 
 	defaultRequestTimeout = 5 * time.Second
+
+	maxByteSize int64 = 1073741824 // 1 GiB (which is already quite large for a single HTTP request).
 )
 
 // Collector contains all the configuration and state details for sending HTTP requests.
@@ -38,7 +39,7 @@ type Collector struct {
 	maxHeaderSize int64
 	timeout       time.Duration
 	tls           *tls.Config
-	retries       int // Reminder: extend this to a policy struct & make it configurable in a separate PR.
+	retries       *retries
 
 	transportID string
 	client      *http.Client
@@ -72,15 +73,15 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	case base.Type != config.CollectorTypeHTTP && base.Type != config.CollectorTypeHTTP3:
 		msg := "collector type is %q, but must be %q or %q"
 		return nil, fmt.Errorf(msg, base.Type, config.CollectorTypeHTTP, config.CollectorTypeHTTP3)
-	case cfg == nil:
+	case cfg == nil || cfg[base.Type] == nil:
 		return nil, fmt.Errorf("[collector.%s] TOML config section is missing", base.Type)
 	}
 
 	var err error
-	c := &Collector{BaseCollector: *base, retries: 3} // Reminder: configurable retries policy in a separate PR.
-	httpCfg, ok := cfg[base.Type].(map[string]any)
+	c := &Collector{BaseCollector: *base}
+	httpCfg, ok := cfg[c.Type].(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("[collector.%s] isn't a valid TOML config section", base.Type)
+		return nil, fmt.Errorf("[collector.%s] isn't a valid TOML config section", c.Type)
 	}
 
 	if c.url, err = parseURL(config.Value(httpCfg, "url", ""), c.Type); err != nil {
@@ -98,18 +99,23 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	if c.body, err = loadBody(httpCfg, c.method); err != nil {
 		return nil, err
 	}
+	if c.retries, err = parseRetries(httpCfg["retries"], c.method, c.Name); err != nil {
+		return nil, err
+	}
 
-	if c.tls, c.transportID, err = loadClientTLSConfig(httpCfg["tls"], base.Type); err != nil {
+	if c.tls, c.transportID, err = loadClientTLSConfig(httpCfg["tls"], c.Type); err != nil {
 		return nil, err
 	}
 	if c.url.Scheme == "http" && httpCfg["tls"] != nil {
-		slog.Warn("TLS config details are ineffective because URL scheme is unencrypted HTTP",
-			slog.String("name", c.Name), slog.String("url", c.url.String()),
-		)
+		if m, ok := httpCfg["tls"].(map[string]any); ok && len(m) > 0 {
+			slog.Warn("TLS config details are ineffective because URL scheme is unencrypted HTTP",
+				slog.String("name", c.Name), slog.String("url", c.url.String()),
+			)
+		}
 	}
 
-	c.maxBodySize = parseByteSize(httpCfg, "max_body_size", defaultMaxBodySize)
-	c.maxHeaderSize = parseByteSize(httpCfg, "max_header_size", defaultMaxHeaderSize)
+	c.maxBodySize = parseByteSize(httpCfg, "max_body_size", c.Name, defaultMaxBodySize)
+	c.maxHeaderSize = parseByteSize(httpCfg, "max_headers_size", c.Name, defaultMaxHeaderSize)
 	if c.timeout, err = time.ParseDuration(config.Value(httpCfg, "timeout", defaultRequestTimeout.String())); err != nil {
 		return nil, fmt.Errorf("invalid timeout duration: %w", err)
 	}
@@ -169,17 +175,20 @@ func parseMethod(rawMethod string) (string, error) {
 // parseQuery adds "query" key-value pairs (if there are any) to the URL's query.
 // It overrides any existing parameters from the original URL with the same name,
 // and returns an error if the type of any configured value isn't a string.
-func parseQuery(u *url.URL, cfg any) error {
-	if cfg == nil {
+func parseQuery(u *url.URL, rawCfg any) error {
+	if rawCfg == nil {
 		return nil
 	}
-	table, ok := cfg.(map[string]any)
+	cfg, ok := rawCfg.(map[string]any)
 	if !ok {
-		return fmt.Errorf(`HTTP collector's "query" must be a table of string key-value pairs, got %T`, cfg)
+		return fmt.Errorf(`HTTP collector's "query" must be a table of string key-value pairs, got %T`, rawCfg)
+	}
+	if len(cfg) == 0 {
+		return nil
 	}
 
 	values := u.Query()
-	for key, rawValue := range table {
+	for key, rawValue := range cfg {
 		if v, ok := rawValue.(string); ok {
 			values.Set(key, v)
 			continue
@@ -243,17 +252,24 @@ func loadBody(cfg map[string]any, method string) ([]byte, error) {
 	return body, nil // Not trimming leading/trailing whitespaces because this payload may be binary.
 }
 
-func parseByteSize(cfg map[string]any, key string, defaultValue int64) int64 {
-	// Why [min] with [math.MaxInt64]-1? To avoid overflows in [Collector.processResponse].
-	parsedValue := min(config.Value(cfg, key, defaultValue), math.MaxInt64-1)
-	if parsedValue > 0 {
-		return parsedValue
+func parseByteSize(cfg map[string]any, key, name string, defaultValue int64) int64 {
+	value := config.Value(cfg, key, defaultValue)
+	if value <= 0 {
+		description := strings.ReplaceAll(key, "_", " ")
+		slog.Warn(description+" has an invalid (non-positive) value, using default value",
+			slog.String("name", name), slog.Int64("actual", value), slog.Int64("default", defaultValue),
+		)
+		value = defaultValue
+	}
+	if value > maxByteSize {
+		description := strings.ReplaceAll(key, "_", " ")
+		slog.Warn("forcing upper bound on "+description, slog.String("name", name),
+			slog.Int64("above_max", value), slog.Int64("new_value", maxByteSize),
+		)
+		value = maxByteSize
 	}
 
-	slog.Warn("TOML config field has an invalid (non-positive) value, using default value",
-		slog.String("key", key), slog.Int64("actual", parsedValue), slog.Int64("default", defaultValue),
-	)
-	return defaultValue
+	return value
 }
 
 // Start connects to the configured HTTP server and starts sending requests to it. This function
@@ -324,8 +340,6 @@ func (c *Collector) scheduleNext(ctx, execCtx context.Context, prev time.Time) {
 			)
 			prev = nextStart
 			continue
-
-			// Reminder: wait according to configurable retries policy in a separate PR.
 		}
 
 		select {

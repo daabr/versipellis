@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,8 +22,6 @@ import (
 
 func TestNewCollector(t *testing.T) {
 	t.Parallel()
-
-	httpBase := &config.BaseCollector{Type: config.CollectorTypeHTTP}
 
 	tests := []struct {
 		name    string
@@ -49,19 +48,25 @@ func TestNewCollector(t *testing.T) {
 		},
 		{
 			name:    "nil_cfg",
-			base:    httpBase,
+			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP},
 			cfg:     nil,
 			wantErr: true,
 		},
 		{
 			name:    "missing_section",
-			base:    httpBase,
+			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP},
 			cfg:     map[string]any{},
 			wantErr: true,
 		},
 		{
+			name:    "invalid_section",
+			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP3},
+			cfg:     map[string]any{"http3": "not-a-table"},
+			wantErr: true,
+		},
+		{
 			name: "invalid_url",
-			base: httpBase,
+			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
 			cfg: map[string]any{
 				"http": map[string]any{"url": ""},
 			},
@@ -69,7 +74,7 @@ func TestNewCollector(t *testing.T) {
 		},
 		{
 			name: "invalid_method",
-			base: httpBase,
+			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
 			cfg: map[string]any{
 				"http": map[string]any{"url": "https://example.com", "method": "DELETE"},
 			},
@@ -77,7 +82,7 @@ func TestNewCollector(t *testing.T) {
 		},
 		{
 			name: "invalid_query_type",
-			base: httpBase,
+			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
 			cfg: map[string]any{
 				"http": map[string]any{"url": "https://example.com", "query": 123},
 			},
@@ -85,7 +90,7 @@ func TestNewCollector(t *testing.T) {
 		},
 		{
 			name: "headers_not_a_table",
-			base: httpBase,
+			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
 			cfg: map[string]any{
 				"http": map[string]any{"url": "https://example.com", "headers": "Accept: application/json"},
 			},
@@ -93,15 +98,23 @@ func TestNewCollector(t *testing.T) {
 		},
 		{
 			name: "body_file_not_found",
-			base: httpBase,
+			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
 			cfg: map[string]any{
 				"http": map[string]any{"url": "https://example.com", "body_file": "/nonexistent/file"},
 			},
 			wantErr: true,
 		},
 		{
+			name: "invalid_retries",
+			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
+			cfg: map[string]any{
+				"http": map[string]any{"url": "https://example.com", "retries": "invalid"},
+			},
+			wantErr: true,
+		},
+		{
 			name: "tls_not_a_table",
-			base: httpBase,
+			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
 			cfg: map[string]any{
 				"http": map[string]any{"url": "https://example.com", "tls": "invalid"},
 			},
@@ -109,9 +122,9 @@ func TestNewCollector(t *testing.T) {
 		},
 		{
 			name: "http_url_with_tls_config",
-			base: httpBase,
+			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
 			cfg: map[string]any{
-				"http": map[string]any{"url": "http://example.com", "tls": map[string]any{}},
+				"http": map[string]any{"url": "http://example.com", "tls": map[string]any{"min_version": "1.3"}},
 			},
 			wantErr:     false, // Warning log.
 			wantURL:     "http://example.com",
@@ -121,7 +134,7 @@ func TestNewCollector(t *testing.T) {
 		},
 		{
 			name: "invalid_timeout",
-			base: httpBase,
+			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
 			cfg: map[string]any{
 				"http": map[string]any{"url": "https://example.com", "timeout": "not-a-duration"},
 			},
@@ -129,7 +142,7 @@ func TestNewCollector(t *testing.T) {
 		},
 		{
 			name: "minimal_valid_config",
-			base: httpBase,
+			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
 			cfg: map[string]any{
 				"http": map[string]any{"url": "https://example.com"},
 			},
@@ -327,10 +340,10 @@ func TestParseQuery(t *testing.T) {
 			want: "z=9&a=1", // Not re-encoded/sorted, since mergeQuery returns early.
 		},
 		{
-			name: "empty_table_re-encodes_existing_query",
+			name: "empty_table_does_not_reencode_existing_query",
 			url:  "https://example.com?z=9&a=1",
 			cfg:  map[string]any{},
-			want: "a=1&z=9", // Re-encoded via url.Values.Encode(), which sorts by key.
+			want: "z=9&a=1", // Not re-encoded/sorted, since mergeQuery returns early.
 		},
 		{
 			name: "adds_new_params_to_existing_query",
@@ -565,6 +578,11 @@ func TestParseByteSize(t *testing.T) {
 			want: 123,
 		},
 		{
+			name: "invalid_positive_number",
+			cfg:  map[string]any{"size": int64(math.MaxInt64)},
+			want: maxByteSize,
+		},
+		{
 			name: "invalid_zero",
 			cfg:  map[string]any{"size": int64(0)},
 			want: 456,
@@ -589,7 +607,7 @@ func TestParseByteSize(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := parseByteSize(tt.cfg, "size", int64(456)); got != tt.want {
+			if got := parseByteSize(tt.cfg, "size", tt.name, int64(456)); got != tt.want {
 				t.Errorf("parseByteSize() = %d, want %d", got, tt.want)
 			}
 		})
@@ -658,13 +676,15 @@ func TestCollectorStart(t *testing.T) {
 			}
 
 			c, err := NewCollector(base, map[string]any{
-				"type":   tt.proto,
-				tt.proto: map[string]any{"method": http.MethodGet, "url": server.URL, "timeout": "1s"},
+				"type": tt.proto,
+				tt.proto: map[string]any{
+					"method": http.MethodGet, "url": server.URL, "timeout": "100ms",
+					"retries": map[string]any{"type": retryTypeStatic, "max_attempts": int64(2), "interval": "1ms"},
+				},
 			})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
-			c.retries = 1
 
 			fakeClient := server.Client()
 			fakeTransport, _ := fakeClient.Transport.(*http.Transport)
@@ -719,7 +739,10 @@ func TestScheduleNextRequest(t *testing.T) {
 
 				c, err := NewCollector(base, map[string]any{
 					"type": config.CollectorTypeHTTP,
-					"http": map[string]any{"method": http.MethodGet, "url": "https://example.com"},
+					"http": map[string]any{
+						"method": http.MethodGet,
+						"url":    "https://example.com",
+					},
 				})
 				if err != nil {
 					t.Fatalf("NewCollector() error: %v", err)

@@ -85,6 +85,7 @@ func traverseMap(cfg map[string]any, key string, path []string, submaps map[stri
 
 // Value retrieves a generic value with the given key from the given TOML-based configuration map.
 // This function intentionally does not return errors, it reports them via logging.
+// Attention: TOML returns all integers as int64, and all floats as float64!
 func Value[T any](cfg map[string]any, key string, defaultValue T) T {
 	anyValue, found := cfg[key]
 	if !found {
@@ -94,11 +95,29 @@ func Value[T any](cfg map[string]any, key string, defaultValue T) T {
 		return typedValue
 	}
 	slog.Warn("TOML config field has an unexpected type, using default value",
-		slog.String("key", key), slog.Any("default", defaultValue),
+		slog.String("field", key), slog.Any("default", defaultValue),
 		slog.String("expected_type", fmt.Sprintf("%T", defaultValue)),
 		slog.String("actual_type", fmt.Sprintf("%T", anyValue)),
 	)
 	return defaultValue
+}
+
+// BoundedInt ensures that the given integer value falls within the specified bounds.
+func BoundedInt(value, minValue, maxValue int64, name, description string) int {
+	if value < minValue {
+		slog.Warn("forcing lower bound on "+description, slog.String("name", name),
+			slog.Int64("below_min", value), slog.Int64("new_value", minValue),
+		)
+		value = minValue
+	}
+	if value > maxValue {
+		slog.Warn("forcing upper bound on "+description, slog.String("name", name),
+			slog.Int64("above_max", value), slog.Int64("new_value", maxValue),
+		)
+		value = maxValue
+	}
+
+	return int(value)
 }
 
 const (
@@ -110,19 +129,5 @@ const (
 
 func concurrencyLimit(cfg map[string]any, name string) int {
 	n := Value(cfg, "concurrency_limit", defaultConcurrencyLimit)
-
-	if n < noConcurrency {
-		slog.Warn("using minimum collector concurrency limit", slog.String("name", name),
-			slog.Int64("below_min", n), slog.Int("new_min", noConcurrency),
-		)
-		n = noConcurrency
-	}
-	if n > maxConcurrency {
-		slog.Warn("using maximum collector concurrency limit", slog.String("name", name),
-			slog.Int64("above_max", n), slog.Int("new_max", maxConcurrency),
-		)
-		n = maxConcurrency
-	}
-
-	return int(n)
+	return BoundedInt(n, noConcurrency, maxConcurrency, name, "collector concurrency limit")
 }

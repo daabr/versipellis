@@ -34,14 +34,14 @@
 - If the collector is at its concurrency limit when a new operation gets triggered, the operation is skipped, not delayed
 
 > [!WARNING]
-> Concurrency limit > 1 should be reserved for stateless, idempotent, or partitioned queries to prevent concurrent runs from processing the same data more than once.
+> Concurrency limit > 1 should be reserved for stateless, idempotent, or partitioned data collection - to prevent concurrent runs from processing the same data more than once.
 
 `destination` - where to send the data to
 
 - Optional
-- Default: `"discard"` / `"none"`
+- Default: `"discard"` or `"none"`
 - Options (case insensitive):
-  - `"discard"` / `"none"`
+  - `"discard"` or `"none"`
   - `"stdout"`
 
 ## `[collector.http]` (HTTP/1.1 + HTTP/2) Sub-Section

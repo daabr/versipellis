@@ -354,6 +354,50 @@ func TestValue(t *testing.T) {
 	}
 }
 
+func TestBoundedInt(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		value    int64
+		minValue int64
+		maxValue int64
+		want     int
+	}{
+		{
+			name:     "below_min",
+			value:    -1,
+			minValue: 0,
+			maxValue: 10,
+			want:     0,
+		},
+		{
+			name:     "above_max",
+			value:    11,
+			minValue: 0,
+			maxValue: 10,
+			want:     10,
+		},
+		{
+			name:     "within_bounds",
+			value:    5,
+			minValue: 0,
+			maxValue: 10,
+			want:     5,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := config.BoundedInt(tt.value, tt.minValue, tt.maxValue, tt.name, tt.name)
+			if got != tt.want {
+				t.Errorf("BoundedInt() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConcurrencyLimit(t *testing.T) {
 	t.Parallel()
 
@@ -364,32 +408,32 @@ func TestConcurrencyLimit(t *testing.T) {
 	}{
 		{
 			name: "default_when_omitted",
-			cfg:  map[string]any{},
+			cfg:  map[string]any{"type": "http", "trigger": "none"},
 			want: 1,
 		},
 		{
 			name: "explicit_zero",
-			cfg:  map[string]any{"concurrency_limit": int64(0)},
+			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(0)},
 			want: 0,
 		},
 		{
 			name: "negative_to_min",
-			cfg:  map[string]any{"concurrency_limit": int64(-1)},
+			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(-1)},
 			want: 0,
 		},
 		{
 			name: "positive_in_range",
-			cfg:  map[string]any{"concurrency_limit": int64(100)},
+			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(100)},
 			want: 100,
 		},
 		{
 			name: "overflow_to_max",
-			cfg:  map[string]any{"concurrency_limit": int64(101)},
+			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(101)},
 			want: 100,
 		},
 		{
 			name: "invalid_type_to_default",
-			cfg:  map[string]any{"concurrency_limit": "invalid"},
+			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": "invalid"},
 			want: 1,
 		},
 	}
@@ -402,7 +446,7 @@ func TestConcurrencyLimit(t *testing.T) {
 				t.Fatalf("NewBaseCollector() error = %v", err)
 			}
 			if base.Concurrency != tt.want {
-				t.Errorf("BaseCollector.ConcurrencyLimit = %d, want %d", base.Concurrency, tt.want)
+				t.Errorf("concurrencyLimit = %d, want %d", base.Concurrency, tt.want)
 			}
 		})
 	}

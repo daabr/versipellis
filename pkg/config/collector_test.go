@@ -20,9 +20,9 @@ func TestNewBaseCollector(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "implicit_type_none",
+			name:    "empty_config_not_allowed",
 			cfg:     map[string]any{},
-			wantErr: false,
+			wantErr: true,
 		},
 		{
 			name:    "schedule_without_type",

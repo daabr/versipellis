@@ -51,17 +51,17 @@ func TestRequestWithRetries(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			base, err := config.NewBaseCollector(map[string]any{
-				"type":     config.CollectorTypeHTTP,
-				"schedule": "@once",
-			}, tt.name)
+			base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"}, tt.name)
 			if err != nil {
 				t.Fatalf("config.NewBaseCollector() error: %v", err)
 			}
 
 			c, err := NewCollector(base, map[string]any{
 				"type": config.CollectorTypeHTTP,
-				"http": map[string]any{"method": http.MethodGet, "url": server.URL},
+				"http": map[string]any{
+					"method": http.MethodGet, "url": server.URL,
+					"retries": map[string]any{"type": retryTypeStatic, "interval": "1ms"},
+				},
 			})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
@@ -75,7 +75,7 @@ func TestRequestWithRetries(t *testing.T) {
 
 			wantRequests := 1
 			if tt.retryable {
-				wantRequests = c.retries + 1
+				wantRequests = c.retries.MaxAttempts
 			}
 			if got := int(requests.Load()); got != wantRequests {
 				t.Errorf("handler received %d requests, want %d", got, wantRequests)
@@ -247,13 +247,15 @@ func TestRequestWithRetriesShutdown(t *testing.T) {
 			base := &config.BaseCollector{Type: config.CollectorTypeHTTP, Name: tt.name}
 			c, err := NewCollector(base, map[string]any{
 				"type": config.CollectorTypeHTTP,
-				"http": map[string]any{"method": http.MethodGet, "url": server.URL},
+				"http": map[string]any{
+					"method": http.MethodGet, "url": server.URL,
+					"retries": map[string]any{"type": retryTypeStatic, "interval": "1ms"},
+				},
 			})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
 			c.client = clientH2(&tls.Config{}, 0, 0, tt.name)
-			c.retries = 3
 
 			if tt.shutdownBefore || tt.cancelBefore {
 				cancelExec() // Trigger cancellation of execution context immediately.

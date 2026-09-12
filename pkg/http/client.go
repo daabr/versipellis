@@ -73,7 +73,7 @@ func clientH3(cfg *tls.Config, maxHeaderSize int64, timeout time.Duration, trans
 		TLSClientConfig:        cfg,
 		MaxResponseHeaderBytes: int(min(maxHeaderSize, math.MaxInt)),
 		QUICConfig: &quic.Config{
-			HandshakeIdleTimeout: 5 * time.Second,
+			HandshakeIdleTimeout: timeout / 2,
 			MaxIdleTimeout:       30 * time.Second,
 			KeepAlivePeriod:      15 * time.Second,
 		},
@@ -95,7 +95,7 @@ func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.
 	resp := newErrorResponse(http.StatusGatewayTimeout)
 	start := time.Now()
 
-	for i := range c.retries + 1 {
+	for i := range c.retries.MaxAttempts {
 		// Attempt 0 was already scheduled and runs under execCtx (up to [Collector.timeout]).
 		// Retries (i > 0) abort if either execCtx or schedCtx (shutdown requested) is done.
 		if execCtx.Err() != nil || (i > 0 && schedCtx.Err() != nil) {
@@ -116,7 +116,7 @@ func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.
 			break
 		}
 
-		// Reminder: extend retries to a policy & make configurable in a separate PR.
+		c.retries.waitBeforeRetry(schedCtx, execCtx, i)
 	}
 	return resp
 }

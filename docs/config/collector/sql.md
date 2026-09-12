@@ -33,5 +33,5 @@
 
 - Optional
 - Default: `"1m"` (1 minute)
-- Format: string containing 1-3 numbers, each with a unit suffix: `h` (hours), `m` (minutes), and `s` (seconds)
+- Format: string containing decimal numbers, each with a unit suffix, e.g., `h` (hours), `m` (minutes), and `s` (seconds)
 - Special case: `"0"` and negative values (e.g., `"-1s"`) = no client-side timeout
