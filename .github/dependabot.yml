@@ -27,6 +27,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      exclude:
+        - "*" # No publication date was available from the registry.
     commit-message:
       prefix: ":robot: build(deps)"
     groups:
