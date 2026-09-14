@@ -7,6 +7,10 @@ updates:
       interval: weekly
     commit-message:
       prefix: ":robot: ci(deps)"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: gomod
     directory: /
@@ -14,6 +18,10 @@ updates:
       interval: weekly
     commit-message:
       prefix: ":robot: build(deps)"
+    groups:
+      gomod:
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /
@@ -21,3 +29,7 @@ updates:
       interval: weekly
     commit-message:
       prefix: ":robot: build(deps)"
+    groups:
+      docker:
+        patterns:
+          - "*"
