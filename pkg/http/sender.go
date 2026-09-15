@@ -140,7 +140,7 @@ func serializeData(data any, u *url.URL, headers http.Header) ([]byte, error) {
 		if headers.Get(contentTypeHeader) == "" {
 			headers.Set(contentTypeHeader, http.DetectContentType(t))
 		}
-		return t, nil
+		return bytes.Clone(t), nil
 
 	case *http.Request:
 		if t == nil {

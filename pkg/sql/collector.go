@@ -346,9 +346,9 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	}
 	defer rows.Close()
 
-	data, err := processResults(ctx, rows, 1)
+	data, err := processResults(queryCtx, rows, 1)
 	end := time.Now()
-	if data != nil && c.Sender != nil {
+	if len(data) > 0 && c.Sender != nil {
 		c.Sender(ctx, data) // Returns quickly (usually asynchronous internally).
 	}
 

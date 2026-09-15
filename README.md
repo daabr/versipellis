@@ -115,4 +115,4 @@ Supported SQL-based databases:
 ### HTTP Output
 
 - Directions: push (send to servers)
-- Everything else is the same as [HTTP input](#http-input) above
+- Same feature set as [HTTP input](#http-input) above
