@@ -40,18 +40,21 @@
 
 - Optional
 - Default: `"discard"` or `"none"`
-- Options (case insensitive):
+- Options (case sensitive!):
   - `"discard"` or `"none"`
   - `"stdout"`
+  - `"dead_letter_queue"`
+  - The full name of any sender which is configured in another section in the TOML file,\
+    e.g., `sender.http`, `remus.lupin.sender.http`, `sender.http3[1]`, `sender.http3[2]`, etc.
 
 ## `[collector.http]` (HTTP/1.1 + HTTP/2) Sub-Section
 
-[See this dedicated page](./collector/http.md).
+[See this page](./collector/http.md)
 
 ## `[collector.http3]` Sub-Section
 
-[See this dedicated page](./collector/http3.md).
+[See this page](./collector/http3.md)
 
 ## `[collector.sql]` Sub-Section
 
-[See this dedicated page](./collector/sql.md).
+[See this page](./collector/sql.md)

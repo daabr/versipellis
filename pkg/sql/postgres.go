@@ -8,8 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/daabr/versipellis/pkg/dest"
 )
 
 // Defines the minimal interface required for [pgxpool.Pool], for testing purposes.
@@ -47,42 +45,44 @@ func (c *Collector) connectToPostgres(ctx context.Context) error {
 }
 
 // Never called directly, only through [Collector.executeQuery] when the driver is PostgreSQL.
-// This means that these 2 functions do and return the same things, but do it differently.
-func (c *Collector) executePostgresQuery(ctx context.Context, sender dest.Sender) bool {
-	tx, err := c.pgPool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+// This means that these 2 functions do and return the same things, but in a different way.
+func (c *Collector) executePostgresQuery(execCtx, queryCtx context.Context) bool {
+	tx, err := c.pgPool.BeginTx(queryCtx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err),
 			slog.String("driver", c.driver), slog.String("name", c.Name),
 		)
 		return false
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }() //nolint:contextcheck // Ctx is potentially already canceled.
+	defer func() { _ = tx.Rollback(context.WithoutCancel(execCtx)) }()
 
 	start := time.Now()
-	rows, err := tx.Query(ctx, c.query)
+	rows, err := tx.Query(queryCtx, c.query)
 	if err != nil {
-		slog.Warn("failed to execute SQL query", slog.Any("error", err),
-			slog.String("driver", c.driver), slog.String("name", c.Name),
-			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+		slog.Warn("failed to execute SQL query", slog.Any("error", err), slog.String("driver", c.driver),
+			slog.String("name", c.Name), slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
 		return false
 	}
 
-	rowCount, err := processPostgresResults(ctx, rows, sender)
+	data, err := processPostgresResults(queryCtx, rows)
 	end := time.Now()
+	if len(data) > 0 && c.Sender != nil {
+		c.Sender(execCtx, data) // Returns quickly (usually asynchronous internally).
+	}
+
 	ok := err == nil
 	if !ok {
 		slog.Warn("error while processing SQL query results", slog.Any("error", err), slog.String("driver", c.driver),
-			slog.String("name", c.Name), slog.Int("successfully_processed_rows", rowCount),
+			slog.String("name", c.Name), slog.Int("successfully_processed_rows", len(data)),
 		)
 	} else {
-		slog.Debug("SQL query completed successfully", slog.String("driver", c.driver),
-			slog.String("name", c.Name), slog.Int("rows", rowCount),
-			slog.Time("start_time", start), slog.Duration("exec_duration", end.Sub(start)),
+		slog.Debug("SQL query completed successfully", slog.String("driver", c.driver), slog.String("name", c.Name),
+			slog.Int("rows", len(data)), slog.Time("start_time", start), slog.Duration("duration", end.Sub(start)),
 		)
 	}
 
-	if ok || rowCount > 0 {
+	if ok || len(data) > 0 {
 		c.checkpointMu.Lock()
 		if start.UTC().After(c.prevStart) {
 			c.prevStart = start.UTC()
@@ -95,7 +95,7 @@ func (c *Collector) executePostgresQuery(ctx context.Context, sender dest.Sender
 
 // PostgreSQL-specific variant of [processResults]. Using [pgx]
 // instead of [sql] for better performance and PostgreSQL feature support.
-func processPostgresResults(ctx context.Context, rows pgx.Rows, sender dest.Sender) (int, error) {
+func processPostgresResults(ctx context.Context, rows pgx.Rows) ([]map[string]any, error) {
 	cols := rows.FieldDescriptions()
 	size := len(cols)
 	vals := make([]any, size)
@@ -104,7 +104,7 @@ func processPostgresResults(ctx context.Context, rows pgx.Rows, sender dest.Send
 		ptrs[i] = &vals[i]
 	}
 
-	rowCount := 0
+	scanned := make([]map[string]any, 0)
 	_, err := pgx.ForEachRow(rows, ptrs, func() error { // [pgx.ForEachRow] closes [pgx.Rows] automatically.
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("query result processing canceled: %w", err)
@@ -113,16 +113,12 @@ func processPostgresResults(ctx context.Context, rows pgx.Rows, sender dest.Send
 		for i, col := range cols {
 			row[col.Name] = vals[i]
 		}
-		if sender != nil {
-			if err := sender(ctx, row); err != nil {
-				return fmt.Errorf("failed to process row %d: %w", rowCount+1, err)
-			}
-		}
-		rowCount++
+		scanned = append(scanned, row)
 		return nil
 	})
 	if err != nil {
-		return rowCount, fmt.Errorf("row processing error: %w", err)
+		return scanned, fmt.Errorf("row processing error: %w", err)
 	}
-	return rowCount, nil
+
+	return scanned, nil
 }

@@ -2,9 +2,11 @@
 
 ## `[*.tls]` Sub-Section
 
-This sub-section can be added to [HTTP](./collector/http.md) and [HTTP/3](./collector/http3.md) collectors.
+This sub-section can be added to:
 
-🚧 **Coming soon:** sender and receiver support.
+- [HTTP](./collector/http.md) and [HTTP/3](./collector/http3.md) collectors
+- [HTTP](./sender/http.md) and [HTTP/3](./sender/http3.md) senders
+- 🚧 **Coming soon:** receiver support
 
 It is entirely optional, but some fields may be required in some use-cases.
 

@@ -11,6 +11,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -87,7 +88,7 @@ func clientH3(cfg *tls.Config, maxHeaderSize int64, timeout time.Duration, trans
 	return &http.Client{Transport: reusable, Timeout: timeout}
 }
 
-// requestWithRetries executes an HTTP request, retrying on transient errors based on [Collector.retries].
+// requestWithRetries sends an HTTP request, retrying on transient errors based on [Collector.retries].
 // In-flight execution is governed by execCtx, giving attempt 0 a [Collector.timeout] grace period to complete
 // during graceful shutdown. Subsequent retries (i > 0) also check schedCtx: if collector shutdown has
 // already been initiated, retrying against a failing service is aborted to ensure prompt termination.
@@ -107,7 +108,7 @@ func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.
 		if resp != nil && resp.StatusCode < http.StatusBadRequest {
 			slog.Debug("HTTP request completed successfully",
 				slog.String("name", c.Name), slog.Int("attempt", i+1), slog.String("status", resp.Status),
-				slog.Time("start_time", start), slog.Duration("exec_duration", time.Since(start)),
+				slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 			)
 			return resp
 		}
@@ -119,6 +120,47 @@ func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.
 		c.retries.waitBeforeRetry(schedCtx, execCtx, i)
 	}
 	return resp
+}
+
+// sendWithRetries sends an HTTP request, retrying on transient errors based on [Destination.retries].
+// It runs asynchronously in a separate goroutine and does not return any error to the caller. The
+// request parameters were either cloned or constructed by the caller in order to prevent data races.
+//
+// The provided ctx is the collector's execution context, it signals that the collector is in the process
+// of shutting down, so this function stops retrying when that happens. However, each attempt's own timeout
+// is independent, allowing in-flight requests to finish gracefully too, before being forcefully canceled.
+// Reminder: implement a way for main() to wait for graceful shutdown, and forceful timeout enforcement in a future PR.
+func (d *Destination) sendWithRetries(ctx context.Context, u *url.URL, h http.Header, payload []byte) {
+	resp := newErrorResponse(http.StatusGatewayTimeout)
+	defer resp.Body.Close() // Not really needed, but no harm either.
+	start := time.Now()
+
+	for i := range d.retries.MaxAttempts {
+		if ctx.Err() != nil {
+			break
+		}
+
+		var retry bool
+		resp, retry = d.sendOnce(context.WithoutCancel(ctx), u, h, payload) //nolint:bodyclose // Body already closed.
+		if resp != nil && resp.StatusCode < http.StatusBadRequest {
+			slog.Debug("HTTP request completed successfully",
+				slog.String("name", d.Name), slog.Int("attempt", i+1), slog.String("status", resp.Status),
+				slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+			)
+			break
+		}
+		if !retry {
+			break
+		}
+
+		d.retries.waitBeforeRetry(ctx, ctx, i)
+	}
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		slog.Warn("failed to send HTTP request", slog.String("name", d.Name), slog.String("status", resp.Status),
+			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+		)
+	}
 }
 
 // The returned [http.Response] is guaranteed to be non-nil, with a non-nil [http.Response.Body],
@@ -139,11 +181,12 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 		body = bytes.NewReader(c.body)
 	}
 
+	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, c.method, c.url.String(), body)
 	if err != nil {
 		slog.Error("failed to construct HTTP request",
 			slog.Any("error", err), slog.String("name", c.Name),
-			slog.String("method", c.method), slog.String("url", c.url.String()),
+			slog.String("method", c.method), slog.String("url", c.url.Redacted()),
 		)
 		return newErrorResponse(http.StatusInternalServerError), false
 	}
@@ -155,7 +198,9 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		slog.Warn("failed to send HTTP request", slog.Any("error", err), slog.String("name", c.Name))
+		slog.Warn("failed to send HTTP request", slog.Any("error", err), slog.String("name", c.Name),
+			slog.String("host", c.url.Host), slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+		)
 		if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
 			return newErrorResponse(http.StatusGatewayTimeout), true
 		}
@@ -163,12 +208,65 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		slog.Warn("HTTP server responded with error status",
-			slog.String("name", c.Name), slog.String("status", resp.Status),
+		slog.Warn("HTTP server responded with error status", slog.String("name", c.Name), slog.String("status", resp.Status),
+			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
 	}
 
 	resp = c.processResponse(resp)
+	return resp, retryable(resp.StatusCode)
+}
+
+func (d *Destination) sendOnce(ctx context.Context, u *url.URL, h http.Header, payload []byte) (*http.Response, bool) {
+	var cancel context.CancelFunc
+	if d.timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, d.timeout)
+	}
+	if cancel != nil {
+		defer cancel()
+	}
+
+	var body io.Reader
+	if len(payload) != 0 {
+		body = bytes.NewReader(payload)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, d.method, u.String(), body)
+	if err != nil {
+		slog.Error("failed to construct HTTP request",
+			slog.Any("error", err), slog.String("name", d.Name),
+			slog.String("method", d.method), slog.String("url", u.Redacted()),
+		)
+		return newErrorResponse(http.StatusInternalServerError), false
+	}
+
+	req.Header = h.Clone()
+	if host := h.Get("Host"); len(host) > 0 {
+		req.Host = host // See [http.Request.Host] for details.
+	}
+
+	start := time.Now()
+	resp, err := d.client.Do(req)
+	if err != nil {
+		slog.Warn("failed to send HTTP request", slog.Any("error", err), slog.String("name", d.Name),
+			slog.String("host", d.url.Host), slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+		)
+		if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+			return newErrorResponse(http.StatusGatewayTimeout), true
+		}
+		return newErrorResponse(http.StatusBadGateway), true
+	}
+
+	// We don't care about responses from destinations. Also, since Go 1.27
+	// [http.Response.Body] is drained automatically when closed (up to 256 KiB).
+	_ = resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		slog.Warn("HTTP server responded with error status", slog.String("name", d.Name), slog.String("status", resp.Status),
+			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+		)
+	}
+
 	return resp, retryable(resp.StatusCode)
 }
 

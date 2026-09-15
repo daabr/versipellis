@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/dest"
 )
 
 func TestNewBaseCollector(t *testing.T) {
@@ -36,7 +37,7 @@ func TestNewBaseCollector(t *testing.T) {
 		},
 		{
 			name:    "destination_without_type",
-			cfg:     map[string]any{"type": "", "destination": "stdout"},
+			cfg:     map[string]any{"type": "", "destination": config.SenderTypeStdout},
 			wantErr: true,
 		},
 		{
@@ -51,7 +52,7 @@ func TestNewBaseCollector(t *testing.T) {
 		},
 		{
 			name:    "sql_with_trigger",
-			cfg:     map[string]any{"type": "sql", "trigger": "my_trigger"},
+			cfg:     map[string]any{"type": config.CollectorTypeSQL, "trigger": "my_trigger"},
 			wantErr: false,
 		},
 		{
@@ -85,12 +86,12 @@ func TestNewBaseCollector(t *testing.T) {
 		},
 		{
 			name:    "explicit_destination_none",
-			cfg:     map[string]any{"type": config.CollectorTypeSQL, "trigger": "boo!", "destination": "none"},
+			cfg:     map[string]any{"type": config.CollectorTypeSQL, "trigger": "boo!", "destination": config.SenderTypeNone},
 			wantErr: false,
 		},
 		{
 			name:    "explicit_destination_discard",
-			cfg:     map[string]any{"type": config.CollectorTypeSQL, "trigger": "boo!", "destination": "discard"},
+			cfg:     map[string]any{"type": config.CollectorTypeSQL, "trigger": "boo!", "destination": config.SenderTypeDiscard},
 			wantErr: false,
 		},
 		{
@@ -103,7 +104,8 @@ func TestNewBaseCollector(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := config.NewBaseCollector(tt.cfg, "name"); (err != nil) != tt.wantErr {
+			senders := map[string]config.Sender{"": nil, "discard": nil, "none": nil, "stdout": dest.Stdout}
+			if _, err := config.NewBaseCollector(tt.cfg, "name", senders); (err != nil) != tt.wantErr {
 				t.Errorf("NewBaseCollector() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})

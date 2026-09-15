@@ -20,7 +20,6 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/dest"
 )
 
 // DriverType* constants represent all the available SQL database drivers for configurations in the TOML file.
@@ -246,7 +245,7 @@ func openDB(ctx context.Context, driver, conn string) (*sql.DB, error) {
 	return db, nil
 }
 
-func (c *Collector) scheduleNext(ctx, execCtx context.Context, prev time.Time) {
+func (c *Collector) scheduleNext(schedCtx, execCtx context.Context, prev time.Time) {
 	sem := make(chan struct{}, max(c.Concurrency, 1))
 	defer c.Close()
 
@@ -260,7 +259,7 @@ func (c *Collector) scheduleNext(ctx, execCtx context.Context, prev time.Time) {
 					c.inProgress.Wait()
 				}()
 				select {
-				case <-ctx.Done():
+				case <-schedCtx.Done():
 				case <-done:
 				}
 				slog.Info("SQL collector finished one-time execution",
@@ -274,26 +273,25 @@ func (c *Collector) scheduleNext(ctx, execCtx context.Context, prev time.Time) {
 			return
 		}
 		if now := time.Now(); !c.Schedule.RunsOnlyOnce() && now.After(nextStart) {
-			slog.Warn("SQL collector is behind schedule, skipping missed execution",
-				slog.String("driver", c.driver), slog.String("name", c.Name),
-				slog.Time("skipped", nextStart), slog.Duration("gap", now.Sub(nextStart)),
+			slog.Warn("SQL collector is behind schedule, skipping missed execution", slog.String("driver", c.driver),
+				slog.String("name", c.Name), slog.Time("skipped", nextStart), slog.Duration("gap", now.Sub(nextStart)),
 			)
 			prev = nextStart
 			continue
 		}
 
 		select {
-		case <-ctx.Done():
+		case <-schedCtx.Done():
 			return
 		case <-time.After(time.Until(nextStart)):
-			c.checkConcurrency(ctx, execCtx, sem, nextStart)
+			c.checkConcurrency(schedCtx, execCtx, sem, nextStart)
 			prev = nextStart
 		}
 	}
 }
 
-func (c *Collector) checkConcurrency(ctx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
-	if ctx.Err() != nil { // Instead of ctx.Done() in the select block below - to check ctx before sem.
+func (c *Collector) checkConcurrency(schedCtx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
+	if schedCtx.Err() != nil { // Instead of schedCtx.Done() in the select block below - to check ctx before sem.
 		return
 	}
 	select {
@@ -303,9 +301,8 @@ func (c *Collector) checkConcurrency(ctx, execCtx context.Context, sem chan stru
 			c.executeQuery(execCtx)
 		})
 	default:
-		slog.Warn("SQL collector is at its concurrency limit, skipping query",
-			slog.String("driver", c.driver), slog.String("name", c.Name),
-			slog.Int("limit", cap(sem)), slog.Time("skipped", scheduled),
+		slog.Warn("SQL collector is at its concurrency limit, skipping query", slog.String("driver", c.driver),
+			slog.String("name", c.Name), slog.Int("limit", cap(sem)), slog.Time("skipped", scheduled),
 		)
 	}
 }
@@ -315,9 +312,10 @@ func (c *Collector) checkConcurrency(ctx, execCtx context.Context, sem chan stru
 // The provided ctx is an execution context (execCtx) detached from parent cancellation, allowing in-flight queries
 // to finish within [Collector.timeout] during graceful shutdown before being forcefully canceled.
 func (c *Collector) executeQuery(ctx context.Context) bool {
+	queryCtx := ctx
 	var cancel context.CancelFunc
 	if c.timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+		queryCtx, cancel = context.WithTimeout(ctx, c.timeout)
 	}
 	if cancel != nil {
 		defer cancel()
@@ -326,10 +324,10 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	// [Collector.db] and [Collector.pgPool]/[Collector.usingPG] are mutually exclusive,
 	// so if the latter is non-nil we have to use it instead of the former.
 	if c.usingPG {
-		return c.executePostgresQuery(ctx, c.Sender)
+		return c.executePostgresQuery(ctx, queryCtx)
 	}
 
-	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := c.db.BeginTx(queryCtx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err),
 			slog.String("driver", c.driver), slog.String("name", c.Name),
@@ -339,34 +337,35 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	defer func() { _ = tx.Rollback() }()
 
 	start := time.Now()
-	rows, err := tx.QueryContext(ctx, c.query)
+	rows, err := tx.QueryContext(queryCtx, c.query)
 	if err != nil {
-		slog.Warn("failed to execute SQL query", slog.Any("error", err),
-			slog.String("driver", c.driver), slog.String("name", c.Name),
-			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+		slog.Warn("failed to execute SQL query", slog.Any("error", err), slog.String("driver", c.driver),
+			slog.String("name", c.Name), slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
 		return false
 	}
 	defer rows.Close()
 
-	rowCount, err := processResults(ctx, rows, c.Sender, 1)
+	data, err := processResults(queryCtx, rows, 1)
 	end := time.Now()
+	if len(data) > 0 && c.Sender != nil {
+		c.Sender(ctx, data) // Returns quickly (usually asynchronous internally).
+	}
+
 	ok := err == nil
 	if !ok {
-		slog.Warn("error while processing SQL query results", slog.Any("error", err),
-			slog.String("driver", c.driver), slog.String("name", c.Name),
-			slog.Int("successfully_processed_rows", rowCount),
+		slog.Warn("error while processing SQL query results", slog.Any("error", err), slog.String("driver", c.driver),
+			slog.String("name", c.Name), slog.Int("successfully_processed_rows", len(data)),
 		)
 	} else {
 		stats := c.db.Stats()
-		slog.Debug("SQL query execution completed successfully",
-			slog.String("driver", c.driver), slog.String("name", c.Name), slog.Int("rows", rowCount),
-			slog.Time("start_time", start), slog.Duration("exec_duration", end.Sub(start)),
+		slog.Debug("SQL query execution completed successfully", slog.String("driver", c.driver), slog.String("name", c.Name),
+			slog.Int("rows", len(data)), slog.Time("start_time", start), slog.Duration("duration", end.Sub(start)),
 			slog.Int("in_use_conns", stats.InUse), slog.Int("idle_conns", stats.Idle),
 		)
 	}
 
-	if ok || rowCount > 0 {
+	if ok || len(data) > 0 {
 		c.checkpointMu.Lock()
 		if start.UTC().After(c.prevStart) {
 			c.prevStart = start.UTC()
@@ -377,45 +376,41 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	return ok
 }
 
-func processResults(ctx context.Context, rows *sql.Rows, sender dest.Sender, resultSet int) (int, error) {
+// processResults returns partial results even when an error interrupts processing, to prevent data loss.
+func processResults(ctx context.Context, rows *sql.Rows, resultSet int) ([]map[string]any, error) {
 	cols, err := rows.Columns()
 	if err != nil {
-		return 0, fmt.Errorf("failed to read SQL column names in result-set %d: %w", resultSet, err)
+		return nil, fmt.Errorf("failed to read SQL column names in result-set %d: %w", resultSet, err)
 	}
 
-	rowCount := 0
+	scanned := make([]map[string]any, 0)
 	for rows.Next() {
 		if err := ctx.Err(); err != nil {
-			return rowCount, fmt.Errorf("query result processing canceled: %w", err)
+			return scanned, fmt.Errorf("query result processing canceled: %w", err)
 		}
 		row, err := scanRow(rows, cols)
 		if err != nil {
-			return rowCount, fmt.Errorf("failed to scan row %d in result-set %d: %w", rowCount+1, resultSet, err)
+			return scanned, fmt.Errorf("failed to scan row %d in result-set %d: %w", len(scanned)+1, resultSet, err)
 		}
-		if sender != nil {
-			if err := sender(ctx, row); err != nil {
-				return rowCount, fmt.Errorf("failed to process row %d in result-set %d: %w", rowCount+1, resultSet, err)
-			}
-		}
-		rowCount++
+		scanned = append(scanned, row)
 	}
 	if err := rows.Err(); err != nil {
-		return rowCount, fmt.Errorf("row iteration error: %w", err)
+		return scanned, fmt.Errorf("row iteration error: %w", err)
 	}
 
 	// Support multiple result-sets for multiple statements, using recursion.
 	if rows.NextResultSet() {
-		nextRowCount, err := processResults(ctx, rows, sender, resultSet+1)
-		rowCount += nextRowCount
+		next, err := processResults(ctx, rows, resultSet+1)
+		scanned = append(scanned, next...)
 		if err != nil {
-			return rowCount, err
+			return scanned, err
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return rowCount, fmt.Errorf("row-set iteration error: %w", err)
+		return scanned, fmt.Errorf("row-set iteration error: %w", err)
 	}
 
-	return rowCount, nil
+	return scanned, nil
 }
 
 func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
@@ -434,6 +429,7 @@ func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
 	for i, col := range cols {
 		row[col] = vals[i]
 	}
+
 	return row, nil
 }
 

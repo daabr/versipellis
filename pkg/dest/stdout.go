@@ -3,6 +3,7 @@ package dest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,13 +22,18 @@ var (
 	encoder *json.Encoder
 )
 
+func lazyInit() {
+	encoder = json.NewEncoder(writer)
+	encoder.SetEscapeHTML(false) // Passing raw data, not rendering it, so don't alter it.
+}
+
 // Stdout prints any input data to [os.Stdout]. Simple data types are printed as-is, while complex structures
 // are encoded as JSON, if possible. Some types (e.g., HTTP requests and responses) have special handling.
 // Because this destination is intended for demo and testing purposes, it is guaranteed to be concurrency-safe
 // but not necessarily performant. For the same reason, JSON encoding errors are logged, but not exposed.
-func Stdout(_ context.Context, data any) error {
+func Stdout(_ context.Context, data any) {
 	if data == nil {
-		return nil // Don't log nil data, other senders may use it as a sentinel marking end-of-batch.
+		return // Don't log nil data, other senders use it as a sentinel for batches.
 	}
 
 	mu.Lock()
@@ -36,30 +42,38 @@ func Stdout(_ context.Context, data any) error {
 	once.Do(lazyInit)
 
 	var err error
-	if req, ok := data.(*http.Request); ok && req != nil {
-		err = req.Write(writer)
-		if req.Body != nil {
-			_ = req.Body.Close()
+	switch t := data.(type) {
+	case *http.Request:
+		if t == nil {
+			return
 		}
-	} else if resp, ok := data.(*http.Response); ok && resp != nil {
-		err = resp.Write(writer)
-		if resp.Body != nil {
-			_ = resp.Body.Close()
+		err = t.Write(writer)
+		if t.Body != nil {
+			_ = t.Body.Close()
 		}
-	} else {
+
+	case *http.Response:
+		if t == nil {
+			return
+		}
+		err = t.Write(writer)
+		if t.Body != nil {
+			_ = t.Body.Close()
+		}
+
+	case []map[string]any:
+		for _, m := range t {
+			err = errors.Join(err, encoder.Encode(m))
+			if err != nil {
+				break
+			}
+		}
+
+	default:
 		err = encoder.Encode(data)
 	}
 
 	if err != nil {
 		slog.Error("cannot encode or print data", slog.Any("error", err), slog.String("data_type", fmt.Sprintf("%T", data)))
-		// Log this kind of error, but...
 	}
-
-	// ...Never let this specific destination interrupt or abort data flow.
-	return nil
-}
-
-func lazyInit() {
-	encoder = json.NewEncoder(writer)
-	encoder.SetEscapeHTML(false) // Passing raw data, not rendering it, so don't alter it.
 }

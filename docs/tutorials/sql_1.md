@@ -55,7 +55,7 @@ For the sake of simplicity, this query doesn't actually read data from a table, 
 > While NDJSON is a convenient default for demos and testing, Versipellis also supports other formats for advanced datasets that require a schema, or huge datasets which would benefit from binary compression and resource efficiency - see the [configuration reference](../config.md).
 
 ```log
-DBG SQL query execution completed successfully driver=sqlite rows=2 exec_duration=1.05ms in_use_conns=1 idle_conns=0
+DBG SQL query execution completed successfully driver=sqlite rows=2 duration=1.05ms in_use_conns=1 idle_conns=0
 ```
 
 ## Next Steps

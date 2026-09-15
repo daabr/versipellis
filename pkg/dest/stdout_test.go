@@ -41,9 +41,26 @@ func TestStdout(t *testing.T) {
 			want: `{"key":"value","list":[1,2,3],"number":42}` + "\n",
 		},
 		{
+			name: "ndjson",
+			data: []map[string]any{
+				{"key1": "value1"},
+				{"key2": "value2"},
+			},
+			want: `{"key1":"value1"}` + "\n" + `{"key2":"value2"}` + "\n",
+		},
+		{
 			name: "not_json",
 			data: map[string]any{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
 			want: "",                                             // Log this, but don't pollute [os.Stdout] with non-JSON text.
+		},
+		{
+			name: "not_ndjson",
+			data: []map[string]any{
+				{"key1": "value1"},
+				{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
+				{"key1": "value1"},
+			},
+			want: `{"key1":"value1"}` + "\n", // Fail fast.
 		},
 		// After the "not_json" test case, to ensure it doesn't leave [encoder] in a broken state.
 		{
@@ -87,15 +104,23 @@ func TestStdout(t *testing.T) {
 					ProtoMinor: 1,
 					Body:       io.NopCloser(body),
 				}
-			}(), //nolint:bodyclose // The [Stdout] function will close the response body during the test.
+			}(), //nolint:bodyclose // The [Stdout] function closes the response body during the test.
 			want: "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nbody",
+		},
+		{
+			name: "nil_http_request",
+			data: (*http.Request)(nil),
+			want: "",
+		},
+		{
+			name: "nil_http_response",
+			data: (*http.Response)(nil),
+			want: "",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := Stdout(t.Context(), tt.data); err != nil {
-				t.Fatalf("Stdout(%s) error = %v, wantErr nil", tt.name, err)
-			}
+			Stdout(t.Context(), tt.data)
 
 			sb, ok := writer.(*strings.Builder)
 			if !ok {
@@ -110,11 +135,6 @@ func TestStdout(t *testing.T) {
 	}
 }
 
-const (
-	goroutines        = 10
-	callsPerGoroutine = 10
-)
-
 func TestStdoutConcurrency(t *testing.T) {
 	writer = new(bytes.Buffer)
 	lazyInit()
@@ -127,9 +147,7 @@ func TestStdoutConcurrency(t *testing.T) {
 	for g := range goroutines {
 		wg.Go(func() {
 			for i := range callsPerGoroutine {
-				if err := Stdout(t.Context(), map[string]any{"goroutine": g, "call": i}); err != nil {
-					t.Errorf("Stdout(goroutine %d, call %d) error = %v, wantErr nil", g, i, err)
-				}
+				Stdout(t.Context(), map[string]any{"goroutine": g, "call": i})
 			}
 		})
 	}

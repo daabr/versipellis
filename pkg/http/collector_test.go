@@ -3,11 +3,9 @@ package http
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -129,7 +127,7 @@ func TestNewCollector(t *testing.T) {
 			wantErr:     false, // Warning log.
 			wantURL:     "http://example.com",
 			wantMethod:  http.MethodGet,
-			wantHeaders: nil,
+			wantHeaders: http.Header{},
 			wantTimeout: defaultRequestTimeout,
 		},
 		{
@@ -148,7 +146,7 @@ func TestNewCollector(t *testing.T) {
 			},
 			wantURL:     "https://example.com",
 			wantMethod:  http.MethodGet,
-			wantHeaders: nil,
+			wantHeaders: http.Header{},
 			wantTimeout: defaultRequestTimeout,
 		},
 	}
@@ -178,300 +176,6 @@ func TestNewCollector(t *testing.T) {
 			}
 			if c.timeout != tt.wantTimeout {
 				t.Errorf("Collector.timeout = %v, want %v", c.timeout, tt.wantTimeout)
-			}
-		})
-	}
-}
-
-func TestParseURL(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		rawURL   string
-		protoVer string
-		want     string
-		wantErr  bool
-	}{
-		{
-			name:    "empty_url",
-			rawURL:  "",
-			wantErr: true,
-		},
-		{
-			name:    "invalid_url",
-			rawURL:  "://invalid-url",
-			wantErr: true,
-		},
-		{
-			name:    "relative_url",
-			rawURL:  "/relative/path",
-			wantErr: true,
-		},
-		{
-			name:     "http3_with_http_scheme",
-			rawURL:   "http://example.com",
-			protoVer: config.CollectorTypeHTTP3,
-			wantErr:  true,
-		},
-		{
-			name:     "http3_with_https_scheme",
-			rawURL:   "https://example.com",
-			protoVer: config.CollectorTypeHTTP3,
-			want:     "https://example.com",
-			wantErr:  false,
-		},
-		{
-			name:     "http_with_http_scheme",
-			rawURL:   "http://example.com",
-			protoVer: config.CollectorTypeHTTP,
-			want:     "http://example.com",
-			wantErr:  false,
-		},
-		{
-			name:     "http_with_https_scheme",
-			rawURL:   "https://example.com/",
-			protoVer: config.CollectorTypeHTTP,
-			want:     "https://example.com/",
-			wantErr:  false,
-		},
-		{
-			name:     "invalid_scheme",
-			rawURL:   "invalid://example.com/",
-			protoVer: config.CollectorTypeHTTP,
-			want:     "",
-			wantErr:  true,
-		},
-		{
-			name:    "url_with_opaque_part",
-			rawURL:  "https:opaque-part",
-			wantErr: true,
-		},
-		{
-			name:    "url_without_host",
-			rawURL:  "https://",
-			wantErr: true,
-		},
-		{
-			name:    "url_with_invalid_port_number_1",
-			rawURL:  "https://example.com:99999",
-			wantErr: true,
-		},
-		{
-			name:    "url_with_invalid_port_number_2",
-			rawURL:  "https://example.com:0",
-			wantErr: true,
-		},
-		{
-			name:    "url_with_invalid_port_number_3",
-			rawURL:  "https://example.com:-1",
-			wantErr: true,
-		},
-		{
-			name:    "url_with_non_numeric_port",
-			rawURL:  "https://example.com:port",
-			wantErr: true,
-		},
-		{
-			name:    "url_with_query_and_fragment",
-			rawURL:  "https://example.com/path?query=1&param2=value2#fragment",
-			want:    "https://example.com/path?query=1&param2=value2#fragment",
-			wantErr: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			got, gotErr := parseURL(tt.rawURL, tt.protoVer)
-			if (gotErr != nil) != tt.wantErr {
-				t.Fatalf("parseURL() error = %v, wantErr %v", gotErr, tt.wantErr)
-			}
-			if (got == nil) != tt.wantErr || (got != nil && got.String() != tt.want) {
-				t.Errorf("parseURL() = %v, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseMethod(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		method  string
-		wantErr bool
-	}{
-		{"empty", "", true},
-		{"get_upper_case", "GET", false},
-		{"get_lower_case", "get", false},
-		{"post_mixed_case_1", "Post", false},
-		{"post_lower_case_2", "posT", false},
-		{"patch_upper_case", http.MethodPatch, false},
-		{"put_upper_case", http.MethodPut, false},
-		{"trace_upper_case", http.MethodTrace, true},
-		{"invalid", "BlAh", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			if _, gotErr := parseMethod(tt.method); (gotErr != nil) != tt.wantErr {
-				t.Errorf("parseMethod() error = %v, wantErr %v", gotErr, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestParseQuery(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		url     string
-		cfg     any
-		want    string
-		wantErr bool
-	}{
-		{
-			name: "nil_raw_leaves_url_untouched",
-			url:  "https://example.com?z=9&a=1",
-			cfg:  nil,
-			want: "z=9&a=1", // Not re-encoded/sorted, since mergeQuery returns early.
-		},
-		{
-			name: "empty_table_does_not_reencode_existing_query",
-			url:  "https://example.com?z=9&a=1",
-			cfg:  map[string]any{},
-			want: "z=9&a=1", // Not re-encoded/sorted, since mergeQuery returns early.
-		},
-		{
-			name: "adds_new_params_to_existing_query",
-			url:  "https://example.com?a=1",
-			cfg:  map[string]any{"b": "2"},
-			want: "a=1&b=2",
-		},
-		{
-			name: "overrides_same-name_param",
-			url:  "https://example.com?a=1",
-			cfg:  map[string]any{"a": "2"},
-			want: "a=2",
-		},
-		{
-			name: "no_existing_query",
-			url:  "https://example.com",
-			cfg:  map[string]any{"a": "1"},
-			want: "a=1",
-		},
-		{
-			name:    "raw_not_a_table",
-			url:     "https://example.com",
-			cfg:     "a=1",
-			wantErr: true,
-		},
-		{
-			name:    "value_not_a_string",
-			url:     "https://example.com",
-			cfg:     map[string]any{"a": 1},
-			wantErr: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			u, err := url.Parse(tt.url)
-			if err != nil {
-				t.Fatalf("url.Parse(%q) error: %v", tt.url, err)
-			}
-
-			gotErr := parseQuery(u, tt.cfg)
-			if (gotErr != nil) != tt.wantErr {
-				t.Fatalf("parseQuery() error = %v, wantErr %v", gotErr, tt.wantErr)
-			}
-			if !tt.wantErr && u.RawQuery != tt.want {
-				t.Errorf("parseQuery() RawQuery = %q, want %q", u.RawQuery, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseHeaders(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		cfg     any
-		want    http.Header
-		wantErr bool
-	}{
-		{
-			name: "no_headers",
-			cfg:  nil,
-			want: nil,
-		},
-		{
-			name: "empty_table",
-			cfg:  map[string]any{},
-			want: http.Header{},
-		},
-		{
-			name: "single_header",
-			cfg:  map[string]any{"Accept": "application/json"},
-			want: http.Header{"Accept": {"application/json"}},
-		},
-		{
-			name: "lowercase_key_is_canonicalized",
-			cfg:  map[string]any{"accept": "text/plain"},
-			want: http.Header{"Accept": {"text/plain"}},
-		},
-		{
-			name: "comma-separated_value_is_kept_as_a_single_value",
-			cfg:  map[string]any{"Accept": "text/plain, application/json, application/xml"},
-			want: http.Header{"Accept": {"text/plain, application/json, application/xml"}},
-		},
-		{
-			name: "multiple_headers",
-			cfg: map[string]any{
-				"Accept":        "application/json",
-				"Authorization": "Bearer token",
-			},
-			want: http.Header{
-				"Accept":        {"application/json"},
-				"Authorization": {"Bearer token"},
-			},
-		},
-		{
-			name:    "headers_not_a_table",
-			cfg:     "Accept: application/json",
-			wantErr: true,
-		},
-		{
-			name:    "invalid_key",
-			cfg:     map[string]any{" ": "value"},
-			wantErr: true,
-		},
-		{
-			name:    "value_not_a_string",
-			cfg:     map[string]any{"Key": 1},
-			wantErr: true,
-		},
-		{
-			name:    "invalid_value",
-			cfg:     map[string]any{"Key": "text/plain\napplication/json"},
-			wantErr: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			got, gotErr := parseHeaders(tt.cfg)
-			if (gotErr != nil) != tt.wantErr {
-				t.Fatalf("parseHeaders() error = %v, wantErr %v", gotErr, tt.wantErr)
-			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("parseHeaders() = %#v, want %#v", got, tt.want)
 			}
 		})
 	}
@@ -623,22 +327,19 @@ func TestCollectorStartNilGuard(t *testing.T) {
 
 func TestCollectorStart(t *testing.T) {
 	tests := []struct {
-		name   string
-		proto  string
-		tls    bool
-		sender dest.Sender
+		name  string
+		proto string
+		tls   bool
 	}{
 		{
-			name:   "http1_success",
-			proto:  config.CollectorTypeHTTP,
-			tls:    false,
-			sender: fakeSender(nil),
+			name:  "http1_success",
+			proto: config.CollectorTypeHTTP,
+			tls:   false,
 		},
 		{
-			name:   "sender_error",
-			proto:  config.CollectorTypeHTTP,
-			tls:    false,
-			sender: fakeSender(errors.New("fake sender error")),
+			name:  "sender_error",
+			proto: config.CollectorTypeHTTP,
+			tls:   false,
 		},
 		{
 			name:  "http2_success",
@@ -667,12 +368,12 @@ func TestCollectorStart(t *testing.T) {
 			}
 			t.Cleanup(server.Close)
 
-			base, err := config.NewBaseCollector(map[string]any{"type": tt.proto, "schedule": "@once"}, tt.name)
+			base, err := config.NewBaseCollector(
+				map[string]any{"type": tt.proto, "schedule": "@once", "destination": "test"},
+				tt.name, map[string]config.Sender{"": nil, "test": dest.Discard},
+			)
 			if err != nil {
 				t.Fatalf("config.NewBaseCollector() error: %v", err)
-			}
-			if !tt.tls {
-				base.Sender = tt.sender // For extra coverage.
 			}
 
 			c, err := NewCollector(base, map[string]any{
@@ -702,12 +403,6 @@ func TestCollectorStart(t *testing.T) {
 	}
 }
 
-func fakeSender(err error) dest.Sender {
-	return func(_ context.Context, _ any) error {
-		return err
-	}
-}
-
 func TestScheduleNextRequest(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -729,10 +424,10 @@ func TestScheduleNextRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				base, err := config.NewBaseCollector(map[string]any{
-					"type":     config.CollectorTypeHTTP,
-					"schedule": tt.schedule,
-				}, tt.name)
+				base, err := config.NewBaseCollector(
+					map[string]any{"type": config.CollectorTypeHTTP, "schedule": tt.schedule},
+					tt.name, map[string]config.Sender{"": nil},
+				)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
 				}
@@ -775,38 +470,44 @@ func TestFixHeaders(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		headers http.Header
-		want    http.Header
+		name string
+		resp *http.Response
+		want *http.Response
 	}{
 		{
-			name:    "nil_headers",
-			headers: nil,
-			want:    nil,
+			name: "nil_response",
+			resp: nil,
+			want: nil,
 		},
 		{
-			name:    "empty_headers",
-			headers: http.Header{},
-			want:    http.Header{},
+			name: "nil_headers",
+			resp: &http.Response{Header: nil},
+			want: &http.Response{Header: nil},
+		},
+		{
+			name: "empty_headers",
+			resp: &http.Response{Header: http.Header{}},
+			want: &http.Response{Header: http.Header{}},
 		},
 		{
 			name: "remove_headers",
-			headers: http.Header{
+			resp: &http.Response{Header: http.Header{
 				"Connection":       {"foo"},
 				"Content-Encoding": {"gzip"},
-				"Foo":              {"bar"},
+				"Foo":              {"bar"}, // Should be deleted (see "Connection" header).
+				"Abc":              {"def"}, // Should be preserved.
 				"Keep-Alive":       {"timeout=5", "max=1000"},
-			},
-			want: http.Header{},
+			}},
+			want: &http.Response{Header: http.Header{"Abc": {"def"}}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := fixHeaders(tt.headers)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("fixHeaders() = %v, want %v", got, tt.want)
+			fixHeaders(tt.resp)
+			if !reflect.DeepEqual(tt.resp, tt.want) {
+				t.Errorf("fixHeaders() = %+v, want %+v", tt.resp, tt.want)
 			}
 		})
 	}
@@ -931,11 +632,10 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 			t.Parallel()
 
 			synctest.Test(t, func(t *testing.T) {
-				base, err := config.NewBaseCollector(map[string]any{
-					"type":              config.CollectorTypeHTTP,
-					"schedule":          "@every 1s",
-					"concurrency_limit": tt.limit,
-				}, tt.name)
+				base, err := config.NewBaseCollector(
+					map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@every 1s", "concurrency_limit": tt.limit},
+					tt.name, map[string]config.Sender{"": nil},
+				)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
 				}

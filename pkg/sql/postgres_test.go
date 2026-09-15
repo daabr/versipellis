@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"testing/synctest"
 
@@ -69,7 +70,10 @@ func TestCollectorConnectToPostgres(t *testing.T) {
 func TestCollectorStartPostgres(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "")
+	base, err := config.NewBaseCollector(
+		map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"},
+		"TestCollectorStartPostgres", map[string]config.Sender{"": nil},
+	)
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
@@ -98,7 +102,8 @@ func TestCollectorStartPostgres(t *testing.T) {
 func TestCollectorExecutePostgresQuery(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "")
+	senders := map[string]config.Sender{"": dest.Discard}
+	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "", senders)
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
@@ -170,33 +175,23 @@ func TestProcessPostgresResults(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		sender  dest.Sender
-		noRows  bool
-		wantErr bool
+		name     string
+		noRows   bool
+		wantRows []map[string]any
 	}{
 		{
-			name:    "no_rows",
-			noRows:  true,
-			wantErr: false,
+			name:     "no_rows",
+			noRows:   true,
+			wantRows: []map[string]any{},
 		},
 		{
-			name:    "with_rows_but_no_sender",
-			sender:  nil,
-			noRows:  false,
-			wantErr: false,
-		},
-		{
-			name:    "with_rows_and_sender",
-			sender:  fakeSender(nil),
-			noRows:  false,
-			wantErr: false,
-		},
-		{
-			name:    "with_rows_and_sender_and_error",
-			sender:  fakeSender(errors.New("sender error")),
-			noRows:  false,
-			wantErr: true,
+			name:   "with_rows_and_sender",
+			noRows: false,
+			wantRows: []map[string]any{
+				{"id": 1, "name": "Alice"},
+				{"id": 2, "name": "Bob"},
+				{"id": 3, "name": "Carol"},
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -212,14 +207,12 @@ func TestProcessPostgresResults(t *testing.T) {
 				}
 			}
 
-			gotRowCount, err := processPostgresResults(t.Context(), rows, tt.sender)
-			switch {
-			case (err != nil) != tt.wantErr:
-				t.Errorf("processPostgresResults() error = %v, wantErr = %v", err, tt.wantErr)
-			case tt.wantErr && gotRowCount != 0:
-				t.Errorf("processPostgresResults() row count = %d, want 0 on error", gotRowCount)
-			case !tt.wantErr && gotRowCount != len(rows.rows):
-				t.Errorf("processPostgresResults() row count = %d, want %d", gotRowCount, len(rows.rows))
+			gotRows, err := processPostgresResults(t.Context(), rows)
+			if err != nil {
+				t.Errorf("processPostgresResults() error = %v", err)
+			}
+			if !reflect.DeepEqual(gotRows, tt.wantRows) {
+				t.Errorf("processPostgresResults() = %+v, want %+v", gotRows, tt.wantRows)
 			}
 		})
 	}
@@ -255,7 +248,7 @@ func TestProcessPostgresResultsErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := processPostgresResults(t.Context(), tt.rows, nil); err == nil {
+			if _, err := processPostgresResults(t.Context(), tt.rows); err == nil {
 				t.Errorf("processPostgresResults() error = nil, wantErr = true")
 			}
 		})

@@ -9,12 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/net/http/httpguts"
 
 	"github.com/daabr/versipellis/pkg/config"
 )
@@ -84,16 +81,16 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 		return nil, fmt.Errorf("[collector.%s] isn't a valid TOML config section", c.Type)
 	}
 
-	if c.url, err = parseURL(config.Value(httpCfg, "url", ""), c.Type); err != nil {
+	if c.url, err = parseURL(config.Value(httpCfg, "url", ""), c.Type, "collector"); err != nil {
 		return nil, err
 	}
-	if c.method, err = parseMethod(config.Value(httpCfg, "method", http.MethodGet)); err != nil {
+	if c.method, err = parseMethod(config.Value(httpCfg, "method", http.MethodGet), "collection"); err != nil {
 		return nil, err
 	}
-	if err := parseQuery(c.url, httpCfg["query"]); err != nil {
+	if err := parseQuery(c.url, httpCfg["query"], "collector"); err != nil {
 		return nil, err
 	}
-	if c.headers, err = parseHeaders(httpCfg["headers"]); err != nil {
+	if c.headers, err = parseHeaders(httpCfg["headers"], "collector"); err != nil {
 		return nil, err
 	}
 	if c.body, err = loadBody(httpCfg, c.method); err != nil {
@@ -106,14 +103,13 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	if c.tls, c.transportID, err = loadClientTLSConfig(httpCfg["tls"], c.Type); err != nil {
 		return nil, err
 	}
-	if c.url.Scheme == "http" && httpCfg["tls"] != nil {
+	if c.url.Scheme == httpScheme && httpCfg["tls"] != nil {
 		if m, ok := httpCfg["tls"].(map[string]any); ok && len(m) > 0 {
 			slog.Warn("TLS config details are ineffective because URL scheme is unencrypted HTTP",
-				slog.String("name", c.Name), slog.String("url", c.url.String()),
+				slog.String("name", c.Name), slog.String("url", c.url.Redacted()),
 			)
 		}
 	}
-
 	c.maxBodySize = parseByteSize(httpCfg, "max_body_size", c.Name, defaultMaxBodySize)
 	c.maxHeaderSize = parseByteSize(httpCfg, "max_headers_size", c.Name, defaultMaxHeaderSize)
 	if c.timeout, err = time.ParseDuration(config.Value(httpCfg, "timeout", defaultRequestTimeout.String())); err != nil {
@@ -126,105 +122,6 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	c.transportID = fmt.Sprintf("%s,%d,%s", c.transportID, c.maxHeaderSize, c.timeout)
 
 	return c, nil
-}
-
-func parseURL(rawURL string, protoVer string) (*url.URL, error) {
-	if rawURL == "" {
-		return nil, errors.New("HTTP collector URL must be specified")
-	}
-
-	u, err := url.Parse(rawURL)
-	switch {
-	case err != nil:
-		return nil, fmt.Errorf("invalid HTTP collector URL: %w", err)
-	case !u.IsAbs():
-		return nil, errors.New("HTTP collector URL must be absolute (start with a scheme)")
-	}
-
-	u.Scheme = strings.ToLower(u.Scheme)
-	switch {
-	case u.Scheme != "https" && protoVer == config.CollectorTypeHTTP3:
-		return nil, errors.New("HTTP collector URL must have an HTTPS scheme for HTTP/3")
-	case u.Scheme != "https" && u.Scheme != "http":
-		return nil, errors.New("HTTP collector URL must have an HTTP/S scheme")
-	case u.Opaque != "":
-		return nil, fmt.Errorf(`HTTP collector URL must have "//" after the "%s:" scheme`, u.Scheme)
-	case u.Hostname() == "":
-		return nil, errors.New("HTTP collector URL must have a host address")
-	case u.Port() != "":
-		// [url.Parse] returns an error for negative and non-numeric values, but not out-of-range numbers.
-		if port, err := strconv.Atoi(u.Port()); err != nil || port < 1 || port > 65535 {
-			return nil, fmt.Errorf("HTTP collector URL has an invalid port number: %q", u.Port())
-		}
-	}
-
-	return u, nil
-}
-
-func parseMethod(rawMethod string) (string, error) {
-	switch m := strings.ToUpper(rawMethod); m {
-	case http.MethodGet, http.MethodPatch, http.MethodPost, http.MethodPut:
-		return m, nil
-	case http.MethodConnect, http.MethodDelete, http.MethodHead, http.MethodOptions, http.MethodTrace:
-		return "", fmt.Errorf("HTTP method %q not supported for data collection", m)
-	default:
-		return "", fmt.Errorf("invalid HTTP method %q", rawMethod)
-	}
-}
-
-// parseQuery adds "query" key-value pairs (if there are any) to the URL's query.
-// It overrides any existing parameters from the original URL with the same name,
-// and returns an error if the type of any configured value isn't a string.
-func parseQuery(u *url.URL, rawCfg any) error {
-	if rawCfg == nil {
-		return nil
-	}
-	cfg, ok := rawCfg.(map[string]any)
-	if !ok {
-		return fmt.Errorf(`HTTP collector's "query" must be a table of string key-value pairs, got %T`, rawCfg)
-	}
-	if len(cfg) == 0 {
-		return nil
-	}
-
-	values := u.Query()
-	for key, rawValue := range cfg {
-		if v, ok := rawValue.(string); ok {
-			values.Set(key, v)
-			continue
-		}
-		return fmt.Errorf("query parameter %q must be a string, got %T", key, rawValue)
-	}
-
-	u.RawQuery = values.Encode()
-	return nil
-}
-
-func parseHeaders(rawCfg any) (http.Header, error) {
-	if rawCfg == nil {
-		return nil, nil
-	}
-	cfg, ok := rawCfg.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf(`HTTP collector "headers" must be a table of string key-value pairs, got %T`, rawCfg)
-	}
-
-	headers := make(http.Header, len(cfg))
-	for key, value := range cfg {
-		if !httpguts.ValidHeaderFieldName(key) {
-			return nil, fmt.Errorf("invalid HTTP header name %q", key)
-		}
-		v, ok := value.(string)
-		if !ok {
-			return nil, fmt.Errorf("HTTP header value for %q must be a string, got %T", key, value)
-		}
-		if !httpguts.ValidHeaderFieldValue(v) {
-			return nil, fmt.Errorf("invalid HTTP header value for %q", key)
-		}
-		headers.Set(key, v)
-	}
-
-	return headers, nil
 }
 
 func loadBody(cfg map[string]any, method string) ([]byte, error) {
@@ -306,7 +203,7 @@ func (c *Collector) Start(ctx context.Context) bool {
 	return true
 }
 
-func (c *Collector) scheduleNext(ctx, execCtx context.Context, prev time.Time) {
+func (c *Collector) scheduleNext(schedCtx, execCtx context.Context, prev time.Time) {
 	sem := make(chan struct{}, max(c.Concurrency, 1))
 	defer c.Close()
 
@@ -320,7 +217,7 @@ func (c *Collector) scheduleNext(ctx, execCtx context.Context, prev time.Time) {
 					c.inProgress.Wait()
 				}()
 				select {
-				case <-ctx.Done():
+				case <-schedCtx.Done():
 				case <-done:
 				}
 				slog.Info("HTTP collector finished one-time execution",
@@ -343,24 +240,24 @@ func (c *Collector) scheduleNext(ctx, execCtx context.Context, prev time.Time) {
 		}
 
 		select {
-		case <-ctx.Done():
+		case <-schedCtx.Done():
 			return
 		case <-time.After(time.Until(nextStart)):
-			c.checkConcurrency(ctx, execCtx, sem, nextStart)
+			c.checkConcurrency(schedCtx, execCtx, sem, nextStart)
 			prev = nextStart
 		}
 	}
 }
 
-func (c *Collector) checkConcurrency(ctx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
-	if ctx.Err() != nil { // Instead of ctx.Done() in the select block below - to check ctx before sem.
+func (c *Collector) checkConcurrency(schedCtx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
+	if schedCtx.Err() != nil { // Instead of schedCtx.Done() in the select block below - to check ctx before sem.
 		return
 	}
 	select {
 	case sem <- struct{}{}:
 		c.inProgress.Go(func() {
 			defer func() { <-sem }()
-			c.sendRequest(ctx, execCtx)
+			c.sendRequest(schedCtx, execCtx)
 		})
 	default:
 		slog.Warn("HTTP collector is at its concurrency limit, skipping request",
@@ -376,41 +273,43 @@ func (c *Collector) sendRequest(schedCtx, execCtx context.Context) {
 	resp := c.requestWithRetries(schedCtx, execCtx) //nolint:bodyclose // See [Collector.requestOnce].
 
 	if resp.StatusCode < http.StatusBadRequest && c.Sender != nil {
-		resp.Header = fixHeaders(resp.Header)
-		resp.Close = false
-		resp.Trailer = nil
-		resp.TransferEncoding = nil
-		if err := c.Sender(execCtx, resp); err != nil {
-			slog.Warn("failed to process HTTP response", slog.Any("error", err), slog.String("name", c.Name))
-		}
+		fixHeaders(resp)
+		c.Sender(execCtx, resp) // Closes the response body, and returns quickly (usually asynchronous internally).
 	}
 }
 
 // Forwarding a received response's [http.Response.Header] as-is in an outgoing request
 // can propagate hop-by-hop or response-specific headers, which would lead to bugs. See
 // https://nathandavison.com/blog/abusing-http-hop-by-hop-request-headers and [httputil].
-func fixHeaders(h http.Header) http.Header {
-	headers := h.Clone()
-	for k := range headers {
-		switch k {
+func fixHeaders(r *http.Response) {
+	if r == nil {
+		return
+	}
+
+	for key := range r.Header {
+		switch k := http.CanonicalHeaderKey(key); k {
 		// https://datatracker.ietf.org/doc/html/rfc9110#name-connection
 		case "Connection":
-			for _, vs := range headers[k] {
+			for _, vs := range r.Header[k] {
 				for v := range strings.SplitSeq(vs, ",") {
-					headers.Del(strings.TrimSpace(v))
+					r.Header.Del(strings.TrimSpace(v))
 				}
 			}
-			headers.Del(k)
+			r.Header.Del(k)
 		// https://datatracker.ietf.org/doc/html/rfc2616#section-13.5.1
 		// https://datatracker.ietf.org/doc/html/rfc6797#section-6.1
 		case "Keep-Alive", "Te", "Trailer", "Transfer-Encoding", "Upgrade", "Strict-Transport-Security":
-			headers.Del(k)
+			r.Header.Del(k)
 		// Reminder: revisit this case when we support additional non-default encoding types.
 		case "Content-Encoding", "Content-Length", "Set-Cookie":
-			headers.Del(k)
+			r.Header.Del(k)
 		}
 	}
-	return headers
+
+	// Also fix the response itself.
+	r.Close = false
+	r.Trailer = nil
+	r.TransferEncoding = nil
 }
 
 // Done returns a channel that closes when shutdown completes or its grace period expires.

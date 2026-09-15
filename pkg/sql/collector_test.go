@@ -277,7 +277,10 @@ func TestCollectorStartNilGuard(t *testing.T) {
 func TestCollectorStart(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "")
+	base, err := config.NewBaseCollector(
+		map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"},
+		"TestCollectorStart", map[string]config.Sender{"": dest.Discard},
+	)
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
@@ -307,7 +310,10 @@ func TestCollectorStart(t *testing.T) {
 func TestCollectorConnectionStringError(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "")
+	base, err := config.NewBaseCollector(
+		map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"},
+		"TestCollectorConnectionStringError", map[string]config.Sender{"": nil},
+	)
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
@@ -385,10 +391,10 @@ func TestScheduleNextQuery(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				base, err := config.NewBaseCollector(map[string]any{
-					"type":     config.CollectorTypeSQL,
-					"schedule": tt.schedule,
-				}, tt.name)
+				base, err := config.NewBaseCollector(
+					map[string]any{"type": config.CollectorTypeSQL, "schedule": tt.schedule},
+					tt.name, map[string]config.Sender{"": nil},
+				)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
 				}
@@ -439,7 +445,6 @@ func TestCollectorExecuteQuery(t *testing.T) {
 	tests := []struct {
 		name    string
 		cfg     map[string]any
-		sender  dest.Sender
 		closeDB bool
 		wantOK  bool
 	}{
@@ -481,23 +486,12 @@ func TestCollectorExecuteQuery(t *testing.T) {
 			wantOK:  false,
 		},
 		{
-			name: "processing_error",
+			name: "happy_path",
 			cfg: map[string]any{
 				"type":       DriverTypeSQLite,
 				"connection": ":memory:",
 				"query":      "SELECT 1",
 			},
-			sender: fakeSender(errors.New("fake sender error")),
-			wantOK: false,
-		},
-		{
-			name: "happy_path_with_dummy_sender",
-			cfg: map[string]any{
-				"type":       DriverTypeSQLite,
-				"connection": ":memory:",
-				"query":      "SELECT 1",
-			},
-			sender: fakeSender(nil),
 			wantOK: true,
 		},
 	}
@@ -509,7 +503,7 @@ func TestCollectorExecuteQuery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("cron.Parse() error: %v", err)
 			}
-			base := &config.BaseCollector{Type: config.CollectorTypeSQL, Schedule: sched, Sender: tt.sender}
+			base := &config.BaseCollector{Type: config.CollectorTypeSQL, Schedule: sched, Sender: dest.Discard}
 			c, err := NewCollector(base, map[string]any{"type": config.CollectorTypeSQL, "sql": tt.cfg})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
@@ -537,12 +531,6 @@ func TestCollectorExecuteQuery(t *testing.T) {
 	}
 }
 
-func fakeSender(err error) dest.Sender {
-	return func(_ context.Context, _ any) error {
-		return err
-	}
-}
-
 func TestProcessResults(t *testing.T) {
 	t.Parallel()
 
@@ -558,7 +546,7 @@ func TestProcessResults(t *testing.T) {
 	}
 	_ = rows.Close() // Close rows immediately so [sql.Rows.Columns] fails.
 
-	if _, err := processResults(t.Context(), rows, nil, 1); err == nil {
+	if _, err := processResults(t.Context(), rows, 1); err == nil {
 		t.Error("processResults() error = nil, wantErr = true")
 	}
 }
@@ -569,28 +557,36 @@ func TestProcessResultsWithFakeDriver(t *testing.T) {
 	registerFakeSQLDriver()
 
 	tests := []struct {
-		name         string
-		dsn          string
-		wantRowCount int
-		wantErr      bool
+		name     string
+		dsn      string
+		wantRows []map[string]any
+		wantErr  bool
 	}{
 		{
-			name:         "multiple_result_sets",
-			dsn:          "noErrors",
-			wantRowCount: 3,
-			wantErr:      false,
+			name: "multiple_result_sets",
+			dsn:  "noErrors",
+			wantRows: []map[string]any{
+				{"col": int64(1)},
+				{"col": int64(2)},
+				{"col": int64(3)},
+			},
+			wantErr: false,
 		},
 		{
-			name:         "row_iteration_error",
-			dsn:          "rowsNextError",
-			wantRowCount: 1,
-			wantErr:      true,
+			name: "row_iteration_error",
+			dsn:  "rowsNextError",
+			wantRows: []map[string]any{
+				{"col": int64(1)},
+			},
+			wantErr: true,
 		},
 		{
-			name:         "row_set_iteration_error",
-			dsn:          "rowsNextResultSetError",
-			wantRowCount: 1,
-			wantErr:      true,
+			name: "row_set_iteration_error",
+			dsn:  "rowsNextResultSetError",
+			wantRows: []map[string]any{
+				{"col": int64(1)},
+			},
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
@@ -609,12 +605,12 @@ func TestProcessResultsWithFakeDriver(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = rows.Close() })
 
-			gotRowCount, gotErr := processResults(t.Context(), rows, nil, 1)
+			gotRows, gotErr := processResults(t.Context(), rows, 1)
 			if (gotErr != nil) != tt.wantErr {
 				t.Fatalf("processResults() error = %v, wantErr = %v", gotErr, tt.wantErr)
 			}
-			if gotRowCount != tt.wantRowCount {
-				t.Errorf("processResults() row count = %d, want %d", gotRowCount, tt.wantRowCount)
+			if !reflect.DeepEqual(gotRows, tt.wantRows) {
+				t.Errorf("processResults() = %+v, want %+v", gotRows, tt.wantRows)
 			}
 		})
 	}
@@ -835,11 +831,10 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 			t.Parallel()
 
 			synctest.Test(t, func(t *testing.T) {
-				base, err := config.NewBaseCollector(map[string]any{
-					"type":              config.CollectorTypeSQL,
-					"schedule":          "@every 1s",
-					"concurrency_limit": tt.limit,
-				}, tt.name)
+				base, err := config.NewBaseCollector(
+					map[string]any{"type": config.CollectorTypeSQL, "schedule": "@every 1s", "concurrency_limit": tt.limit},
+					tt.name, map[string]config.Sender{"": nil},
+				)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
 				}
@@ -848,14 +843,13 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 				unblock := make(chan struct{})
 				var count atomic.Int32
 
-				base.Sender = func(_ context.Context, _ any) error {
+				base.Sender = func(_ context.Context, _ any) {
 					count.Add(1)
 					select {
 					case started <- struct{}{}:
 					default:
 					}
 					<-unblock
-					return nil
 				}
 
 				c, err := NewCollector(base, map[string]any{

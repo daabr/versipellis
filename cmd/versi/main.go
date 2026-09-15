@@ -1,7 +1,8 @@
-// Versipellis is a versatile, scalable tool for transferring and transforming data reliably
-// across diverse media, protocols, and formats, without altering the data itself.
+// Versipellis is a versatile, scalable tool for transferring and transforming data
+// reliably across diverse protocols and formats, without altering the data itself.
 //
-// It is not a data pipeline, but rather a powerful yet easy-to-use conduit for pipeline inputs and outputs.
+// It is not a data pipeline, but rather a powerful yet easy-to-use conduit for
+// pipeline inputs and outputs.
 package main
 
 import (
@@ -39,8 +40,12 @@ func main() {
 
 	initLog(debugLog, structured, info)
 
+	senders, ok := initSenders(cfg)
+	if !ok {
+		os.Exit(1)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	channels, ok := initCollectors(ctx, cfg)
+	channels, ok := initCollectors(ctx, senders, cfg)
 	if !ok {
 		cancel()
 		os.Exit(1)

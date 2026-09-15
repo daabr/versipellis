@@ -10,7 +10,7 @@ Versipellis recognizes the following section **types**. They are all optional, a
 
 - [`Collector`](./config/collector.md)
 - 🚧 **Coming soon:** Receiver
-- 🚧 **Coming soon:** Sender
+- [`Sender`](./config/sender.md)
 
 What does a section "type" mean? Versipellis supports 0 or **more** instances of each section listed above.
 
@@ -18,6 +18,9 @@ What does a section "type" mean? Versipellis supports 0 or **more** instances of
 
   ```toml
   [collector]
+  key = "value"
+
+  [sender.http]
   key = "value"
   ```
 
@@ -32,9 +35,15 @@ What does a section "type" mean? Versipellis supports 0 or **more** instances of
 
   [remus.lupin.collector]
   key = "value 3"
+
+  [larry.sender.http]
+  key = "value 4"
+
+  [remus.lupin.sender.http]
+  key = "value 5"
   ```
 
-- You can also define an "anonymous list" of sections (a.k.a. [TOML array of tables](https://toml.io/en/v1.1.0#array-of-tables)) instead of namespace prefixes, in which sections are named implicitly by their order (e.g., `collector[1]`, `collector[2]`, ...):
+- You can also define an "anonymous list" of sections (a.k.a. [TOML array of tables](https://toml.io/en/v1.1.0#array-of-tables)) instead of namespace prefixes, in which sections are named implicitly by their order (e.g., `collector[1]`, `collector[2]`, `sender.http3[1]`, `sender.http3[2]`, ...):
 
   ```toml
   [[collector]]
@@ -43,6 +52,9 @@ What does a section "type" mean? Versipellis supports 0 or **more** instances of
   [[collector]]
   key = "value B"
 
-  [[collector]]
+  [[sender.http3]]
   key = "value C"
+
+  [[sender.http3]]
+  key = "value D"
   ```
