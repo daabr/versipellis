@@ -279,7 +279,7 @@ func TestCollectorStart(t *testing.T) {
 
 	base, err := config.NewBaseCollector(
 		map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"},
-		"TestCollectorStart", map[string]config.Sender{"": nil},
+		"TestCollectorStart", map[string]config.Sender{"": dest.Discard},
 	)
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
@@ -546,7 +546,7 @@ func TestProcessResults(t *testing.T) {
 	}
 	_ = rows.Close() // Close rows immediately so [sql.Rows.Columns] fails.
 
-	if _, err := processResults(t.Context(), rows, nil, 1); err == nil {
+	if _, err := processResults(t.Context(), rows, 1); err == nil {
 		t.Error("processResults() error = nil, wantErr = true")
 	}
 }
@@ -557,28 +557,36 @@ func TestProcessResultsWithFakeDriver(t *testing.T) {
 	registerFakeSQLDriver()
 
 	tests := []struct {
-		name         string
-		dsn          string
-		wantRowCount int
-		wantErr      bool
+		name     string
+		dsn      string
+		wantRows []map[string]any
+		wantErr  bool
 	}{
 		{
-			name:         "multiple_result_sets",
-			dsn:          "noErrors",
-			wantRowCount: 3,
-			wantErr:      false,
+			name: "multiple_result_sets",
+			dsn:  "noErrors",
+			wantRows: []map[string]any{
+				{"col": int64(1)},
+				{"col": int64(2)},
+				{"col": int64(3)},
+			},
+			wantErr: false,
 		},
 		{
-			name:         "row_iteration_error",
-			dsn:          "rowsNextError",
-			wantRowCount: 1,
-			wantErr:      true,
+			name: "row_iteration_error",
+			dsn:  "rowsNextError",
+			wantRows: []map[string]any{
+				{"col": int64(1)},
+			},
+			wantErr: true,
 		},
 		{
-			name:         "row_set_iteration_error",
-			dsn:          "rowsNextResultSetError",
-			wantRowCount: 1,
-			wantErr:      true,
+			name: "row_set_iteration_error",
+			dsn:  "rowsNextResultSetError",
+			wantRows: []map[string]any{
+				{"col": int64(1)},
+			},
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
@@ -597,12 +605,12 @@ func TestProcessResultsWithFakeDriver(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = rows.Close() })
 
-			gotRowCount, gotErr := processResults(t.Context(), rows, nil, 1)
+			gotRows, gotErr := processResults(t.Context(), rows, 1)
 			if (gotErr != nil) != tt.wantErr {
 				t.Fatalf("processResults() error = %v, wantErr = %v", gotErr, tt.wantErr)
 			}
-			if gotRowCount != tt.wantRowCount {
-				t.Errorf("processResults() row count = %d, want %d", gotRowCount, tt.wantRowCount)
+			if !reflect.DeepEqual(gotRows, tt.wantRows) {
+				t.Errorf("processResults() = %+v, want %+v", gotRows, tt.wantRows)
 			}
 		})
 	}

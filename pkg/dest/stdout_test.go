@@ -41,9 +41,26 @@ func TestStdout(t *testing.T) {
 			want: `{"key":"value","list":[1,2,3],"number":42}` + "\n",
 		},
 		{
+			name: "ndjson",
+			data: []map[string]any{
+				{"key1": "value1"},
+				{"key2": "value2"},
+			},
+			want: `{"key1":"value1"}` + "\n" + `{"key2":"value2"}` + "\n",
+		},
+		{
 			name: "not_json",
 			data: map[string]any{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
 			want: "",                                             // Log this, but don't pollute [os.Stdout] with non-JSON text.
+		},
+		{
+			name: "not_ndjson",
+			data: []map[string]any{
+				{"key1": "value1"},
+				{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
+				{"key1": "value1"},
+			},
+			want: `{"key1":"value1"}` + "\n", // Fail fast.
 		},
 		// After the "not_json" test case, to ensure it doesn't leave [encoder] in a broken state.
 		{

@@ -324,7 +324,7 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	// [Collector.db] and [Collector.pgPool]/[Collector.usingPG] are mutually exclusive,
 	// so if the latter is non-nil we have to use it instead of the former.
 	if c.usingPG {
-		return c.executePostgresQuery(ctx, queryCtx, c.Sender)
+		return c.executePostgresQuery(ctx, queryCtx)
 	}
 
 	tx, err := c.db.BeginTx(queryCtx, &sql.TxOptions{ReadOnly: true})
@@ -346,22 +346,26 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	}
 	defer rows.Close()
 
-	rowCount, err := processResults(ctx, rows, c.Sender, 1)
+	data, err := processResults(ctx, rows, 1)
 	end := time.Now()
+	if c.Sender != nil {
+		c.Sender(ctx, data) // Returns quickly (usually asynchronous internally).
+	}
+
 	ok := err == nil
 	if !ok {
 		slog.Warn("error while processing SQL query results", slog.Any("error", err), slog.String("driver", c.driver),
-			slog.String("name", c.Name), slog.Int("successfully_processed_rows", rowCount),
+			slog.String("name", c.Name), slog.Int("successfully_processed_rows", len(data)),
 		)
 	} else {
 		stats := c.db.Stats()
 		slog.Debug("SQL query execution completed successfully", slog.String("driver", c.driver), slog.String("name", c.Name),
-			slog.Int("rows", rowCount), slog.Time("start_time", start), slog.Duration("duration", end.Sub(start)),
+			slog.Int("rows", len(data)), slog.Time("start_time", start), slog.Duration("duration", end.Sub(start)),
 			slog.Int("in_use_conns", stats.InUse), slog.Int("idle_conns", stats.Idle),
 		)
 	}
 
-	if ok || rowCount > 0 {
+	if ok || len(data) > 0 {
 		c.checkpointMu.Lock()
 		if start.UTC().After(c.prevStart) {
 			c.prevStart = start.UTC()
@@ -372,43 +376,41 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	return ok
 }
 
-func processResults(ctx context.Context, rows *sql.Rows, sender config.Sender, resultSet int) (int, error) {
+// processResults returns partial results even when an error interrupts processing, to prevent data loss.
+func processResults(ctx context.Context, rows *sql.Rows, resultSet int) ([]map[string]any, error) {
 	cols, err := rows.Columns()
 	if err != nil {
-		return 0, fmt.Errorf("failed to read SQL column names in result-set %d: %w", resultSet, err)
+		return nil, fmt.Errorf("failed to read SQL column names in result-set %d: %w", resultSet, err)
 	}
 
-	rowCount := 0
+	scanned := make([]map[string]any, 0)
 	for rows.Next() {
 		if err := ctx.Err(); err != nil {
-			return rowCount, fmt.Errorf("query result processing canceled: %w", err)
+			return scanned, fmt.Errorf("query result processing canceled: %w", err)
 		}
 		row, err := scanRow(rows, cols)
 		if err != nil {
-			return rowCount, fmt.Errorf("failed to scan row %d in result-set %d: %w", rowCount+1, resultSet, err)
+			return scanned, fmt.Errorf("failed to scan row %d in result-set %d: %w", len(scanned)+1, resultSet, err)
 		}
-		if sender != nil {
-			sender(ctx, row) // Returns quickly (usually asynchronous internally).
-		}
-		rowCount++
+		scanned = append(scanned, row)
 	}
 	if err := rows.Err(); err != nil {
-		return rowCount, fmt.Errorf("row iteration error: %w", err)
+		return scanned, fmt.Errorf("row iteration error: %w", err)
 	}
 
 	// Support multiple result-sets for multiple statements, using recursion.
 	if rows.NextResultSet() {
-		nextRowCount, err := processResults(ctx, rows, sender, resultSet+1)
-		rowCount += nextRowCount
+		next, err := processResults(ctx, rows, resultSet+1)
+		scanned = append(scanned, next...)
 		if err != nil {
-			return rowCount, err
+			return scanned, err
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return rowCount, fmt.Errorf("row-set iteration error: %w", err)
+		return scanned, fmt.Errorf("row-set iteration error: %w", err)
 	}
 
-	return rowCount, nil
+	return scanned, nil
 }
 
 func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
@@ -427,6 +429,7 @@ func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
 	for i, col := range cols {
 		row[col] = vals[i]
 	}
+
 	return row, nil
 }
 

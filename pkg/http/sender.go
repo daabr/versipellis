@@ -95,6 +95,8 @@ func NewDestination(cfg map[string]any, name, baseType string) (*Destination, er
 		d.client = clientH2(d.tls.Clone(), defaultMaxHeaderSize, d.timeout, d.transportID)
 	case config.SenderTypeHTTP3:
 		d.client = clientH3(d.tls.Clone(), defaultMaxHeaderSize, d.timeout, d.transportID)
+	default:
+		return nil, fmt.Errorf("unexpected sender type %q", d.Type)
 	}
 
 	return d, nil
@@ -130,42 +132,42 @@ func (d *Destination) Send(ctx context.Context, data any) {
 }
 
 func serializeData(data any, u *url.URL, headers http.Header) ([]byte, error) {
-	switch v := data.(type) {
+	switch t := data.(type) {
 	case []byte:
-		if len(v) == 0 {
+		if len(t) == 0 {
 			return nil, errors.New("no payload to send")
 		}
 		if headers.Get(contentTypeHeader) == "" {
-			headers.Set(contentTypeHeader, http.DetectContentType(v))
+			headers.Set(contentTypeHeader, http.DetectContentType(t))
 		}
-		return v, nil
+		return t, nil
 
 	case *http.Request:
-		if v == nil {
+		if t == nil {
 			return nil, errors.New("cannot forward nil HTTP request")
 		}
-		copyHeaders(v.Header, headers)
-		copyQuery(v.URL, u)
-		if v.Body == nil {
+		copyHeaders(t.Header, headers)
+		copyQuery(t.URL, u)
+		if t.Body == nil {
 			return nil, nil
 		}
-		defer v.Body.Close()
-		body, err := io.ReadAll(v.Body)
+		defer t.Body.Close()
+		body, err := io.ReadAll(t.Body)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read HTTP request body: %w", err)
 		}
 		return body, nil
 
 	case *http.Response:
-		if v == nil {
+		if t == nil {
 			return nil, errors.New("cannot relay nil HTTP response")
 		}
-		copyHeaders(v.Header, headers)
-		if v.Body == nil {
+		copyHeaders(t.Header, headers)
+		if t.Body == nil {
 			return nil, nil
 		}
-		defer v.Body.Close()
-		body, err := io.ReadAll(v.Body)
+		defer t.Body.Close()
+		body, err := io.ReadAll(t.Body)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read HTTP response body: %w", err)
 		}

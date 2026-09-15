@@ -3,6 +3,7 @@ package dest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -41,23 +42,31 @@ func Stdout(_ context.Context, data any) {
 	once.Do(lazyInit)
 
 	var err error
-	switch r := data.(type) {
+	switch t := data.(type) {
 	case *http.Request:
-		if r == nil {
+		if t == nil {
 			return
 		}
-		err = r.Write(writer)
-		if r.Body != nil {
-			_ = r.Body.Close()
+		err = t.Write(writer)
+		if t.Body != nil {
+			_ = t.Body.Close()
 		}
 
 	case *http.Response:
-		if r == nil {
+		if t == nil {
 			return
 		}
-		err = r.Write(writer)
-		if r.Body != nil {
-			_ = r.Body.Close()
+		err = t.Write(writer)
+		if t.Body != nil {
+			_ = t.Body.Close()
+		}
+
+	case []map[string]any:
+		for _, m := range t {
+			err = errors.Join(err, encoder.Encode(m))
+			if err != nil {
+				break
+			}
 		}
 
 	default:

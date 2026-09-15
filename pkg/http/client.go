@@ -141,7 +141,7 @@ func (d *Destination) sendWithRetries(ctx context.Context, u *url.URL, h http.He
 		}
 
 		var retry bool
-		resp, retry = d.sendOnce(context.WithoutCancel(ctx), u, h, payload)
+		resp, retry = d.sendOnce(context.WithoutCancel(ctx), u, h, payload) //nolint:bodyclose // Body already closed.
 		if resp != nil && resp.StatusCode < http.StatusBadRequest {
 			slog.Debug("HTTP request completed successfully",
 				slog.String("name", d.Name), slog.Int("attempt", i+1), slog.String("status", resp.Status),

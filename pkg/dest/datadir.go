@@ -35,22 +35,22 @@ func DeadLetterQueue(_ context.Context, data any) {
 	}
 
 	now := time.Now().UTC()
-	dlqInProgress.Go(func() { asyncWriteToDataDir(data, now) })
-}
-
-func asyncWriteToDataDir(data any, now time.Time) {
 	payload := serializeData(data)
 	if len(payload) == 0 {
 		return
 	}
 
+	dlqInProgress.Go(func() { asyncWriteToDataDir(payload, now) })
+}
+
+func asyncWriteToDataDir(data []byte, now time.Time) {
 	dir, file := uniqueKSortablePath(dataDir, now)
 	path := filepath.Join(dir, file)
 
 	var err error
 	err = os.MkdirAll(dir, dirPermissions)
 	if err == nil {
-		err = os.WriteFile(path, payload, filePermissions)
+		err = os.WriteFile(path, data, filePermissions)
 		if err == nil {
 			return
 		}
@@ -59,33 +59,33 @@ func asyncWriteToDataDir(data any, now time.Time) {
 }
 
 func serializeData(data any) []byte {
-	switch v := data.(type) {
+	switch t := data.(type) {
 	case []byte:
-		return v
+		return t
 
 	case *http.Request:
-		if v == nil {
+		if t == nil {
 			return nil
 		}
-		if v.Body != nil {
-			defer v.Body.Close()
+		if t.Body != nil {
+			defer t.Body.Close()
 		}
 		var buf bytes.Buffer
-		if err := v.Write(&buf); err != nil {
+		if err := t.Write(&buf); err != nil {
 			slog.Error("failed to serialize HTTP request into DLQ file", slog.Any("error", err))
 			return nil
 		}
 		return buf.Bytes()
 
 	case *http.Response:
-		if v == nil {
+		if t == nil {
 			return nil
 		}
-		if v.Body != nil {
-			defer v.Body.Close()
+		if t.Body != nil {
+			defer t.Body.Close()
 		}
 		var buf bytes.Buffer
-		if err := v.Write(&buf); err != nil {
+		if err := t.Write(&buf); err != nil {
 			slog.Error("failed to serialize HTTP response into DLQ file", slog.Any("error", err))
 			return nil
 		}

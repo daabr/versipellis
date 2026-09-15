@@ -8,8 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/daabr/versipellis/pkg/config"
 )
 
 // Defines the minimal interface required for [pgxpool.Pool], for testing purposes.
@@ -48,7 +46,7 @@ func (c *Collector) connectToPostgres(ctx context.Context) error {
 
 // Never called directly, only through [Collector.executeQuery] when the driver is PostgreSQL.
 // This means that these 2 functions do and return the same things, but in a different way.
-func (c *Collector) executePostgresQuery(execCtx, queryCtx context.Context, sender config.Sender) bool {
+func (c *Collector) executePostgresQuery(execCtx, queryCtx context.Context) bool {
 	tx, err := c.pgPool.BeginTx(queryCtx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err),
@@ -67,20 +65,24 @@ func (c *Collector) executePostgresQuery(execCtx, queryCtx context.Context, send
 		return false
 	}
 
-	rowCount, err := processPostgresResults(execCtx, rows, sender)
+	data, err := processPostgresResults(execCtx, rows)
 	end := time.Now()
+	if c.Sender != nil {
+		c.Sender(execCtx, data) // Returns quickly (usually asynchronous internally).
+	}
+
 	ok := err == nil
 	if !ok {
 		slog.Warn("error while processing SQL query results", slog.Any("error", err), slog.String("driver", c.driver),
-			slog.String("name", c.Name), slog.Int("successfully_processed_rows", rowCount),
+			slog.String("name", c.Name), slog.Int("successfully_processed_rows", len(data)),
 		)
 	} else {
 		slog.Debug("SQL query completed successfully", slog.String("driver", c.driver), slog.String("name", c.Name),
-			slog.Int("rows", rowCount), slog.Time("start_time", start), slog.Duration("duration", end.Sub(start)),
+			slog.Int("rows", len(data)), slog.Time("start_time", start), slog.Duration("duration", end.Sub(start)),
 		)
 	}
 
-	if ok || rowCount > 0 {
+	if ok || len(data) > 0 {
 		c.checkpointMu.Lock()
 		if start.UTC().After(c.prevStart) {
 			c.prevStart = start.UTC()
@@ -93,7 +95,7 @@ func (c *Collector) executePostgresQuery(execCtx, queryCtx context.Context, send
 
 // PostgreSQL-specific variant of [processResults]. Using [pgx]
 // instead of [sql] for better performance and PostgreSQL feature support.
-func processPostgresResults(ctx context.Context, rows pgx.Rows, sender config.Sender) (int, error) {
+func processPostgresResults(ctx context.Context, rows pgx.Rows) ([]map[string]any, error) {
 	cols := rows.FieldDescriptions()
 	size := len(cols)
 	vals := make([]any, size)
@@ -102,7 +104,7 @@ func processPostgresResults(ctx context.Context, rows pgx.Rows, sender config.Se
 		ptrs[i] = &vals[i]
 	}
 
-	rowCount := 0
+	scanned := make([]map[string]any, 0)
 	_, err := pgx.ForEachRow(rows, ptrs, func() error { // [pgx.ForEachRow] closes [pgx.Rows] automatically.
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("query result processing canceled: %w", err)
@@ -111,14 +113,12 @@ func processPostgresResults(ctx context.Context, rows pgx.Rows, sender config.Se
 		for i, col := range cols {
 			row[col.Name] = vals[i]
 		}
-		if sender != nil {
-			sender(ctx, row) // Returns quickly (usually asynchronous internally).
-		}
-		rowCount++
+		scanned = append(scanned, row)
 		return nil
 	})
 	if err != nil {
-		return rowCount, fmt.Errorf("row processing error: %w", err)
+		return scanned, fmt.Errorf("row processing error: %w", err)
 	}
-	return rowCount, nil
+
+	return scanned, nil
 }

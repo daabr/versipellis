@@ -19,7 +19,7 @@ var (
 	senderIndexSuffix = regexp.MustCompile(`\[\d+\]$`)
 )
 
-func initSenders(entireCfg map[string]any) map[string]config.Sender {
+func initSenders(entireCfg map[string]any) (map[string]config.Sender, bool) {
 	senders := map[string]config.Sender{
 		"":                       dest.Discard,
 		config.SenderTypeDiscard: dest.Discard,
@@ -29,12 +29,13 @@ func initSenders(entireCfg map[string]any) map[string]config.Sender {
 		config.SenderTypeDLQ:    dest.DeadLetterQueue,
 	}
 	if entireCfg == nil {
-		return senders
+		return senders, true
 	}
 
+	ok := true
 	for name, cfg := range config.ExtractSubSubmaps(entireCfg, "sender", validSenderTypes) {
 		if len(cfg) == 0 {
-			continue // Ignore empty sender configuration sections.
+			continue // Ignore empty sender configuration sections (not an error, just useless).
 		}
 
 		baseType := senderIndexSuffix.ReplaceAllString(name, "")
@@ -52,10 +53,12 @@ func initSenders(entireCfg map[string]any) map[string]config.Sender {
 			slog.Error("failed to initialize sender", slog.Any("error", err),
 				slog.String("name", name), slog.String("type", baseType),
 			)
+			ok = false
 		default:
 			slog.Error("unhandled sender type", slog.String("name", name), slog.String("type", baseType))
+			ok = false
 		}
 	}
 
-	return senders
+	return senders, ok
 }

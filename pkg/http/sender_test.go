@@ -17,69 +17,88 @@ func TestNewDestination(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		cfg     map[string]any
-		wantErr bool
+		name     string
+		cfg      map[string]any
+		baseType string
+		wantErr  bool
 	}{
 		{
-			name:    "nil_config",
-			cfg:     nil,
-			wantErr: true,
+			name:     "nil_config",
+			cfg:      nil,
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
 		},
 		{
-			name:    "missing_url",
-			cfg:     map[string]any{},
-			wantErr: true,
+			name:     "missing_url",
+			cfg:      map[string]any{},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
 		},
 		{
-			name:    "invalid_url",
-			cfg:     map[string]any{"url": "not-a-url"},
-			wantErr: true,
+			name:     "invalid_url",
+			cfg:      map[string]any{"url": "not-a-url"},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
 		},
 		{
-			name:    "invalid_method",
-			cfg:     map[string]any{"url": "https://example.com", "method": "BLAH"},
-			wantErr: true,
+			name:     "invalid_method",
+			cfg:      map[string]any{"url": "https://example.com", "method": "BLAH"},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
 		},
 		{
-			name:    "get_method_not_allowed",
-			cfg:     map[string]any{"url": "https://example.com", "method": "GET"},
-			wantErr: true,
+			name:     "get_method_not_allowed",
+			cfg:      map[string]any{"url": "https://example.com", "method": "GET"},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
 		},
 		{
-			name:    "invalid_query",
-			cfg:     map[string]any{"url": "https://example.com", "query": "invalid"},
-			wantErr: true,
+			name:     "invalid_query",
+			cfg:      map[string]any{"url": "https://example.com", "query": "invalid"},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
 		},
 		{
-			name:    "invalid_headers",
-			cfg:     map[string]any{"url": "https://example.com", "headers": "invalid"},
-			wantErr: true,
+			name:     "invalid_headers",
+			cfg:      map[string]any{"url": "https://example.com", "headers": "invalid"},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
 		},
 		{
-			name:    "http_url_with_tls_config",
-			cfg:     map[string]any{"url": "http://example.com", "tls": map[string]any{"min_version": "1.3"}},
-			wantErr: false, // Warning log.
+			name:     "http_url_with_tls_config",
+			cfg:      map[string]any{"url": "http://example.com", "tls": map[string]any{"min_version": "1.3"}},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  false, // Warning log.
 		},
 		{
-			name:    "invalid_timeout",
-			cfg:     map[string]any{"url": "https://example.com", "timeout": "not-a-duration"},
-			wantErr: true,
+			name:     "invalid_timeout",
+			cfg:      map[string]any{"url": "https://example.com", "timeout": "not-a-duration"},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
 		},
 		{
-			name:    "invalid_retries",
-			cfg:     map[string]any{"url": "https://example.com", "retries": "invalid"},
-			wantErr: true,
+			name:     "invalid_retries",
+			cfg:      map[string]any{"url": "https://example.com", "retries": "invalid"},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
 		},
 		{
-			name:    "invalid_tls",
-			cfg:     map[string]any{"url": "https://example.com", "tls": "invalid"},
-			wantErr: true,
+			name:     "invalid_tls",
+			cfg:      map[string]any{"url": "https://example.com", "tls": "invalid"},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
 		},
 		{
-			name:    "valid_minimal_config",
-			cfg:     map[string]any{"url": "https://example.com/path"},
-			wantErr: false,
+			name:     "unexpected_base_type",
+			cfg:      map[string]any{"url": "https://example.com/path"},
+			baseType: "unexpected_type",
+			wantErr:  true,
+		},
+		{
+			name:     "valid_minimal_config",
+			cfg:      map[string]any{"url": "https://example.com/path"},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  false,
 		},
 		{
 			name: "valid_full_config",
@@ -96,14 +115,15 @@ func TestNewDestination(t *testing.T) {
 					"interval":     "100ms",
 				},
 			},
-			wantErr: false,
+			baseType: config.SenderTypeHTTP,
+			wantErr:  false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, gotErr := NewDestination(tt.cfg, tt.name, config.SenderTypeHTTP)
+			_, gotErr := NewDestination(tt.cfg, tt.name, tt.baseType)
 			if (gotErr != nil) != tt.wantErr {
 				t.Errorf("NewDestination() error = %v, wantErr %v", gotErr, tt.wantErr)
 			}

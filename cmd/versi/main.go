@@ -40,9 +40,10 @@ func main() {
 
 	initLog(debugLog, structured, info)
 
+	senders, ok1 := initSenders(cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	channels, ok := initCollectors(ctx, initSenders(cfg), cfg)
-	if !ok {
+	channels, ok2 := initCollectors(ctx, senders, cfg)
+	if !ok1 || !ok2 {
 		cancel()
 		os.Exit(1)
 	}
