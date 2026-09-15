@@ -1,8 +1,8 @@
 // Versipellis is a versatile, scalable tool for transferring and transforming data
 // reliably across diverse protocols and formats, without altering the data itself.
 //
-// It is not a data pipeline, but rather a powerful yet easy-to-use conduit for
-// pipeline inputs and outputs.
+// It is not a data pipeline, but rather a powerful yet easy-to-use adapter and
+// conduit for pipeline inputs and outputs.
 package main
 
 import (

@@ -20,14 +20,12 @@ This is the high-level plan for features that are expected to be released within
 
 1. Dynamic evaluation of configuration expressions (e.g., secrets management & data checkpointing)
 
-2. Multi-step data collection (using a collector's results to populate another collector's query)
+2. Multi-step data collection (using one collector's results to populate another collector's query)
 
-3. Additional HTTP content encoding options (see #39, #40, #41)
+3. Additional HTTP content encoding options (see issues #39, #40, #41)
 
-   - Automatic decoding of server responses
+   - Automatic decoding of incoming client requests and server responses
    - Configurable encoding of outgoing collector/sender requests
-
-4. Version 1.0
 
 ## 6-12 Months
 
