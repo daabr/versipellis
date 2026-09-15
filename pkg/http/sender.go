@@ -77,7 +77,7 @@ func NewDestination(cfg map[string]any, name, baseType string) (*Destination, er
 	if d.url.Scheme == httpScheme && cfg["tls"] != nil {
 		if m, ok := cfg["tls"].(map[string]any); ok && len(m) > 0 {
 			slog.Warn("TLS config details are ineffective because URL scheme is unencrypted HTTP",
-				slog.String("name", d.Name), slog.String("url", d.url.String()),
+				slog.String("name", d.Name), slog.String("url", d.url.Redacted()),
 			)
 		}
 	}
