@@ -60,7 +60,7 @@ func TestStdout(t *testing.T) {
 				{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
 				{"key1": "value1"},
 			},
-			want: `{"key1":"value1"}` + "\n", // Fail fast.
+			want: `{"key1":"value1"}` + "\n", // Fail on first error.
 		},
 		// After the "not_json" test case, to ensure it doesn't leave [encoder] in a broken state.
 		{
