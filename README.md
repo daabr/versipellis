@@ -14,7 +14,7 @@
 
 Versipellis is a versatile, scalable tool for transferring and transforming data reliably across diverse protocols and formats, without altering the data itself.
 
-It is not a data pipeline, but rather a powerful yet easy-to-use conduit for pipeline inputs and outputs.
+It is not a data pipeline, but rather a powerful yet easy-to-use adapter and conduit for pipeline inputs and outputs.
 
 The primary design principles of this project are: ease of use, efficiency at scale, security, low footprint, and maintainability.
 
@@ -42,9 +42,9 @@ docker run -d --name my-versi-container \
 ```
 
 - Platforms: Linux (amd64/arm64)
-- Volumes / bind mount points:
-  - `/app/config` - for Versipellis `.toml` files, ODBC `.ini` files (instead of `/etc`), Oracle `.ora` files, passwords and certificates, etc.
-  - `/app/data` - for backup storage of runtime input data
+- Volumes / mount points:
+  - `/app/config` - app and database configuration files, TLS certificates
+  - `/app/data` - dead letter queue (data was received but not sent)
 - Already bundled and tested with:
   - Oracle Instant Client
   - unixODBC
@@ -88,7 +88,7 @@ CGO_ENABLED=1 go build -tags=odbc ./cmd/versi && ./versi -h
 - Directions: pull (retrieve from servers)
 - Encryption: none, TLS, mTLS
 - Content encoding: `identity` (none), `gzip`
-- Auth: coming soon!
+- Auth: [coming soon!](./docs/roadmap.md)
 
 ### SQL Input
 
@@ -110,7 +110,7 @@ Supported SQL-based databases:
 ### Zero Config
 
 - Stdout
-- Local filesystem ("dead letter queue")
+- Local filesystem (dead letter queue)
 
 ### HTTP Output
 
