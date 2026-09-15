@@ -68,9 +68,14 @@ func initCollectors(ctx context.Context, senders map[string]config.Sender, entir
 	for range collectors {
 		if res := <-results; res.ok {
 			done = append(done, res.done)
+		} else {
+			abort = true
 		}
 	}
 	close(results)
+	if abort {
+		return nil, false
+	}
 
 	// Temporary: until we add receivers, we require at least one collector in order to run.
 	if len(done) == 0 {
