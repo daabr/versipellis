@@ -44,7 +44,7 @@ docker run -d --name my-versi-container \
 - Platforms: Linux (amd64/arm64)
 - Volumes / mount points:
   - `/app/config` - app and database configuration files, TLS certificates
-  - `/app/data` - dead letter queue (data was received but not sent)
+  - `/app/data` - dead letter queue (data that was received but not sent)
 - Already bundled and tested with:
   - Oracle Instant Client
   - unixODBC
