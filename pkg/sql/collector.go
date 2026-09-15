@@ -348,7 +348,7 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 
 	data, err := processResults(ctx, rows, 1)
 	end := time.Now()
-	if c.Sender != nil {
+	if data != nil && c.Sender != nil {
 		c.Sender(ctx, data) // Returns quickly (usually asynchronous internally).
 	}
 

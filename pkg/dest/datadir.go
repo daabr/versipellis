@@ -61,7 +61,7 @@ func asyncWriteToDataDir(data []byte, now time.Time) {
 func serializeData(data any) []byte {
 	switch t := data.(type) {
 	case []byte:
-		return t
+		return bytes.Clone(t)
 
 	case *http.Request:
 		if t == nil {
