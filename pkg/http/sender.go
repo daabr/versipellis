@@ -121,7 +121,7 @@ func (d *Destination) Send(ctx context.Context, data any) {
 	payload, err := serializeData(data, currentURL, headers)
 	if err != nil {
 		slog.Error("failed to serialize payload for HTTP request", slog.Any("error", err),
-			slog.String("name", d.Name), slog.String("url", currentURL.String()),
+			slog.String("name", d.Name), slog.String("url", currentURL.Redacted()),
 		)
 		return
 	}

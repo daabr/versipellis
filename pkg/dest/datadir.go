@@ -22,6 +22,8 @@ const (
 
 	dirPermissions  = 0o700
 	filePermissions = 0o600
+	fileFlags       = os.O_CREATE | os.O_EXCL | os.O_WRONLY
+	dlqAttempts     = 3
 )
 
 var dlqInProgress sync.WaitGroup // Reminder: expose to main() a time-bounded wait function in a future PR.
@@ -40,22 +42,35 @@ func DeadLetterQueue(_ context.Context, data any) {
 		return
 	}
 
-	dlqInProgress.Go(func() { asyncWriteToDataDir(payload, now) })
+	dlqInProgress.Go(func() {
+		for range dlqAttempts {
+			if asyncWriteToDataDir(payload, now) {
+				return
+			}
+		}
+	})
 }
 
-func asyncWriteToDataDir(data []byte, now time.Time) {
+func asyncWriteToDataDir(data []byte, now time.Time) bool {
 	dir, file := uniqueKSortablePath(dataDir, now)
 	path := filepath.Join(dir, file)
 
-	var err error
-	err = os.MkdirAll(dir, dirPermissions)
+	err := os.MkdirAll(dir, dirPermissions)
 	if err == nil {
-		err = os.WriteFile(path, data, filePermissions)
+		var f *os.File
+		f, err = os.OpenFile(path, fileFlags, filePermissions) //gosec:disable G304: Self-generated path.
 		if err == nil {
-			return
+			defer f.Close()
+			if _, err = f.Write(data); err == nil {
+				if err = f.Sync(); err == nil {
+					return true
+				}
+			}
+			_ = os.Remove(path) // Cleanup in case the file was created but writing to it failed.
 		}
 	}
 	slog.Error("failed to write data to DLQ file", slog.Any("error", err), slog.String("path", path))
+	return false
 }
 
 func serializeData(data any) []byte {
@@ -106,12 +121,18 @@ func serializeData(data any) []byte {
 }
 
 func uniqueKSortablePath(prefix string, now time.Time) (dir, file string) {
-	n, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
-	if err != nil || !n.IsInt64() {
-		n = big.NewInt(0)
-	}
-	suffix := strconv.FormatInt(n.Int64(), 36)
-	file = fmt.Sprintf("%d__%s", now.UnixNano(), suffix)
+	// Intentionally not reusing the 'now' parameter: in case we fail to
+	// generate a random number below, we still have a unique timestamp.
+	n := time.Now().UnixNano()
 
-	return filepath.Join(prefix, now.Format("2006-01-02__15")), file
+	for range dlqAttempts {
+		if r, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt64)); err == nil && r.IsInt64() {
+			n = r.Int64()
+			break
+		}
+	}
+
+	dir = filepath.Join(prefix, now.Format("2006-01-02__15"))
+	file = fmt.Sprintf("%d__%s", now.UnixNano(), strconv.FormatInt(n, 36))
+	return dir, file
 }

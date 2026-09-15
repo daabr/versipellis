@@ -106,7 +106,7 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	if c.url.Scheme == httpScheme && httpCfg["tls"] != nil {
 		if m, ok := httpCfg["tls"].(map[string]any); ok && len(m) > 0 {
 			slog.Warn("TLS config details are ineffective because URL scheme is unencrypted HTTP",
-				slog.String("name", c.Name), slog.String("url", c.url.String()),
+				slog.String("name", c.Name), slog.String("url", c.url.Redacted()),
 			)
 		}
 	}

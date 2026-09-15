@@ -186,7 +186,7 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 	if err != nil {
 		slog.Error("failed to construct HTTP request",
 			slog.Any("error", err), slog.String("name", c.Name),
-			slog.String("method", c.method), slog.String("url", c.url.String()),
+			slog.String("method", c.method), slog.String("url", c.url.Redacted()),
 		)
 		return newErrorResponse(http.StatusInternalServerError), false
 	}
@@ -199,7 +199,7 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 	resp, err := c.client.Do(req)
 	if err != nil {
 		slog.Warn("failed to send HTTP request", slog.Any("error", err), slog.String("name", c.Name),
-			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+			slog.String("host", c.url.Host), slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
 		if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
 			return newErrorResponse(http.StatusGatewayTimeout), true
@@ -235,7 +235,7 @@ func (d *Destination) sendOnce(ctx context.Context, u *url.URL, h http.Header, p
 	if err != nil {
 		slog.Error("failed to construct HTTP request",
 			slog.Any("error", err), slog.String("name", d.Name),
-			slog.String("method", d.method), slog.String("url", u.String()),
+			slog.String("method", d.method), slog.String("url", u.Redacted()),
 		)
 		return newErrorResponse(http.StatusInternalServerError), false
 	}
@@ -249,7 +249,7 @@ func (d *Destination) sendOnce(ctx context.Context, u *url.URL, h http.Header, p
 	resp, err := d.client.Do(req)
 	if err != nil {
 		slog.Warn("failed to send HTTP request", slog.Any("error", err), slog.String("name", d.Name),
-			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+			slog.String("host", d.url.Host), slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
 		if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
 			return newErrorResponse(http.StatusGatewayTimeout), true

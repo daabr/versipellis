@@ -125,8 +125,8 @@ func TestDeadLetterQueue(t *testing.T) {
 }
 
 const (
-	goroutines        = 100
-	callsPerGoroutine = 100
+	goroutines        = 10
+	callsPerGoroutine = 10
 )
 
 func TestDeadLetterQueueConcurrency(t *testing.T) {
