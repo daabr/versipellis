@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -84,10 +85,10 @@ func traverseMap(cfg map[string]any, key, path string, submaps map[string]map[st
 }
 
 // ExtractSubSubmaps extracts all the sub-maps with the given subkeys from the results of [ExtractSubmaps].
-func ExtractSubSubmaps(cfg map[string]any, key string, subkeys []string) map[string]map[string]any {
+func ExtractSubSubmaps(cfg map[string]any, key string, expectedSubkeys []string) map[string]map[string]any {
 	submaps := make(map[string]map[string]any)
 	for path, submap := range ExtractSubmaps(cfg, key) {
-		for _, k := range subkeys {
+		for _, k := range expectedSubkeys {
 			if v, found := submap[k]; found {
 				switch t := v.(type) {
 				case map[string]any:
@@ -99,6 +100,16 @@ func ExtractSubSubmaps(cfg map[string]any, key string, subkeys []string) map[str
 						}
 					}
 				}
+			}
+		}
+		for k, v := range submap {
+			_, isMap := v.(map[string]any)
+			_, isSlice := v.([]any)
+			// Even with huge config files, O(n) key checks are fine.
+			if (isMap || isSlice) && !slices.Contains(expectedSubkeys, k) {
+				// Unlike collectors, it's not necessarily an error if a sender type is unrecognized,
+				// but we still want to inform the user about it in case it's an unintentional typo.
+				slog.Warn(fmt.Sprintf("unrecognized %s type", key), slog.String("path", path), slog.String("type", k))
 			}
 		}
 	}

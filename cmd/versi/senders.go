@@ -19,6 +19,10 @@ var (
 	senderIndexSuffix = regexp.MustCompile(`\[\d+\]$`)
 )
 
+// initSenders initializes all the senders that are defined in the TOML configuration file, and returns
+// a map of their instances. It does not fail fast; it attempts to initialize all of them before aborting
+// if any of them failed. This provides a better experience for first-time users with multiple configuration
+// mistakes, as they get feedback on all issues at once rather than encountering them one by one.
 func initSenders(entireCfg map[string]any) (map[string]config.Sender, bool) {
 	senders := map[string]config.Sender{
 		"":                       dest.Discard,
@@ -45,17 +49,16 @@ func initSenders(entireCfg map[string]any) (map[string]config.Sender, bool) {
 
 		switch baseType {
 		case config.SenderTypeHTTP, config.SenderTypeHTTP3:
-			d, err := http.NewDestination(cfg, name, baseType)
-			if err == nil {
+			if d, err := http.NewDestination(cfg, name, baseType); err == nil {
 				senders[name] = d.Send
-				break // Exit the switch statement.
+			} else {
+				slog.Error("sender initialization error", slog.Any("error", err),
+					slog.String("name", name), slog.String("type", baseType),
+				)
+				ok = false
 			}
-			slog.Error("failed to initialize sender", slog.Any("error", err),
-				slog.String("name", name), slog.String("type", baseType),
-			)
-			ok = false
 		default:
-			slog.Error("unexpected sender type", slog.String("name", name), slog.String("type", baseType))
+			slog.Error("unrecognized sender type", slog.String("name", name), slog.String("type", baseType))
 			ok = false
 		}
 	}

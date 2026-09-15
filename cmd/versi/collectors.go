@@ -22,18 +22,23 @@ type collectorInitResult struct {
 	ok   bool
 }
 
+// initCollectors initializes and starts all the collectors that are defined in the TOML configuration
+// file, and returns their done channels. It does not fail fast; it attempts to initialize all of them
+// before aborting if any of them failed. This provides a better experience for first-time users with multiple
+// configuration mistakes, as they get feedback on all issues at once rather than encountering them one by one.
 func initCollectors(ctx context.Context, senders map[string]config.Sender, entireCfg map[string]any) ([]<-chan struct{}, bool) {
 	var collectors []collector
-	abort := false
+	ok := true
+
 	for name, cfg := range config.ExtractSubmaps(entireCfg, "collector") {
 		if len(cfg) == 0 {
-			continue // Ignore empty collector configuration sections.
+			continue // Ignore empty collector configuration sections (not an error, just useless).
 		}
 
 		base, err := config.NewBaseCollector(cfg, name, senders)
 		if err != nil {
 			slog.Error("failed to create base collector", slog.Any("error", err), slog.String("name", name))
-			abort = true
+			ok = false
 			continue
 		}
 
@@ -44,21 +49,21 @@ func initCollectors(ctx context.Context, senders map[string]config.Sender, entir
 		case config.CollectorTypeSQL:
 			c, err = sql.NewCollector(base, cfg)
 		default:
-			slog.Error("unhandled collector type", slog.String("name", base.Name), slog.String("type", base.Type))
-			abort = true
+			slog.Error("unrecognized collector type", slog.String("name", base.Name), slog.String("type", base.Type))
+			ok = false
 			continue
 		}
 
 		if err != nil {
-			slog.Error("failed to create collector", slog.Any("error", err),
+			slog.Error("collector initialization error", slog.Any("error", err),
 				slog.String("name", base.Name), slog.String("type", base.Type),
 			)
-			abort = true
+			ok = false
 			continue
 		}
 		collectors = append(collectors, c)
 	}
-	if abort {
+	if !ok {
 		return nil, false
 	}
 
@@ -69,11 +74,12 @@ func initCollectors(ctx context.Context, senders map[string]config.Sender, entir
 		if res := <-results; res.ok {
 			done = append(done, res.done)
 		} else {
-			abort = true
+			ok = false
 		}
 	}
+
 	close(results)
-	if abort {
+	if !ok {
 		return nil, false
 	}
 
@@ -86,7 +92,7 @@ func initCollectors(ctx context.Context, senders map[string]config.Sender, entir
 	return done, true
 }
 
-// Start all the collectors concurrently, without overwhelming the system or the data sources.
+// initCollectorsAsync starts all the collectors concurrently, but without overwhelming the system or the data sources.
 func initCollectorsAsync(ctx context.Context, collectors []collector, results chan<- collectorInitResult) {
 	limit := min(runtime.GOMAXPROCS(0), len(collectors))
 	workers := make(chan collector, limit)
