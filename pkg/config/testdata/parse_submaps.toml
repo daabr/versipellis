@@ -60,3 +60,6 @@ name = "xxx.yyy.zzz.sender.http3[2]"
 
 [[xxx.yyy.zzz.sender.http3]]
 name = "xxx.yyy.zzz.sender.http3[3]"
+
+[typo.sender.httttp]
+name = "meh"
