@@ -14,6 +14,7 @@ All types of contributions are encouraged and valued. See the [Table of Contents
 <!-- omit in toc -->
 ## Table of Contents
 
+- [Code of Conduct](#code-of-conduct)
 - [Asking Questions](#asking-questions)
 - [Reporting Issues](#reporting-issues)
 - [Suggesting Enhancements](#suggesting-enhancements)
@@ -24,6 +25,10 @@ All types of contributions are encouraged and valued. See the [Table of Contents
   - [Code Quality](#code-quality)
   - [Style Guide](#style-guide)
   - [Submitting a Pull Request](#submitting-a-pull-request)
+
+## Code of Conduct
+
+This project and everyone participating in it are governed by our [Code of Conduct](./CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to the project maintainers.
 
 ## Asking Questions
 
