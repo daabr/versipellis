@@ -55,7 +55,7 @@ func initSenders(entireCfg map[string]any) (map[string]config.Sender, bool) {
 			)
 			ok = false
 		default:
-			slog.Error("unhandled sender type", slog.String("name", name), slog.String("type", baseType))
+			slog.Error("unexpected sender type", slog.String("name", name), slog.String("type", baseType))
 			ok = false
 		}
 	}
