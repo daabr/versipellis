@@ -22,16 +22,18 @@ type collectorInitResult struct {
 	ok   bool
 }
 
-func initCollectors(ctx context.Context, entireCfg map[string]any) ([]<-chan struct{}, bool) {
+func initCollectors(ctx context.Context, senders map[string]config.Sender, entireCfg map[string]any) ([]<-chan struct{}, bool) {
 	var collectors []collector
-	for namespace, cfg := range config.ExtractSubmaps(entireCfg, "collector") {
+	abort := false
+	for name, cfg := range config.ExtractSubmaps(entireCfg, "collector") {
 		if len(cfg) == 0 {
 			continue // Ignore empty collector configuration sections.
 		}
 
-		base, err := config.NewBaseCollector(cfg, namespace)
+		base, err := config.NewBaseCollector(cfg, name, senders)
 		if err != nil {
-			slog.Error("failed to create base collector", slog.Any("error", err), slog.String("name", namespace))
+			slog.Error("failed to create base collector", slog.Any("error", err), slog.String("name", name))
+			abort = true
 			continue
 		}
 
@@ -43,6 +45,7 @@ func initCollectors(ctx context.Context, entireCfg map[string]any) ([]<-chan str
 			c, err = sql.NewCollector(base, cfg)
 		default:
 			slog.Error("unhandled collector type", slog.String("name", base.Name), slog.String("type", base.Type))
+			abort = true
 			continue
 		}
 
@@ -50,9 +53,13 @@ func initCollectors(ctx context.Context, entireCfg map[string]any) ([]<-chan str
 			slog.Error("failed to create collector", slog.Any("error", err),
 				slog.String("name", base.Name), slog.String("type", base.Type),
 			)
+			abort = true
 			continue
 		}
 		collectors = append(collectors, c)
+	}
+	if abort {
+		return nil, false
 	}
 
 	results := make(chan collectorInitResult, len(collectors))

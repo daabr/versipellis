@@ -1,10 +1,14 @@
 package config_test
 
 import (
+	"bytes"
+	_ "embed"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2"
 
 	"github.com/daabr/versipellis/pkg/config"
 )
@@ -113,7 +117,7 @@ func TestExtractSubmaps(t *testing.T) {
 			},
 			key: "target",
 			want: map[string]map[string]any{
-				"": {
+				"target": {
 					"key": "value",
 				},
 			},
@@ -129,7 +133,7 @@ func TestExtractSubmaps(t *testing.T) {
 			},
 			key: "target",
 			want: map[string]map[string]any{
-				"level1": {
+				"level1.target": {
 					"key": "value",
 				},
 			},
@@ -147,7 +151,7 @@ func TestExtractSubmaps(t *testing.T) {
 			},
 			key: "target",
 			want: map[string]map[string]any{
-				"level1.level2": {
+				"level1.level2.target": {
 					"key": "value",
 				},
 			},
@@ -166,10 +170,10 @@ func TestExtractSubmaps(t *testing.T) {
 			},
 			key: "target",
 			want: map[string]map[string]any{
-				"[1]": {
+				"target[1]": {
 					"key": "value1",
 				},
-				"[2]": {
+				"target[2]": {
 					"key": "value2",
 				},
 			},
@@ -192,10 +196,10 @@ func TestExtractSubmaps(t *testing.T) {
 			},
 			key: "target",
 			want: map[string]map[string]any{
-				"level1.level2[1]": {
+				"level1.level2.target[1]": {
 					"key": "value1",
 				},
-				"level1.level2[2]": {
+				"level1.level2.target[2]": {
 					"key": "value2",
 				},
 			},
@@ -219,7 +223,7 @@ func TestExtractSubmaps(t *testing.T) {
 			},
 			key: "target",
 			want: map[string]map[string]any{
-				"level1[3].level2": {
+				"level1[3].level2.target": {
 					"key": "value",
 				},
 			},
@@ -265,19 +269,19 @@ func TestExtractSubmaps(t *testing.T) {
 			},
 			key: "target",
 			want: map[string]map[string]any{
-				"level1": {
+				"level1.target": {
 					"key1": "value1",
 				},
-				"level2": {
+				"level2.target": {
 					"key2": "value2",
 				},
-				"level5.level6": {
+				"level5.level6.target": {
 					"key4": "value4",
 				},
-				"[1]": {
+				"target[1]": {
 					"key5": "value5",
 				},
-				"[4]": {
+				"target[4]": {
 					"key6": "value6",
 				},
 			},
@@ -292,6 +296,48 @@ func TestExtractSubmaps(t *testing.T) {
 				t.Errorf("ExtractSubmaps() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+//go:embed testdata/parse_submaps.toml
+var parseSubmaps []byte
+
+func TestExtractSubSubmaps(t *testing.T) {
+	t.Parallel()
+
+	var cfg map[string]any
+	r := bytes.NewReader(parseSubmaps)
+	if err := toml.NewDecoder(r).Decode(&cfg); err != nil {
+		t.Fatalf("failed to decode TOML test file: %v", err)
+	}
+
+	cfgs := config.ExtractSubmaps(cfg, "collector")
+	if len(cfgs) != 6 {
+		t.Errorf("ExtractSubmaps(): got %d collector submaps, want %d", len(cfgs), 6)
+	}
+
+	for gotName, cfg := range cfgs {
+		wantName, ok := cfg["name"].(string)
+		if !ok {
+			t.Errorf("ExtractSubmaps(): missing %q field in collector config %q", "name", gotName)
+		} else if gotName != wantName {
+			t.Errorf("ExtractSubmaps(): collector name mismatch: got %q, want %q", gotName, wantName)
+		}
+	}
+
+	validSenderTypes := []string{config.SenderTypeHTTP, config.SenderTypeHTTP3}
+	cfgs = config.ExtractSubSubmaps(cfg, "sender", validSenderTypes)
+	if len(cfgs) != 12 {
+		t.Errorf("ExtractSubSubmaps(): got %d sender submaps, want %d", len(cfgs), 12)
+	}
+
+	for gotName, cfg := range cfgs {
+		wantName, ok := cfg["name"].(string)
+		if !ok {
+			t.Errorf("ExtractSubSubmaps(): missing %q field in sender config %q", "name", gotName)
+		} else if gotName != wantName {
+			t.Errorf("ExtractSubSubmaps(): sender name mismatch: got %q, want %q", gotName, wantName)
+		}
 	}
 }
 
@@ -441,7 +487,7 @@ func TestConcurrencyLimit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			base, err := config.NewBaseCollector(tt.cfg, tt.name)
+			base, err := config.NewBaseCollector(tt.cfg, tt.name, map[string]config.Sender{"": nil})
 			if err != nil {
 				t.Fatalf("NewBaseCollector() error = %v", err)
 			}

@@ -46,7 +46,7 @@ func loadClientTLSConfig(rawCfg any, httpVer string) (*tls.Config, string, error
 		return nil, "", err
 	}
 	t.InsecureSkipVerify = parseTLSDontVerifyForClients(cfg)
-	_, _ = fmt.Fprintf(hash, "client\x00%d\x00%t\x00", t.MinVersion, t.InsecureSkipVerify)
+	_, _ = fmt.Fprintf(hash, "%d\x00%t\x00", t.MinVersion, t.InsecureSkipVerify)
 
 	// Optional TLS server CA certificate.
 	var raw []byte

@@ -1,0 +1,62 @@
+[collector]
+name = "collector"
+
+[abc]
+name = "meh"
+
+[abc.blah]
+name = "meh"
+
+[abc.collector]
+name = "abc.collector"
+
+[abc.def.collector]
+name = "abc.def.collector"
+
+[sender.http]
+name = "sender.http"
+
+[sender.http3]
+name = "sender.http3"
+
+[abc.sender.http]
+name = "abc.sender.http"
+
+[abc.sender.http3]
+name = "abc.sender.http3"
+
+[abc.sender.blah]
+name = "meh"
+
+[abc.def.sender.http]
+name = "abc.def.sender.http"
+
+[abc.def.sender.http3]
+name = "abc.def.sender.http3"
+
+[[xxx.yyy.zzz.collector]]
+name = "xxx.yyy.zzz.collector[1]"
+
+[[xxx.yyy.zzz.collector]]
+name = "xxx.yyy.zzz.collector[2]"
+
+[[xxx.yyy.zzz.collector]]
+name = "xxx.yyy.zzz.collector[3]"
+
+[[xxx.yyy.zzz.sender.http]]
+name = "xxx.yyy.zzz.sender.http[1]"
+
+[[xxx.yyy.zzz.sender.http]]
+name = "xxx.yyy.zzz.sender.http[2]"
+
+[[xxx.yyy.zzz.sender.http]]
+name = "xxx.yyy.zzz.sender.http[3]"
+
+[[xxx.yyy.zzz.sender.http3]]
+name = "xxx.yyy.zzz.sender.http3[1]"
+
+[[xxx.yyy.zzz.sender.http3]]
+name = "xxx.yyy.zzz.sender.http3[2]"
+
+[[xxx.yyy.zzz.sender.http3]]
+name = "xxx.yyy.zzz.sender.http3[3]"

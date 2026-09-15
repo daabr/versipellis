@@ -10,10 +10,13 @@
 [![Codecov](https://codecov.io/gh/daabr/versipellis/graph/badge.svg?token=IZFQXL47EM)](https://codecov.io/gh/daabr/versipellis)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14316/badge)](https://www.bestpractices.dev/projects/14316)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/daabr/versipellis/badge)](https://scorecard.dev/viewer/?uri=github.com/daabr/versipellis)
+[![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
 
-Versipellis is a versatile, scalable tool for transferring and transforming data reliably across diverse media, protocols, and formats, without altering the data itself.
+Versipellis is a versatile, scalable tool for transferring and transforming data reliably across diverse protocols and formats, without altering the data itself.
 
 It is not a data pipeline, but rather a powerful yet easy-to-use conduit for pipeline inputs and outputs.
+
+The primary design principles of this project are: ease of use, efficiency at scale, security, low footprint, and maintainability.
 
 In other words: ["Let's take all this data, and push it somewhere else."](https://knowyourmeme.com/memes/push-it-somewhere-else-patrick)
 
@@ -85,6 +88,7 @@ CGO_ENABLED=1 go build -tags=odbc ./cmd/versi && ./versi -h
 - Directions: pull (retrieve from servers)
 - Encryption: none, TLS, mTLS
 - Content encoding: `identity` (none), `gzip`
+- Auth: coming soon!
 
 ### SQL Input
 
@@ -106,3 +110,9 @@ Supported SQL-based databases:
 ### Zero Config
 
 - Stdout
+- Local filesystem ("dead letter queue")
+
+### HTTP Output
+
+- Directions: push (send to servers)
+- Everything else is the same as [HTTP input](#http-input) above

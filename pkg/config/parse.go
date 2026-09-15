@@ -42,15 +42,15 @@ func ParseFile(path string) (map[string]any, error) {
 }
 
 // ExtractSubmaps extracts all the sub-maps with the given key from the given configuration map.
-// The returned map has the full path to the sub-map as the key (without the leaf) and the sub-map
-// itself as the value. Note that this function does not recurse within already-matched sub-maps.
+// The returned map has the full path to the sub-map as the key and the sub-map itself as
+// the value. Note that this function does not recurse within already-matched sub-maps.
 func ExtractSubmaps(cfg map[string]any, key string) map[string]map[string]any {
 	submaps := make(map[string]map[string]any)
-	traverseMap(cfg, key, []string{}, submaps)
+	traverseMap(cfg, key, "root", submaps)
 	return submaps
 }
 
-func traverseMap(cfg map[string]any, key string, path []string, submaps map[string]map[string]any) {
+func traverseMap(cfg map[string]any, key, path string, submaps map[string]map[string]any) {
 	if cfg == nil {
 		return
 	}
@@ -59,11 +59,11 @@ func traverseMap(cfg map[string]any, key string, path []string, submaps map[stri
 		if k == key {
 			switch t := v.(type) {
 			case map[string]any:
-				submaps[strings.Join(path, ".")] = t
+				submaps[strings.TrimPrefix(fmt.Sprintf("%s.%s", path, k), "root.")] = t
 			case []any:
 				for i, e := range t {
 					if m, ok := e.(map[string]any); ok {
-						submaps[fmt.Sprintf("%s[%d]", strings.Join(path, "."), i+1)] = m
+						submaps[strings.TrimPrefix(fmt.Sprintf("%s.%s[%d]", path, k, i+1), "root.")] = m
 					}
 				}
 			}
@@ -72,15 +72,37 @@ func traverseMap(cfg map[string]any, key string, path []string, submaps map[stri
 
 		switch t := v.(type) {
 		case map[string]any:
-			traverseMap(t, key, append(path, k), submaps)
+			traverseMap(t, key, fmt.Sprintf("%s.%s", path, k), submaps)
 		case []any:
 			for i, e := range t {
 				if m, ok := e.(map[string]any); ok {
-					traverseMap(m, key, append(path, fmt.Sprintf("%s[%d]", k, i+1)), submaps)
+					traverseMap(m, key, fmt.Sprintf("%s.%s[%d]", path, k, i+1), submaps)
 				}
 			}
 		}
 	}
+}
+
+// ExtractSubSubmaps extracts all the sub-maps with the given subkeys from the results of [ExtractSubmaps].
+func ExtractSubSubmaps(cfg map[string]any, key string, subkeys []string) map[string]map[string]any {
+	submaps := make(map[string]map[string]any)
+	for path, submap := range ExtractSubmaps(cfg, key) {
+		for _, k := range subkeys {
+			if v, found := submap[k]; found {
+				switch t := v.(type) {
+				case map[string]any:
+					submaps[fmt.Sprintf("%s.%s", path, k)] = t
+				case []any:
+					for i, e := range t {
+						if m, ok := e.(map[string]any); ok {
+							submaps[fmt.Sprintf("%s.%s[%d]", path, k, i+1)] = m
+						}
+					}
+				}
+			}
+		}
+	}
+	return submaps
 }
 
 // Value retrieves a generic value with the given key from the given TOML-based configuration map.

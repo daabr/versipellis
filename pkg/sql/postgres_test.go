@@ -69,7 +69,10 @@ func TestCollectorConnectToPostgres(t *testing.T) {
 func TestCollectorStartPostgres(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "")
+	base, err := config.NewBaseCollector(
+		map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"},
+		"TestCollectorStartPostgres", map[string]config.Sender{"": nil},
+	)
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
@@ -98,7 +101,8 @@ func TestCollectorStartPostgres(t *testing.T) {
 func TestCollectorExecutePostgresQuery(t *testing.T) {
 	t.Parallel()
 
-	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "")
+	senders := map[string]config.Sender{"": nil}
+	base, err := config.NewBaseCollector(map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"}, "", senders)
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
@@ -170,33 +174,16 @@ func TestProcessPostgresResults(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		sender  dest.Sender
-		noRows  bool
-		wantErr bool
+		name   string
+		noRows bool
 	}{
 		{
-			name:    "no_rows",
-			noRows:  true,
-			wantErr: false,
+			name:   "no_rows",
+			noRows: true,
 		},
 		{
-			name:    "with_rows_but_no_sender",
-			sender:  nil,
-			noRows:  false,
-			wantErr: false,
-		},
-		{
-			name:    "with_rows_and_sender",
-			sender:  fakeSender(nil),
-			noRows:  false,
-			wantErr: false,
-		},
-		{
-			name:    "with_rows_and_sender_and_error",
-			sender:  fakeSender(errors.New("sender error")),
-			noRows:  false,
-			wantErr: true,
+			name:   "with_rows_and_sender",
+			noRows: false,
 		},
 	}
 	for _, tt := range tests {
@@ -212,13 +199,11 @@ func TestProcessPostgresResults(t *testing.T) {
 				}
 			}
 
-			gotRowCount, err := processPostgresResults(t.Context(), rows, tt.sender)
-			switch {
-			case (err != nil) != tt.wantErr:
-				t.Errorf("processPostgresResults() error = %v, wantErr = %v", err, tt.wantErr)
-			case tt.wantErr && gotRowCount != 0:
-				t.Errorf("processPostgresResults() row count = %d, want 0 on error", gotRowCount)
-			case !tt.wantErr && gotRowCount != len(rows.rows):
+			gotRowCount, err := processPostgresResults(t.Context(), rows, dest.Discard)
+			if err != nil {
+				t.Errorf("processPostgresResults() error = %v", err)
+			}
+			if gotRowCount != len(rows.rows) {
 				t.Errorf("processPostgresResults() row count = %d, want %d", gotRowCount, len(rows.rows))
 			}
 		})

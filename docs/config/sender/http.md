@@ -1,19 +1,18 @@
 # Versipellis Configuration Reference
 
-## `[collector.http3]` Sub-Section
+## `[sender.http]` Sub-Section
 
-`url` - server address, in the form `"https://host[:port][/path][?query]"`
+`url` - server address, in the form `"http[s]://host[:port][/path][?query]"`
 
 - Required
-- HTTP/3 does not support insecure HTTP without TLS
 - If the host is an IPv6 address, it must be enclosed in square brackets, e.g., `[fe80::1]`
 - Query parameters may be specified here as a suffix (e.g., `?param1=value1&param2=value2`), but it's recommended to specify them in `query` (see the notes there)
 
-`method` - HTTP request method, a.k.a. verb, for retrieving data
+`method` - HTTP request method, a.k.a. verb, for sending data
 
 - Optional
-- Default: `"GET"`
-- Options (case insensitive): `"GET"`, `"PATCH"`, `"POST"`, `"PUT"`
+- Default: `"POST"`
+- Options (case insensitive): `"PATCH"`, `"POST"`, `"PUT"`
 
 `query` - HTTP query parameters
 
@@ -24,13 +23,13 @@
 - The TOML file format supports multiple representation options for key-value pairs:
 
   ```toml
-  [collector.http3]
+  [sender.http]
   # ...
   query = { param1 = "value1", param2 = "value2" }
   ```
 
   ```toml
-  [collector.http3]
+  [sender.http]
   # ...
   query = {
       param1 = "value1",
@@ -39,17 +38,17 @@
   ```
 
   ```toml
-  [collector.http3]
+  [sender.http]
   # ...
   query.param1 = "value1"
   query.param2 = "value2"
   ```
 
   ```toml
-  [collector.http3]
+  [sender.http]
   # ...
 
-  [collector.http3.query]
+  [sender.http.query]
   param1 = "value1"
   param2 = "value2"
   ```
@@ -66,13 +65,13 @@
 - The TOML file format supports multiple representation options for key-value pairs:
 
   ```toml
-  [collector.http3]
+  [sender.http]
   # ...
   headers = { header1 = "value1", header2 = "value2" }
   ```
 
   ```toml
-  [collector.http3]
+  [sender.http]
   # ...
   headers = {
       header1 = "value1",
@@ -81,44 +80,20 @@
   ```
 
   ```toml
-  [collector.http3]
+  [sender.http]
   # ...
   headers.header1 = "value1"
   headers.header2 = "value2"
   ```
 
   ```toml
-  [collector.http3]
+  [sender.http]
   # ...
 
-  [collector.http3.headers]
+  [sender.http.headers]
   header1 = "value1"
   header2 = "value2"
   ```
-
-`body` or `body_file` - HTTP request body
-
-- Optional
-- Not allowed when `method = "GET"`
-- Use at most one of them, not both (they're mutually exclusive):
-  - Inline - usually when the content is small and simple
-  - Relative or absolute path to a file (e.g., `"config/body.json"` or `"/path/body.xml"`) - when it's large, complex, or sensitive
-
-`max_body_size` - maximum byte size of server response bodies
-
-- Optional
-- Default: `10485760` (10,485,760 bytes = 10 MiB)
-- Valid range: any positive integer up to `1073741824` (1 GiB)
-- `0` and negative integers are normalized to the default
-- Integers greater than the maximum are normalized to the maximum
-
-`max_headers_size` - maximum byte size of server response headers (as a whole, not each key-value pair)
-
-- Optional
-- Default: `10485760` (10,485,760 bytes = 10 MiB)
-- Valid range: any positive integer up to `1073741824` (1 GiB)
-- `0` and negative integers are normalized to the default
-- Integers greater than the maximum are normalized to the maximum
 
 `timeout` - maximum duration of time for each HTTP client request to complete
 
@@ -127,10 +102,10 @@
 - Format: string containing decimal numbers, each with a unit suffix, e.g., `h` (hours), `m` (minutes), and `s` (seconds)
 - Special case: `"0"` and negative values (e.g., `"-1s"`) = no client-side timeout
 
-## `[collector.http3.tls]` Sub-Section
+## `[sender.http.tls]` Sub-Section
 
 [See this page](../tls.md)
 
-## `[collector.http3.retries]` Sub-Section
+## `[sender.http.retries]` Sub-Section
 
 [See this page](../retries.md)

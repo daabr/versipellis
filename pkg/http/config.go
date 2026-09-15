@@ -1,0 +1,117 @@
+package http
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"golang.org/x/net/http/httpguts"
+
+	"github.com/daabr/versipellis/pkg/config"
+)
+
+const (
+	httpScheme  = "http"
+	httpsScheme = "https"
+)
+
+func parseURL(rawURL, protoVer, role string) (*url.URL, error) {
+	if rawURL == "" {
+		return nil, fmt.Errorf("HTTP %s URL must be specified", role)
+	}
+
+	u, err := url.Parse(rawURL)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("invalid HTTP %s URL: %w", role, err)
+	case !u.IsAbs():
+		return nil, fmt.Errorf("HTTP %s URL must be absolute (start with a scheme)", role)
+	}
+
+	u.Scheme = strings.ToLower(u.Scheme)
+	switch {
+	case u.Scheme != httpsScheme && (protoVer == config.CollectorTypeHTTP3 || protoVer == config.SenderTypeHTTP3):
+		return nil, fmt.Errorf("HTTP %s URL must have an HTTPS scheme for HTTP/3", role)
+	case u.Scheme != httpsScheme && u.Scheme != httpScheme:
+		return nil, fmt.Errorf("HTTP %s URL must have an HTTP/S scheme", role)
+	case u.Opaque != "":
+		return nil, fmt.Errorf(`HTTP %s URL must have "//" after the "%s:" scheme`, role, u.Scheme)
+	case u.Hostname() == "":
+		return nil, fmt.Errorf("HTTP %s URL must have a host address", role)
+	case u.Port() != "":
+		// [url.Parse] returns an error for negative and non-numeric values, but not out-of-range numbers.
+		if port, err := strconv.Atoi(u.Port()); err != nil || port < 1 || port > 65535 {
+			return nil, fmt.Errorf("HTTP %s URL has an invalid port number: %q", role, u.Port())
+		}
+	}
+
+	return u, nil
+}
+
+func parseMethod(rawMethod, action string) (string, error) {
+	switch m := strings.ToUpper(rawMethod); m {
+	case http.MethodGet, http.MethodPatch, http.MethodPost, http.MethodPut:
+		return m, nil
+	case http.MethodConnect, http.MethodDelete, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return "", fmt.Errorf("HTTP method %q not supported for data %s", m, action)
+	default:
+		return "", fmt.Errorf("invalid HTTP method %q", rawMethod)
+	}
+}
+
+// parseQuery adds "query" key-value pairs (if there are any) to the URL's query.
+// It overrides any existing parameters from the original URL with the same name,
+// and returns an error if the type of any configured value isn't a string.
+func parseQuery(u *url.URL, rawCfg any, role string) error {
+	if rawCfg == nil {
+		return nil
+	}
+	cfg, ok := rawCfg.(map[string]any)
+	if !ok {
+		return fmt.Errorf(`HTTP %s "query" must be a table of string key-value pairs, got %T`, role, rawCfg)
+	}
+	if len(cfg) == 0 {
+		return nil
+	}
+
+	values := u.Query()
+	for key, rawValue := range cfg {
+		if v, ok := rawValue.(string); ok {
+			values.Set(key, v)
+			continue
+		}
+		return fmt.Errorf("query parameter %q must be a string, got %T", key, rawValue)
+	}
+
+	u.RawQuery = values.Encode()
+	return nil
+}
+
+func parseHeaders(rawCfg any, role string) (http.Header, error) {
+	if rawCfg == nil {
+		return make(http.Header), nil
+	}
+	cfg, ok := rawCfg.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf(`HTTP %s "headers" must be a table of string key-value pairs, got %T`, role, rawCfg)
+	}
+
+	headers := make(http.Header, len(cfg))
+	for key, value := range cfg {
+		if !httpguts.ValidHeaderFieldName(key) {
+			return nil, fmt.Errorf("invalid HTTP header name %q", key)
+		}
+		v, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("HTTP header value for %q must be a string, got %T", key, value)
+		}
+		if !httpguts.ValidHeaderFieldValue(v) {
+			return nil, fmt.Errorf("invalid HTTP header value for %q", key)
+		}
+		headers.Set(key, v)
+	}
+
+	return headers, nil
+}

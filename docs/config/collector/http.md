@@ -128,8 +128,8 @@
 
 ## `[collector.http.tls]` Sub-Section
 
-[See this dedicated page](../tls.md).
+[See this page](../tls.md)
 
 ## `[collector.http.retries]` Sub-Section
 
-[See this dedicated page](../retries.md).
+[See this page](../retries.md)

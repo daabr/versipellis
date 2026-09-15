@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/daabr/versipellis/pkg/cron"
-	"github.com/daabr/versipellis/pkg/dest"
 )
 
 // CollectorType* constants represent all the available types of "collector" configurations in the TOML file.
@@ -35,22 +34,22 @@ type BaseCollector struct {
 	Concurrency int
 
 	Destination string
-	Sender      dest.Sender
+	Sender      Sender
 }
 
 // NewBaseCollector creates a new [BaseCollector] from the given configuration, which was read
 // from a TOML file. It checks the details and returns an error if any of them is invalid.
-func NewBaseCollector(cfg map[string]any, namespace string) (*BaseCollector, error) {
+func NewBaseCollector(cfg map[string]any, name string, senders map[string]Sender) (*BaseCollector, error) {
 	c := &BaseCollector{
 		Type:        strings.ToLower(strings.TrimSpace(Value(cfg, "type", ""))),
-		Name:        namespace,
+		Name:        name,
 		Cronspec:    Value(cfg, "schedule", ""),
 		Trigger:     Value(cfg, "trigger", ""),
-		Concurrency: concurrencyLimit(cfg, namespace),
-		Destination: strings.ToLower(strings.TrimSpace(Value(cfg, "destination", ""))),
+		Concurrency: concurrencyLimit(cfg, name),
+		Destination: strings.TrimSpace(Value(cfg, "destination", "")), // Attention: case sensitive!
 	}
 	var senderFound bool
-	c.Sender, senderFound = dest.Senders[c.Destination]
+	c.Sender, senderFound = senders[c.Destination]
 
 	switch {
 	case c.Type == "":
@@ -67,15 +66,15 @@ func NewBaseCollector(cfg map[string]any, namespace string) (*BaseCollector, err
 		return nil, errors.New("collector configuration must have either a schedule or a trigger")
 	}
 
-	tz, name := LoadLocation(Value(cfg, "timezone", "UTC"))
+	tz, label := LoadLocation(Value(cfg, "timezone", "UTC"))
 	if tz == nil {
-		return nil, fmt.Errorf("invalid time zone %q", name)
+		return nil, fmt.Errorf("invalid time zone %q", label)
 	}
 	sched, err := cron.Parse(c.Cronspec, tz)
 	if err != nil {
 		return nil, fmt.Errorf("invalid expression in collector schedule: %w", err)
 	}
-	c.Cronspec = fmt.Sprintf("TZ=%s %s", name, c.Cronspec)
+	c.Cronspec = fmt.Sprintf("TZ=%s %s", label, c.Cronspec)
 	if !sched.RunsOnlyOnce() && sched.Next(time.Now()).IsZero() {
 		return nil, fmt.Errorf("collector schedule %q will never run", c.Cronspec)
 	}
