@@ -2,9 +2,9 @@
 
 ## SQL Data Collection
 
-1. [Demo with SQLite](./tutorials/sql_1.md)
+1. [Demo with SQLite](./sql_1.md)
 
-2. [Basic connection setup with real databases](./tutorials/sql_2.md)
+2. [Basic connection setup with real databases](./sql_2.md)
 
 3. 🚧 **Coming soon:** Secure connection setup with real databases (auth and TLS)
 
