@@ -49,12 +49,12 @@
 
 ## `[collector.http]` (HTTP/1.1 + HTTP/2) Sub-Section
 
-[See this page](./collector/http.md)
+[See this page](./http.md)
 
 ## `[collector.http3]` Sub-Section
 
-[See this page](./collector/http3.md)
+[See this page](./http3.md)
 
 ## `[collector.sql]` Sub-Section
 
-[See this page](./collector/sql.md)
+[See this page](./sql.md)

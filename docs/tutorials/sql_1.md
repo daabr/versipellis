@@ -2,11 +2,11 @@
 
 This demo shows how to use Versipellis to export or replicate data from SQL-based databases.
 
-To explore more configuration options and details in-depth, see the [configuration reference](../config.md), and in particular the [SQL page](../config/sql.md).
+To explore more configuration options and details in-depth, see the [configuration reference](../config/README.md), and in particular the [SQL page](../config/collector/sql.md).
 
 ## Run Versipellis
 
-We will be using this TOML configuration from Versipellis's sample file [`config/sql_queries.toml`](../../config/sql_queries.toml):
+We will be using this TOML configuration from Versipellis's sample file [`config/sql_queries.toml`](https://github.com/daabr/versipellis/blob/main/config/sql_queries.toml):
 
 ```toml
 [collector]
@@ -40,7 +40,7 @@ INF starting to execute SQL queries driver=sqlite schedule="TZ=UTC @every 5s"
 ```
 
 > [!TIP]
-> Performance tip: SQL data collectors manage a connection pool with each configured database when they start. These pools are already efficient by default, but they also support additional tuning options tailored to your specific needs - see the [configuration reference](../config.md).
+> Performance tip: SQL data collectors manage a connection pool with each configured database when they start. These pools are already efficient by default, but they also support additional tuning options tailored to your specific needs - see the [configuration reference](../config/README.md).
 
 Our example query (`query = "SELECT ..."`) uses an in-memory instance (`connection = "file::memory:"`) of the SQLite database (`type = "SQLite"`).
 
@@ -52,7 +52,7 @@ For the sake of simplicity, this query doesn't actually read data from a table, 
 ```
 
 > [!TIP]
-> While NDJSON is a convenient default for demos and testing, Versipellis also supports other formats for advanced datasets that require a schema, or huge datasets which would benefit from binary compression and resource efficiency - see the [configuration reference](../config.md).
+> While NDJSON is a convenient default for demos and testing, Versipellis also supports other formats for advanced datasets that require a schema, or huge datasets which would benefit from binary compression and resource efficiency - see the [configuration reference](../config/README.md).
 
 ```log
 DBG SQL query execution completed successfully driver=sqlite rows=2 duration=1.05ms in_use_conns=1 idle_conns=0

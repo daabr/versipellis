@@ -25,8 +25,8 @@ In other words: ["Let's take all this data, and push it somewhere else."](https:
 ## Getting Started
 
 1. Choose any of the installation options below
-2. [Quickstart demos & tutorials](./docs/tutorials.md)
-3. [Configuration reference](./docs/config.md)
+2. [Quickstart demos & tutorials](./docs/tutorials/README.md)
+3. [Configuration reference](./docs/config/README.md)
 
 ### Installation Option 1: Docker Image
 

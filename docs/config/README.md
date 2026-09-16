@@ -8,9 +8,9 @@ For information about the TOML configuration language, refer to: https://toml.io
 
 Versipellis recognizes the following section **types**. They are all optional, and each one is described in a dedicated page:
 
-- [`Collector`](./config/collector.md)
+- [`Collector`](./collector/README.md)
 - 🚧 **Coming soon:** Receiver
-- [`Sender`](./config/sender.md)
+- [`Sender`](./sender/README.md)
 
 What does a section "type" mean? Versipellis supports 0 or **more** instances of each section listed above.
 
