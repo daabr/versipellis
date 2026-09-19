@@ -3,7 +3,7 @@ module github.com/daabr/versipellis
 go 1.27
 
 require (
-	github.com/SAP/go-hdb v1.18.4
+	github.com/SAP/go-hdb v1.18.8
 	github.com/alexbrainman/odbc v0.0.0-20250601004241-49e6b2bc0cf0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/godror/godror v0.51.4
@@ -14,7 +14,7 @@ require (
 	github.com/quic-go/quic-go v0.62.0
 	github.com/snowflakedb/gosnowflake/v2 v2.2.0
 	golang.org/x/net v0.59.0
-	modernc.org/sqlite v1.58.0
+	modernc.org/sqlite v1.59.0
 )
 
 require (
