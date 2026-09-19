@@ -1,4 +1,4 @@
-FROM ghcr.io/goreleaser/goreleaser-cross:latest@sha256:e2f838c40afbda638bdccda01422df69b936c820f57608306b5f7107aadcae5c
+FROM ghcr.io/goreleaser/goreleaser-cross:latest@sha256:8def7638d4f31ce8b22034694875c41c0cccb8392c9d06258c7dca9383bf1948
 
 # On (& for) Linux: install unixODBC headers and libs for both amd64 and arm64.
 
