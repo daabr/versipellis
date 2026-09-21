@@ -185,9 +185,8 @@ func readRequest(w http.ResponseWriter, r *http.Request, name string, maxBytes i
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBytes))
 	if err != nil {
-		slog.Warn("failed to read HTTP request body", slog.Any("error", err),
-			slog.String("name", name), slog.String("proto", r.Proto), slog.String("method", r.Method),
-			slog.String("remote_addr", r.RemoteAddr), slog.String("user_agent", r.UserAgent()),
+		slog.Warn("failed to read HTTP request body", slog.Any("error", err), slog.String("name", name),
+			slog.String("proto", r.Proto), slog.String("method", r.Method), slog.String("remote_addr", r.RemoteAddr),
 		)
 		if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
 			w.WriteHeader(http.StatusRequestEntityTooLarge)
