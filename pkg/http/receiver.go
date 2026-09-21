@@ -163,8 +163,8 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, inReq *http.Request) {
 		r.Sender(context.WithoutCancel(inReq.Context()), outReq) // Returns quickly (usually asynchronous internally).
 	}
 
-	slog.Debug("HTTP request received successfully", slog.String("name", r.Name), slog.String("proto", inReq.Proto),
-		slog.String("method", inReq.Method), slog.String("path", inReq.URL.EscapedPath()),
+	slog.Debug("HTTP request received successfully", slog.String("name", r.Name),
+		slog.String("proto", inReq.Proto), slog.String("method", inReq.Method),
 		slog.String("remote_addr", inReq.RemoteAddr), slog.Int("content_length", len(body)),
 		slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 	)
@@ -176,8 +176,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, inReq *http.Request) {
 func readRequest(w http.ResponseWriter, r *http.Request, name string, maxBytes int64) ([]byte, bool) {
 	if r.ContentLength > maxBytes {
 		slog.Warn("didn't read HTTP request body: too large", slog.String("name", name),
-			slog.String("proto", r.Proto), slog.String("method", r.Method),
-			slog.String("path", r.URL.EscapedPath()), slog.String("remote_addr", r.RemoteAddr),
+			slog.String("proto", r.Proto), slog.String("method", r.Method), slog.String("remote_addr", r.RemoteAddr),
 			slog.Int64("content_length", r.ContentLength), slog.Int64("max_size", maxBytes),
 		)
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
@@ -186,8 +185,8 @@ func readRequest(w http.ResponseWriter, r *http.Request, name string, maxBytes i
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBytes))
 	if err != nil {
-		slog.Warn("failed to read HTTP request body", slog.Any("error", err), slog.String("name", name),
-			slog.String("proto", r.Proto), slog.String("method", r.Method), slog.String("path", r.URL.EscapedPath()),
+		slog.Warn("failed to read HTTP request body", slog.Any("error", err),
+			slog.String("name", name), slog.String("proto", r.Proto), slog.String("method", r.Method),
 			slog.String("remote_addr", r.RemoteAddr), slog.String("user_agent", r.UserAgent()),
 		)
 		if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
