@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"crypto/tls"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,117 +32,67 @@ func TestNewCollector(t *testing.T) {
 		wantTimeout time.Duration
 	}{
 		{
-			name:    "nil_base",
-			base:    nil,
-			cfg:     map[string]any{},
-			wantErr: true,
-		},
-		{
-			name:    "wrong_collector_type",
-			base:    &config.BaseCollector{Type: config.CollectorTypeSQL},
-			cfg:     map[string]any{},
-			wantErr: true,
-		},
-		{
-			name:    "nil_cfg",
+			name:    "invalid_url",
 			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg:     nil,
+			cfg:     map[string]any{"http": map[string]any{"url": ""}},
 			wantErr: true,
 		},
 		{
-			name:    "missing_section",
+			name:    "invalid_method",
 			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg:     map[string]any{},
+			cfg:     map[string]any{"url": "https://example.com", "method": "DELETE"},
 			wantErr: true,
 		},
 		{
-			name:    "invalid_section",
-			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP3},
-			cfg:     map[string]any{"http3": "not-a-table"},
+			name:    "invalid_query_type",
+			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP},
+			cfg:     map[string]any{"url": "https://example.com", "query": 123},
 			wantErr: true,
 		},
 		{
-			name: "invalid_url",
-			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg: map[string]any{
-				"http": map[string]any{"url": ""},
-			},
+			name:    "headers_not_a_table",
+			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP},
+			cfg:     map[string]any{"url": "https://example.com", "headers": "Accept: application/json"},
 			wantErr: true,
 		},
 		{
-			name: "invalid_method",
-			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg: map[string]any{
-				"http": map[string]any{"url": "https://example.com", "method": "DELETE"},
-			},
+			name:    "body_file_not_found",
+			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP},
+			cfg:     map[string]any{"url": "https://example.com", "body_file": "/nonexistent/file"},
 			wantErr: true,
 		},
 		{
-			name: "invalid_query_type",
-			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg: map[string]any{
-				"http": map[string]any{"url": "https://example.com", "query": 123},
-			},
+			name:    "invalid_retries",
+			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP},
+			cfg:     map[string]any{"url": "https://example.com", "retries": "invalid"},
 			wantErr: true,
 		},
 		{
-			name: "headers_not_a_table",
-			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg: map[string]any{
-				"http": map[string]any{"url": "https://example.com", "headers": "Accept: application/json"},
-			},
+			name:    "tls_not_a_table",
+			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP},
+			cfg:     map[string]any{"url": "https://example.com", "tls": "invalid"},
 			wantErr: true,
 		},
 		{
-			name: "body_file_not_found",
-			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg: map[string]any{
-				"http": map[string]any{"url": "https://example.com", "body_file": "/nonexistent/file"},
-			},
-			wantErr: true,
-		},
-		{
-			name: "invalid_retries",
-			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg: map[string]any{
-				"http": map[string]any{"url": "https://example.com", "retries": "invalid"},
-			},
-			wantErr: true,
-		},
-		{
-			name: "tls_not_a_table",
-			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg: map[string]any{
-				"http": map[string]any{"url": "https://example.com", "tls": "invalid"},
-			},
-			wantErr: true,
-		},
-		{
-			name: "http_url_with_tls_config",
-			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg: map[string]any{
-				"http": map[string]any{"url": "http://example.com", "tls": map[string]any{"min_version": "1.3"}},
-			},
-			wantErr:     false, // Warning log.
+			name:        "http_url_with_tls_config",
+			base:        &config.BaseCollector{Type: config.CollectorTypeHTTP},
+			cfg:         map[string]any{"url": "http://example.com", "tls": map[string]any{"min_version": "1.3"}},
+			wantErr:     false, // Logs a warning, does not abort.
 			wantURL:     "http://example.com",
 			wantMethod:  http.MethodGet,
 			wantHeaders: http.Header{},
 			wantTimeout: defaultRequestTimeout,
 		},
 		{
-			name: "invalid_timeout",
-			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg: map[string]any{
-				"http": map[string]any{"url": "https://example.com", "timeout": "not-a-duration"},
-			},
+			name:    "invalid_timeout",
+			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP},
+			cfg:     map[string]any{"url": "https://example.com", "timeout": "not-a-duration"},
 			wantErr: true,
 		},
 		{
-			name: "minimal_valid_config",
-			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg: map[string]any{
-				"http": map[string]any{"url": "https://example.com"},
-			},
+			name:        "minimal_valid_config",
+			base:        &config.BaseCollector{Type: config.CollectorTypeHTTP},
+			cfg:         map[string]any{"url": "https://example.com"},
 			wantURL:     "https://example.com",
 			wantMethod:  http.MethodGet,
 			wantHeaders: http.Header{},
@@ -268,56 +217,6 @@ func TestLoadBody(t *testing.T) {
 	}
 }
 
-func TestParseByteSize(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		cfg  map[string]any
-		want int64
-	}{
-		{
-			name: "valid_positive_number",
-			cfg:  map[string]any{"size": int64(123)},
-			want: 123,
-		},
-		{
-			name: "invalid_positive_number",
-			cfg:  map[string]any{"size": int64(math.MaxInt64)},
-			want: maxByteSize,
-		},
-		{
-			name: "invalid_zero",
-			cfg:  map[string]any{"size": int64(0)},
-			want: 456,
-		},
-		{
-			name: "invalid_negative_number",
-			cfg:  map[string]any{"size": int64(-123)},
-			want: 456,
-		},
-		{
-			name: "invalid_non_number",
-			cfg:  map[string]any{"size": "not-a-number"},
-			want: 456,
-		},
-		{
-			name: "missing_key",
-			cfg:  map[string]any{},
-			want: 456,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := parseByteSize(tt.cfg, "size", tt.name, int64(456)); got != tt.want {
-				t.Errorf("parseByteSize() = %d, want %d", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestCollectorStartNilGuard(t *testing.T) {
 	var nilCollector *Collector
 	if ok := nilCollector.Start(t.Context()); ok {
@@ -377,11 +276,8 @@ func TestCollectorStart(t *testing.T) {
 			}
 
 			c, err := NewCollector(base, map[string]any{
-				"type": tt.proto,
-				tt.proto: map[string]any{
-					"method": http.MethodGet, "url": server.URL, "timeout": "100ms",
-					"retries": map[string]any{"type": retryTypeStatic, "max_attempts": int64(2), "interval": "1ms"},
-				},
+				"method": http.MethodGet, "url": server.URL, "timeout": "100ms",
+				"retries": map[string]any{"type": retryTypeStatic, "max_attempts": int64(2), "interval": "1ms"},
 			})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
@@ -404,6 +300,8 @@ func TestCollectorStart(t *testing.T) {
 }
 
 func TestScheduleNextRequest(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		schedule string
@@ -423,6 +321,8 @@ func TestScheduleNextRequest(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			synctest.Test(t, func(t *testing.T) {
 				base, err := config.NewBaseCollector(
 					map[string]any{"type": config.CollectorTypeHTTP, "schedule": tt.schedule},
@@ -432,13 +332,7 @@ func TestScheduleNextRequest(t *testing.T) {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
 				}
 
-				c, err := NewCollector(base, map[string]any{
-					"type": config.CollectorTypeHTTP,
-					"http": map[string]any{
-						"method": http.MethodGet,
-						"url":    "https://example.com",
-					},
-				})
+				c, err := NewCollector(base, map[string]any{"method": http.MethodGet, "url": "https://example.com"})
 				if err != nil {
 					t.Fatalf("NewCollector() error: %v", err)
 				}
@@ -466,55 +360,11 @@ func TestScheduleNextRequest(t *testing.T) {
 	}
 }
 
-func TestFixHeaders(t *testing.T) {
+func TestCollectorCloseTimeout(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		resp *http.Response
-		want *http.Response
-	}{
-		{
-			name: "nil_response",
-			resp: nil,
-			want: nil,
-		},
-		{
-			name: "nil_headers",
-			resp: &http.Response{Header: nil},
-			want: &http.Response{Header: nil},
-		},
-		{
-			name: "empty_headers",
-			resp: &http.Response{Header: http.Header{}},
-			want: &http.Response{Header: http.Header{}},
-		},
-		{
-			name: "remove_headers",
-			resp: &http.Response{Header: http.Header{
-				"Connection":       {"foo"},
-				"Content-Encoding": {"gzip"},
-				"Foo":              {"bar"}, // Should be deleted (see "Connection" header).
-				"Abc":              {"def"}, // Should be preserved.
-				"Keep-Alive":       {"timeout=5", "max=1000"},
-			}},
-			want: &http.Response{Header: http.Header{"Abc": {"def"}}},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			fixHeaders(tt.resp)
-			if !reflect.DeepEqual(tt.resp, tt.want) {
-				t.Errorf("fixHeaders() = %+v, want %+v", tt.resp, tt.want)
-			}
-		})
-	}
-}
-
-func TestCollectorCloseTimeout(t *testing.T) {
 	testTimeout := 5 * time.Second
+
 	tests := []struct {
 		name    string
 		start   bool
@@ -542,15 +392,14 @@ func TestCollectorCloseTimeout(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			synctest.Test(t, func(t *testing.T) {
 				base := &config.BaseCollector{Type: config.CollectorTypeHTTP}
 				c, err := NewCollector(base, map[string]any{
-					"type": config.CollectorTypeHTTP,
-					"http": map[string]any{
-						"method":  http.MethodGet,
-						"url":     "https://example.com",
-						"timeout": tt.timeout.String(),
-					},
+					"method":  http.MethodGet,
+					"url":     "https://example.com",
+					"timeout": tt.timeout.String(),
 				})
 				if err != nil {
 					t.Fatalf("NewCollector() error: %v", err)
@@ -640,10 +489,7 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
 				}
 
-				c, err := NewCollector(base, map[string]any{
-					"type": config.CollectorTypeHTTP,
-					"http": map[string]any{"method": http.MethodGet, "url": "https://example.com"},
-				})
+				c, err := NewCollector(base, map[string]any{"method": http.MethodGet, "url": "https://example.com"})
 				if err != nil {
 					t.Fatalf("NewCollector() error: %v", err)
 				}
@@ -690,12 +536,12 @@ func TestCollectorCheckConcurrencyCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	sem := make(chan struct{}, 1)
-	sem <- struct{}{}
+	ch := make(chan struct{}, 1)
+	ch <- struct{}{}
 
-	c.checkConcurrency(ctx, t.Context(), sem, time.Now())
+	c.checkConcurrency(ctx, t.Context(), ch, time.Now())
 
-	if len(sem) != 1 {
-		t.Errorf("len(sem) = %d, want 1", len(sem))
+	if len(ch) != 1 {
+		t.Errorf("len(ch) = %d, want 1", len(ch))
 	}
 }

@@ -176,6 +176,8 @@ func TestCacheSingleItemMethods(t *testing.T) {
 }
 
 func TestCacheItemExpiration(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		cache   func(...cache.Option) cache.Cache[string, string]
@@ -204,6 +206,8 @@ func TestCacheItemExpiration(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			synctest.Test(t, func(t *testing.T) {
 				c := tt.cache(cache.WithExpiration(time.Second), cache.WithCleanup(tt.cleanup))
 				t.Cleanup(c.StopCleanupWorker)
@@ -221,6 +225,8 @@ func TestCacheItemExpiration(t *testing.T) {
 }
 
 func TestCacheAddAndReplaceOverExpiredItem(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		cache func(...cache.Option) cache.Cache[int, int]
@@ -236,6 +242,8 @@ func TestCacheAddAndReplaceOverExpiredItem(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			synctest.Test(t, func(t *testing.T) {
 				c := tt.cache(cache.WithExpiration(time.Second), cache.WithCleanup(0))
 
@@ -267,6 +275,8 @@ func TestCacheAddAndReplaceOverExpiredItem(t *testing.T) {
 }
 
 func TestCacheIteration(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		cache func(...cache.Option) cache.Cache[int, int]
@@ -312,6 +322,8 @@ func TestCacheIteration(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			synctest.Test(t, func(t *testing.T) {
 				c := tt.cache(cache.WithExpiration(time.Second), cache.WithCleanup(0))
 				for i := range tt.size {
@@ -401,6 +413,8 @@ func TestCacheItemCopyNotReferences(t *testing.T) {
 }
 
 func TestCacheReplaceKeepsExactTTL(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		cache func(...cache.Option) cache.Cache[string, string]
@@ -416,6 +430,8 @@ func TestCacheReplaceKeepsExactTTL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			synctest.Test(t, func(t *testing.T) {
 				c := tt.cache(cache.WithExpiration(time.Hour), cache.WithCleanup(0))
 

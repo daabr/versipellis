@@ -79,12 +79,9 @@ func TestCollectorStartPostgres(t *testing.T) {
 	}
 
 	c, err := NewCollector(base, map[string]any{
-		"type": config.CollectorTypeSQL,
-		"sql": map[string]any{
-			"type":       DriverTypePostgres,
-			"connection": "postgres://localhost:5432/dbname",
-			"query":      "SELECT 1",
-		},
+		"type":       DriverTypePostgres,
+		"connection": "postgres://localhost:5432/dbname",
+		"query":      "SELECT 1",
 	})
 	if err != nil {
 		t.Fatalf("NewCollector() error: %v", err)
@@ -109,11 +106,9 @@ func TestCollectorExecutePostgresQuery(t *testing.T) {
 	}
 
 	c, err := NewCollector(base, map[string]any{
-		"sql": map[string]any{
-			"type":       DriverTypePostgres,
-			"connection": "postgres://localhost:5432/dbname",
-			"query":      "SELECT 1",
-		},
+		"type":       DriverTypePostgres,
+		"connection": "postgres://localhost:5432/dbname",
+		"query":      "SELECT 1",
 	})
 	if err != nil {
 		t.Fatalf("NewCollector() error: %v", err)

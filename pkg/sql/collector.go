@@ -99,44 +99,30 @@ func (c *Collector) Base() *config.BaseCollector {
 	}
 }
 
-// NewCollector creates a new [Collector] from the given configuration, which was read from
-// a TOML file. It checks the details and returns an error if any of them is invalid.
+// NewCollector creates a new [Collector] from the given configuration, which was read from a TOML file. It checks the details
+// and returns an error if any of them is semantically invalid, but the caller is responsible for providing usable input.
 func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, error) {
-	switch {
-	case base == nil:
-		return nil, errors.New("base collector cannot be nil")
-	case base.Type != config.CollectorTypeSQL:
-		return nil, fmt.Errorf("collector type is %q, but must be %q", base.Type, config.CollectorTypeSQL)
-	case cfg == nil || cfg["sql"] == nil:
-		return nil, errors.New("[collector.sql] TOML config section is missing")
+	c := &Collector{
+		BaseCollector: *base,
+		driver:        strings.ToLower(strings.TrimSpace(config.Value(cfg, "type", ""))),
+		conn:          config.Value(cfg, "connection", ""),
 	}
 
-	sqlCfg, ok := cfg["sql"].(map[string]any)
-	if !ok {
-		return nil, errors.New("[collector.sql] isn't a valid TOML config section")
-	}
-	query, err := checkQuery(loadQuery(sqlCfg))
+	var err error
+	c.query, err = checkQuery(loadQuery(cfg))
 	if err != nil {
 		return nil, err
 	}
-	timeout, err := time.ParseDuration(config.Value(sqlCfg, "timeout", defaultQueryTimeout.String()))
+	c.timeout, err = time.ParseDuration(config.Value(cfg, "timeout", defaultQueryTimeout.String()))
 	if err != nil {
 		return nil, fmt.Errorf("invalid query timeout duration: %w", err)
-	}
-
-	c := &Collector{
-		BaseCollector: *base,
-		driver:        strings.ToLower(strings.TrimSpace(config.Value(sqlCfg, "type", ""))),
-		conn:          config.Value(sqlCfg, "connection", ""),
-		query:         query,
-		timeout:       timeout,
 	}
 
 	switch {
 	case !slices.Contains(validDriverTypes, c.driver):
 		return nil, fmt.Errorf("unrecognized SQL driver type %q", c.driver)
 	case c.conn == "":
-		return nil, fmt.Errorf("SQL collector config for %q must have a database connection string", c.driver)
+		return nil, errors.New("connection field required but not found")
 	default:
 		return c, nil
 	}
@@ -148,9 +134,9 @@ func loadQuery(cfg map[string]any) (string, error) {
 
 	switch {
 	case query == "" && path == "":
-		return "", errors.New("query for SQL collector must be specified")
+		return "", errors.New("query or query_file field required but not found")
 	case query != "" && path != "":
-		return "", errors.New("both SQL query string and SQL query file provided, specify only one")
+		return "", errors.New("both query and query_file fields provided, specify only one")
 	case query != "" && path == "":
 		return query, nil
 	}

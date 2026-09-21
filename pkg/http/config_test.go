@@ -1,6 +1,7 @@
 package http
 
 import (
+	"math"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -109,7 +110,7 @@ func TestParseURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, gotErr := parseURL(tt.rawURL, tt.protoVer, "role")
+			got, gotErr := parseURL(tt.rawURL, tt.protoVer)
 			if (gotErr != nil) != tt.wantErr {
 				t.Fatalf("parseURL() error = %v, wantErr %v", gotErr, tt.wantErr)
 			}
@@ -298,6 +299,56 @@ func TestParseHeaders(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("parseHeaders() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseByteSize(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  map[string]any
+		want int64
+	}{
+		{
+			name: "valid_positive_number",
+			cfg:  map[string]any{"size": int64(123)},
+			want: 123,
+		},
+		{
+			name: "invalid_positive_number",
+			cfg:  map[string]any{"size": int64(math.MaxInt64)},
+			want: maxByteSize,
+		},
+		{
+			name: "invalid_zero",
+			cfg:  map[string]any{"size": int64(0)},
+			want: 456,
+		},
+		{
+			name: "invalid_negative_number",
+			cfg:  map[string]any{"size": int64(-123)},
+			want: 456,
+		},
+		{
+			name: "invalid_non_number",
+			cfg:  map[string]any{"size": "not-a-number"},
+			want: 456,
+		},
+		{
+			name: "missing_key",
+			cfg:  map[string]any{},
+			want: 456,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := parseByteSize(tt.cfg, "size", tt.name, int64(456)); got != tt.want {
+				t.Errorf("parseByteSize() = %d, want %d", got, tt.want)
 			}
 		})
 	}

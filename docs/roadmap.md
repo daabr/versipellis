@@ -6,15 +6,24 @@ This is the high-level plan for features that are expected to be released within
 
 1. Configurable HTTP authentication & authorization
 
-2. Passive data receivers, specifically HTTP and HTTP/3 servers
+   - None
+   - Basic (RFC 7617)
+   - Static key/token
+   - OAuth 2
+     - Interactive authorization
+     - Client credentials
+     - Refresh
+     - JWT (RFC 7523)
+     - Workload Identity Federation (WIF)
+     - Session cookie (RFC 6265)
 
-3. Respect rate-limiting responses from HTTP servers
+2. Respect rate-limiting responses from HTTP servers
 
-4. Stream DB rows instead of buffering + batching at the HTTP sender side
+3. Stream DB rows instead of current buffering, and batch at the HTTP sender side
 
-5. Data collection from MongoDB (+ general support for BSON)
+4. Data collection from MongoDB (+ general support for BSON)
 
-6. Configurable usage of the DLQ sender as a fallback after sender failures
+5. Configurable usage of the DLQ sender as a fallback after sender failures
 
 ## 3-6 Months
 
@@ -26,6 +35,8 @@ This is the high-level plan for features that are expected to be released within
 
    - Automatic decoding of incoming client requests and server responses
    - Configurable encoding of outgoing collector/sender requests
+
+4. Additional auth options, e.g., AWS, Azure, GCP, CyberArk
 
 ## 6-12 Months
 

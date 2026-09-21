@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/quic-go/quic-go/http3"
+
 	"github.com/daabr/versipellis/pkg/config"
 )
 
@@ -109,11 +111,15 @@ func loadServerTLSConfig(rawCfg any, httpVer string) (*tls.Config, error) {
 		return nil, err
 	}
 
-	if raw != nil && httpVer == config.CollectorTypeHTTP3 {
+	if raw != nil && httpVer == config.ReceiverTypeHTTP3 {
 		return nil, errors.New("HTTP/3 (QUIC) does not support mTLS")
 	}
 
 	t.ClientAuth = parseTLSDontVerifyForServers(cfg, t)
+
+	if httpVer == config.ReceiverTypeHTTP3 {
+		t.NextProtos = []string{http3.NextProtoH3}
+	}
 
 	return t, nil
 }
@@ -123,10 +129,10 @@ func parseTLSMinVersion(tlsVer, httpVer string) (uint16, error) {
 	switch {
 	case tlsVer == "1.3" || tlsVer == "":
 		return tls.VersionTLS13, nil
-	case tlsVer == "1.2" && httpVer != config.CollectorTypeHTTP3:
+	case tlsVer == "1.2" && httpVer != "http3": // Covers config.(Collector|Receiver|Sender)TypeHTTP3.
 		slog.Warn("TLS 1.2 is enabled, which is less secure than TLS 1.3")
 		return tls.VersionTLS12, nil
-	case tlsVer == "1.2" && httpVer == config.CollectorTypeHTTP3:
+	case tlsVer == "1.2" && (httpVer == "http3"): // Covers config.(Collector|Receiver|Sender)TypeHTTP3.
 		return 0, errors.New("HTTP/3 (QUIC) does not support TLS 1.2")
 	case tlsVer == "1.0" || tlsVer == "1.1":
 		return 0, fmt.Errorf("TLS version %s is deprecated", tlsVer)

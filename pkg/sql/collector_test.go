@@ -31,55 +31,11 @@ func TestNewCollector(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "nil_base",
-			base: nil,
-			cfg: map[string]any{
-				"sql": map[string]any{},
-			},
-			wantErr: true,
-		},
-		{
-			name: "wrong_base_type",
-			base: &config.BaseCollector{Type: config.CollectorTypeHTTP},
-			cfg: map[string]any{
-				"type": config.CollectorTypeHTTP,
-				"sql":  map[string]any{},
-			},
-			wantErr: true,
-		},
-		{
-			name:    "nil_collector_cfg",
-			base:    &config.BaseCollector{Type: config.CollectorTypeSQL},
-			cfg:     nil,
-			wantErr: true,
-		},
-		{
-			name: "missing_sql_section",
-			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
-			cfg: map[string]any{
-				"type": config.CollectorTypeSQL,
-				"sol":  map[string]any{},
-			},
-			wantErr: true,
-		},
-		{
-			name: "invalid_sql_section",
-			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
-			cfg: map[string]any{
-				"type": config.CollectorTypeSQL,
-				"sql":  "not a map",
-			},
-			wantErr: true,
-		},
-		{
 			name: "missing_driver_type",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
 			cfg: map[string]any{
-				"type": config.CollectorTypeSQL,
-				"sql": map[string]any{
-					"connection": "connection",
-					"query":      "SELECT 1",
-				},
+				"connection": "connection",
+				"query":      "SELECT 1",
 			},
 			wantErr: true,
 		},
@@ -87,12 +43,9 @@ func TestNewCollector(t *testing.T) {
 			name: "unrecognized_driver_type",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
 			cfg: map[string]any{
-				"type": config.CollectorTypeSQL,
-				"sql": map[string]any{
-					"type":       "unknown",
-					"connection": "connection",
-					"query":      "SELECT 1",
-				},
+				"type":       "unknown",
+				"connection": "connection",
+				"query":      "SELECT 1",
 			},
 			wantErr: true,
 		},
@@ -100,11 +53,8 @@ func TestNewCollector(t *testing.T) {
 			name: "missing_connection",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
 			cfg: map[string]any{
-				"type": config.CollectorTypeSQL,
-				"sql": map[string]any{
-					"type":  DriverTypeSQLite,
-					"query": "SELECT 1",
-				},
+				"type":  DriverTypeSQLite,
+				"query": "SELECT 1",
 			},
 			wantErr: true,
 		},
@@ -112,11 +62,8 @@ func TestNewCollector(t *testing.T) {
 			name: "missing_query",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
 			cfg: map[string]any{
-				"type": config.CollectorTypeSQL,
-				"sql": map[string]any{
-					"type":       DriverTypeSQLite,
-					"connection": ":memory:",
-				},
+				"type":       DriverTypeSQLite,
+				"connection": ":memory:",
 			},
 			wantErr: true,
 		},
@@ -124,13 +71,10 @@ func TestNewCollector(t *testing.T) {
 			name: "invalid_timeout",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
 			cfg: map[string]any{
-				"type": config.CollectorTypeSQL,
-				"sql": map[string]any{
-					"type":       DriverTypeSQLite,
-					"connection": "connection",
-					"query":      "SELECT 1",
-					"timeout":    "invalid",
-				},
+				"type":       DriverTypeSQLite,
+				"connection": "connection",
+				"query":      "SELECT 1",
+				"timeout":    "invalid",
 			},
 			wantErr: true,
 		},
@@ -138,13 +82,10 @@ func TestNewCollector(t *testing.T) {
 			name: "negative_timeout_is_allowed",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
 			cfg: map[string]any{
-				"type": config.CollectorTypeSQL,
-				"sql": map[string]any{
-					"type":       DriverTypeSQLite,
-					"connection": "connection",
-					"query":      "SELECT 1",
-					"timeout":    "-5s",
-				},
+				"type":       DriverTypeSQLite,
+				"connection": "connection",
+				"query":      "SELECT 1",
+				"timeout":    "-5s",
 			},
 			wantErr: false,
 		},
@@ -152,12 +93,9 @@ func TestNewCollector(t *testing.T) {
 			name: "happy_path",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
 			cfg: map[string]any{
-				"type": config.CollectorTypeSQL,
-				"sql": map[string]any{
-					"type":       strings.ToUpper(DriverTypeSQLite), // Test case-insensitivity of the driver type.
-					"connection": "connection",
-					"query":      "SELECT 1",
-				},
+				"type":       strings.ToUpper(DriverTypeSQLite), // Test case-insensitivity of the driver type.
+				"connection": "connection",
+				"query":      "SELECT 1",
 			},
 			wantErr: false,
 		},
@@ -286,12 +224,9 @@ func TestCollectorStart(t *testing.T) {
 	}
 
 	c, err := NewCollector(base, map[string]any{
-		"type": config.CollectorTypeSQL,
-		"sql": map[string]any{
-			"type":       DriverTypeSQLite,
-			"connection": ":memory:",
-			"query":      "SELECT 1",
-		},
+		"type":       DriverTypeSQLite,
+		"connection": ":memory:",
+		"query":      "SELECT 1",
 	})
 	if err != nil {
 		t.Fatalf("NewCollector() error: %v", err)
@@ -333,12 +268,9 @@ func TestCollectorConnectionStringError(t *testing.T) {
 			t.Parallel()
 
 			c, err := NewCollector(base, map[string]any{
-				"type": config.CollectorTypeSQL,
-				"sql": map[string]any{
-					"type":       driver,
-					"connection": "invalid_connection_string",
-					"query":      "SELECT 1",
-				},
+				"type":       driver,
+				"connection": "invalid_connection_string",
+				"query":      "SELECT 1",
 			})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
@@ -371,6 +303,8 @@ func TestOpenDBPingFailure(t *testing.T) {
 }
 
 func TestScheduleNextQuery(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		schedule string
@@ -390,6 +324,8 @@ func TestScheduleNextQuery(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			synctest.Test(t, func(t *testing.T) {
 				base, err := config.NewBaseCollector(
 					map[string]any{"type": config.CollectorTypeSQL, "schedule": tt.schedule},
@@ -400,12 +336,9 @@ func TestScheduleNextQuery(t *testing.T) {
 				}
 
 				c, err := NewCollector(base, map[string]any{
-					"type": config.CollectorTypeSQL,
-					"sql": map[string]any{
-						"type":       DriverTypeSQLite,
-						"connection": ":memory:",
-						"query":      "SELECT 1;",
-					},
+					"type":       DriverTypeSQLite,
+					"connection": ":memory:",
+					"query":      "SELECT 1;",
 				})
 				if err != nil {
 					t.Fatalf("NewCollector() error: %v", err)
@@ -504,7 +437,7 @@ func TestCollectorExecuteQuery(t *testing.T) {
 				t.Fatalf("cron.Parse() error: %v", err)
 			}
 			base := &config.BaseCollector{Type: config.CollectorTypeSQL, Schedule: sched, Sender: dest.Discard}
-			c, err := NewCollector(base, map[string]any{"type": config.CollectorTypeSQL, "sql": tt.cfg})
+			c, err := NewCollector(base, tt.cfg)
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
@@ -659,6 +592,8 @@ func TestCollectorClose(t *testing.T) {
 }
 
 func TestCollectorCloseTimeout(t *testing.T) {
+	t.Parallel()
+
 	testTimeout := 5 * time.Second
 
 	tests := []struct {
@@ -679,6 +614,8 @@ func TestCollectorCloseTimeout(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			synctest.Test(t, func(t *testing.T) {
 				c := &Collector{
 					driver:  DriverTypePostgres,
@@ -853,12 +790,9 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 				}
 
 				c, err := NewCollector(base, map[string]any{
-					"type": config.CollectorTypeSQL,
-					"sql": map[string]any{
-						"type":       DriverTypeSQLite,
-						"connection": ":memory:",
-						"query":      "SELECT 1;",
-					},
+					"type":       DriverTypeSQLite,
+					"connection": ":memory:",
+					"query":      "SELECT 1;",
 				})
 				if err != nil {
 					t.Fatalf("NewCollector() error: %v", err)
@@ -907,12 +841,12 @@ func TestCollectorCheckConcurrencyCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	sem := make(chan struct{}, 1)
-	sem <- struct{}{}
+	ch := make(chan struct{}, 1)
+	ch <- struct{}{}
 
-	c.checkConcurrency(ctx, t.Context(), sem, time.Now())
+	c.checkConcurrency(ctx, t.Context(), ch, time.Now())
 
-	if len(sem) != 1 {
-		t.Errorf("len(sem) = %d, want 1", len(sem))
+	if len(ch) != 1 {
+		t.Errorf("len(ch) = %d, want 1", len(ch))
 	}
 }

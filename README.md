@@ -37,7 +37,6 @@ Command line example:
 ```shell
 docker run -d --name my-versi-container \
        -v $HOME/versi/config:/app/config -v $HOME/versi/data:/app/data \
-       -p 4884:4884/tcp -p 4885:4885/tcp -p 3885:3885/udp \
        ghcr.io/daabr/versipellis:latest
 ```
 
@@ -85,7 +84,7 @@ CGO_ENABLED=1 go build -tags=odbc ./cmd/versi && ./versi -h
 ### HTTP Input
 
 - Protocols: HTTP/1.1 and HTTP/2 (TCP), HTTP/3 (QUIC/UDP)
-- Directions: pull (retrieve from servers)
+- Directions: pull (retrieve from servers), push (receive from clients)
 - Encryption: none, TLS, mTLS
 - Content encoding: `identity` (none), `gzip`
 - Auth: [coming soon!](./docs/roadmap.md)

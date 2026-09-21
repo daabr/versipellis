@@ -18,5 +18,5 @@ const (
 // Sender is a function that sends any type of data to a destination.
 // It also closes any resources associated with the data, if applicable.
 // It is intentionally asynchronous and does not return a status/result.
-// Reminder: convert this into an interface, with time-bounded waiting in a future PR.
+// Reminder: convert this into an interface, with a time-bounded Close() in a future PR.
 type Sender func(context.Context, any)

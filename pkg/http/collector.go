@@ -16,14 +16,6 @@ import (
 	"github.com/daabr/versipellis/pkg/config"
 )
 
-const (
-	closeTimeout = 5 * time.Second
-
-	defaultRequestTimeout = 5 * time.Second
-
-	maxByteSize int64 = 1073741824 // 1 GiB (which is already quite large for a single HTTP request).
-)
-
 // Collector contains all the configuration and state details for sending HTTP requests.
 type Collector struct {
 	config.BaseCollector
@@ -61,65 +53,53 @@ func (c *Collector) Base() *config.BaseCollector {
 	}
 }
 
-// NewCollector creates a new [Collector] from the given configuration, which was read from
-// a TOML file. It checks the details and returns an error if any of them is invalid.
+// NewCollector creates a new [Collector] from the given configuration, which was read from a TOML file. It checks the details
+// and returns an error if any of them is semantically invalid, but the caller is responsible for providing usable input.
 func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, error) {
-	switch {
-	case base == nil:
-		return nil, errors.New("base collector cannot be nil")
-	case base.Type != config.CollectorTypeHTTP && base.Type != config.CollectorTypeHTTP3:
-		msg := "collector type is %q, but must be %q or %q"
-		return nil, fmt.Errorf(msg, base.Type, config.CollectorTypeHTTP, config.CollectorTypeHTTP3)
-	case cfg == nil || cfg[base.Type] == nil:
-		return nil, fmt.Errorf("[collector.%s] TOML config section is missing", base.Type)
-	}
+	c := &Collector{BaseCollector: *base}
 
 	var err error
-	c := &Collector{BaseCollector: *base}
-	httpCfg, ok := cfg[c.Type].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("[collector.%s] isn't a valid TOML config section", c.Type)
+	if c.url, err = parseURL(config.Value(cfg, "url", ""), c.Type); err != nil {
+		return nil, err
 	}
+	if c.method, err = parseMethod(config.Value(cfg, "method", http.MethodGet), "collection"); err != nil {
+		return nil, err
+	}
+	if err := parseQuery(c.url, cfg["query"], "collector"); err != nil {
+		return nil, err
+	}
+	if c.headers, err = parseHeaders(cfg["headers"], "collector"); err != nil {
+		return nil, err
+	}
+	if c.body, err = loadBody(cfg, c.method); err != nil {
+		return nil, err
+	}
+	c.maxBodySize = parseByteSize(cfg, "max_body_size", c.Name, defaultMaxBodySize)
+	c.maxHeaderSize = parseByteSize(cfg, "max_headers_size", c.Name, defaultMaxHeaderSize)
 
-	if c.url, err = parseURL(config.Value(httpCfg, "url", ""), c.Type, "collector"); err != nil {
-		return nil, err
+	if c.timeout, err = time.ParseDuration(config.Value(cfg, "timeout", defaultRequestTimeout.String())); err != nil {
+		return nil, fmt.Errorf("invalid timeout duration: %w", err)
 	}
-	if c.method, err = parseMethod(config.Value(httpCfg, "method", http.MethodGet), "collection"); err != nil {
-		return nil, err
-	}
-	if err := parseQuery(c.url, httpCfg["query"], "collector"); err != nil {
-		return nil, err
-	}
-	if c.headers, err = parseHeaders(httpCfg["headers"], "collector"); err != nil {
-		return nil, err
-	}
-	if c.body, err = loadBody(httpCfg, c.method); err != nil {
-		return nil, err
-	}
-	if c.retries, err = parseRetries(httpCfg["retries"], c.method, c.Name); err != nil {
-		return nil, err
-	}
+	// For us, 0 is the same as negative values, but not in Go. This normalization simplifies HTTP client construction.
+	c.timeout = max(c.timeout, 0)
 
-	if c.tls, c.transportID, err = loadClientTLSConfig(httpCfg["tls"], c.Type); err != nil {
+	if c.tls, c.transportID, err = loadClientTLSConfig(cfg["tls"], c.Type); err != nil {
 		return nil, err
 	}
-	if c.url.Scheme == httpScheme && httpCfg["tls"] != nil {
-		if m, ok := httpCfg["tls"].(map[string]any); ok && len(m) > 0 {
+	if c.url.Scheme == httpScheme && cfg["tls"] != nil {
+		if m, ok := cfg["tls"].(map[string]any); ok && len(m) > 0 {
 			slog.Warn("TLS config details are ineffective because URL scheme is unencrypted HTTP",
 				slog.String("name", c.Name), slog.String("url", c.url.Redacted()),
 			)
 		}
 	}
-	c.maxBodySize = parseByteSize(httpCfg, "max_body_size", c.Name, defaultMaxBodySize)
-	c.maxHeaderSize = parseByteSize(httpCfg, "max_headers_size", c.Name, defaultMaxHeaderSize)
-	if c.timeout, err = time.ParseDuration(config.Value(httpCfg, "timeout", defaultRequestTimeout.String())); err != nil {
-		return nil, fmt.Errorf("invalid timeout duration: %w", err)
-	}
-	// For us, 0 is the same as negative values, but not in Go. This normalization simplifies HTTP client construction.
-	c.timeout = max(c.timeout, 0)
 	// HTTP transport configuration is affected by TLS, maximum header size, and timeout
 	// settings, so this prevents clients with different configurations from sharing transports.
 	c.transportID = fmt.Sprintf("%s,%d,%s", c.transportID, c.maxHeaderSize, c.timeout)
+
+	if c.retries, err = parseRetries(cfg["retries"], c.method, c.Name); err != nil {
+		return nil, err
+	}
 
 	return c, nil
 }
@@ -147,26 +127,6 @@ func loadBody(cfg map[string]any, method string) ([]byte, error) {
 		return nil, errors.New("specified HTTP body file is empty: " + path)
 	}
 	return body, nil // Not trimming leading/trailing whitespaces because this payload may be binary.
-}
-
-func parseByteSize(cfg map[string]any, key, name string, defaultValue int64) int64 {
-	value := config.Value(cfg, key, defaultValue)
-	if value <= 0 {
-		description := strings.ReplaceAll(key, "_", " ")
-		slog.Warn(description+" has an invalid (non-positive) value, using default value",
-			slog.String("name", name), slog.Int64("actual", value), slog.Int64("default", defaultValue),
-		)
-		value = defaultValue
-	}
-	if value > maxByteSize {
-		description := strings.ReplaceAll(key, "_", " ")
-		slog.Warn("forcing upper bound on "+description, slog.String("name", name),
-			slog.Int64("above_max", value), slog.Int64("new_value", maxByteSize),
-		)
-		value = maxByteSize
-	}
-
-	return value
 }
 
 // Start connects to the configured HTTP server and starts sending requests to it. This function
@@ -257,7 +217,11 @@ func (c *Collector) checkConcurrency(schedCtx, execCtx context.Context, sem chan
 	case sem <- struct{}{}:
 		c.inProgress.Go(func() {
 			defer func() { <-sem }()
-			c.sendRequest(schedCtx, execCtx)
+
+			resp := c.requestWithRetries(schedCtx, execCtx) //nolint:bodyclose // See [Collector.requestOnce].
+			if resp.StatusCode < http.StatusBadRequest && c.Sender != nil {
+				c.Sender(execCtx, resp) // Returns quickly (usually asynchronous internally).
+			}
 		})
 	default:
 		slog.Warn("HTTP collector is at its concurrency limit, skipping request",
@@ -266,59 +230,13 @@ func (c *Collector) checkConcurrency(schedCtx, execCtx context.Context, sem chan
 	}
 }
 
-// sendRequest sends a single scheduled HTTP request and forwards its response to the sender.
-// SchedCtx indicates if collector scheduling is active (aborting future retries on shutdown),
-// while execCtx governs the in-flight network call up to [Collector.timeout].
-func (c *Collector) sendRequest(schedCtx, execCtx context.Context) {
-	resp := c.requestWithRetries(schedCtx, execCtx) //nolint:bodyclose // See [Collector.requestOnce].
-
-	if resp.StatusCode < http.StatusBadRequest && c.Sender != nil {
-		fixHeaders(resp)
-		c.Sender(execCtx, resp) // Closes the response body, and returns quickly (usually asynchronous internally).
-	}
-}
-
-// Forwarding a received response's [http.Response.Header] as-is in an outgoing request
-// can propagate hop-by-hop or response-specific headers, which would lead to bugs. See
-// https://nathandavison.com/blog/abusing-http-hop-by-hop-request-headers and [httputil].
-func fixHeaders(r *http.Response) {
-	if r == nil {
-		return
-	}
-
-	for key := range r.Header {
-		switch k := http.CanonicalHeaderKey(key); k {
-		// https://datatracker.ietf.org/doc/html/rfc9110#name-connection
-		case "Connection":
-			for _, vs := range r.Header[k] {
-				for v := range strings.SplitSeq(vs, ",") {
-					r.Header.Del(strings.TrimSpace(v))
-				}
-			}
-			r.Header.Del(k)
-		// https://datatracker.ietf.org/doc/html/rfc2616#section-13.5.1
-		// https://datatracker.ietf.org/doc/html/rfc6797#section-6.1
-		case "Keep-Alive", "Te", "Trailer", "Transfer-Encoding", "Upgrade", "Strict-Transport-Security":
-			r.Header.Del(k)
-		// Reminder: revisit this case when we support additional non-default encoding types.
-		case "Content-Encoding", "Content-Length", "Set-Cookie":
-			r.Header.Del(k)
-		}
-	}
-
-	// Also fix the response itself.
-	r.Close = false
-	r.Trailer = nil
-	r.TransferEncoding = nil
-}
-
 // Done returns a channel that closes when shutdown completes or its grace period expires.
 func (c *Collector) Done() <-chan struct{} {
 	return c.closeDone
 }
 
-// Close waits (up to [Collector.timeout]) for requests that are in progress to finish, after new ones are no longer being
-// scheduled. It is safe to call multiple times, even if [Collector.Start] wasn't called, but it's meant to be called only
+// Close waits (up to [CloseTimeout]) for requests that are in progress to finish, after new ones are no longer being scheduled.
+// It is safe to call this multiple times, even if [Collector.Start] wasn't called. However, it's meant to be called only once,
 // at the end of the [Collector.scheduleNext] goroutine. If there are still pending requests after the timeout, the collector
 // will forcefully close their connections. It then signals through the [Collector.Done] channel that it's ready to shut down.
 func (c *Collector) Close() {
@@ -336,8 +254,8 @@ func (c *Collector) Close() {
 		}()
 
 		timeout := c.timeout
-		if timeout <= 0 || timeout > closeTimeout {
-			timeout = closeTimeout // Ensure the timeout is within acceptable bounds.
+		if timeout <= 0 || timeout > CloseTimeout {
+			timeout = CloseTimeout // Ensure the timeout is within acceptable bounds.
 		}
 
 		select {

@@ -1,11 +1,13 @@
 package http
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -235,19 +237,43 @@ func TestSerializeDataHTTPRequest(t *testing.T) {
 				tt.req.Body = io.NopCloser(strings.NewReader("test"))
 			}
 
-			gotBody, gotErr := serializeData(tt.req, gotURL, gotHdr)
-
+			getBodyFn, _, gotErr := serializeData(tt.req, gotURL, gotHdr)
 			if (gotErr != nil) != tt.wantErr {
 				t.Fatalf("serializeData() error = %v, wantErr %v", gotErr, tt.wantErr)
 			}
+
+			var gotBody1, gotBody2 []byte
+			if getBodyFn != nil {
+				r, err := getBodyFn()
+				if err != nil {
+					t.Fatalf("getBodyFunc(1) error = %v", err)
+				}
+				gotBody1, err = io.ReadAll(r)
+				if err != nil {
+					t.Fatalf("io.ReadAll(1) error = %v", err)
+				}
+
+				r, err = getBodyFn()
+				if err != nil {
+					t.Fatalf("getBodyFunc(2) error = %v", err)
+				}
+				gotBody2, err = io.ReadAll(r)
+				if err != nil {
+					t.Fatalf("io.ReadAll(2) error = %v", err)
+				}
+			}
+
 			gotQuery := gotURL.Query()
 
 			wantBody := ""
 			if tt.wantBody {
 				wantBody = "test"
 			}
-			if tt.wantBody != (string(gotBody) == "test") {
-				t.Errorf("body = %v, want %q", gotBody, wantBody)
+			if tt.wantBody != (string(gotBody1) == "test") {
+				t.Errorf("body = %v, want %q", gotBody1, wantBody)
+			}
+			if string(gotBody2) != string(gotBody1) {
+				t.Errorf("retry body = %v, want %q", gotBody2, gotBody1)
 			}
 			if tt.req != nil && !reflect.DeepEqual(gotHdr, tt.wantHdr) {
 				t.Errorf("hdr = %+v, want %+v", gotHdr, tt.wantHdr)
@@ -297,6 +323,17 @@ func TestSerializeDataHTTPResponse(t *testing.T) {
 			wantErr:  false,
 			wantHdr:  http.Header{},
 		},
+		{
+			name: "resp_with_reusable_body",
+			resp: &http.Response{
+				Header: http.Header{"H1": {"good"}},
+				Body:   &reusableBody{Reader: bytes.NewReader([]byte("test")), raw: []byte("test")},
+			},
+			hdr:      http.Header{"H1": {"good"}},
+			wantBody: true,
+			wantErr:  false,
+			wantHdr:  http.Header{"H1": {"good"}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -308,18 +345,41 @@ func TestSerializeDataHTTPResponse(t *testing.T) {
 				tt.resp.Body = io.NopCloser(strings.NewReader("test"))
 			}
 
-			gotBody, gotErr := serializeData(tt.resp, gotURL, gotHdr)
-
+			getBodyFn, _, gotErr := serializeData(tt.resp, gotURL, gotHdr)
 			if (gotErr != nil) != tt.wantErr {
 				t.Fatalf("serializeData() error = %v, wantErr %v", gotErr, tt.wantErr)
+			}
+
+			var gotBody1, gotBody2 []byte
+			if getBodyFn != nil {
+				r, err := getBodyFn()
+				if err != nil {
+					t.Fatalf("getBodyFunc(1) error = %v", err)
+				}
+				gotBody1, err = io.ReadAll(r)
+				if err != nil {
+					t.Fatalf("io.ReadAll(1) error = %v", err)
+				}
+
+				r, err = getBodyFn()
+				if err != nil {
+					t.Fatalf("getBodyFunc(2) error = %v", err)
+				}
+				gotBody2, err = io.ReadAll(r)
+				if err != nil {
+					t.Fatalf("io.ReadAll(2) error = %v", err)
+				}
 			}
 
 			wantBody := ""
 			if tt.wantBody {
 				wantBody = "test"
 			}
-			if tt.wantBody != (string(gotBody) == "test") {
-				t.Errorf("body = %v, want %q", gotBody, wantBody)
+			if tt.wantBody != (string(gotBody1) == "test") {
+				t.Errorf("body = %v, want %q", gotBody1, wantBody)
+			}
+			if string(gotBody2) != string(gotBody1) {
+				t.Errorf("retry body = %v, want %q", gotBody2, gotBody1)
 			}
 			if tt.resp != nil && !reflect.DeepEqual(gotHdr, tt.wantHdr) {
 				t.Errorf("headers = %+v, want %+v", gotHdr, tt.wantHdr)
@@ -366,12 +426,18 @@ func TestSerializeDataJSON(t *testing.T) {
 			t.Parallel()
 
 			hdr := http.Header{}
-			got, gotErr := serializeData(tt.data, nil, hdr)
+			getBodyFn, _, gotErr := serializeData(tt.data, nil, hdr)
 			if (gotErr != nil) != tt.wantErr {
 				t.Fatalf("serializeData() error = %v, wantErr %v", gotErr, tt.wantErr)
 			}
 			if tt.wantErr {
 				return
+			}
+
+			r, _ := getBodyFn()
+			got, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatalf("io.ReadAll() error = %v", err)
 			}
 
 			if gotBody := string(got); gotBody != tt.wantBody {
@@ -380,6 +446,93 @@ func TestSerializeDataJSON(t *testing.T) {
 			wantHdr := http.Header{"Content-Type": {"application/json"}}
 			if !reflect.DeepEqual(hdr, wantHdr) {
 				t.Errorf("headers = %+v, want %+v", hdr, wantHdr)
+			}
+		})
+	}
+}
+
+func TestCopyQueryNilGuard(t *testing.T) {
+	t.Parallel()
+
+	nilURL := (*url.URL)(nil)
+	nonNilURL := &url.URL{}
+	copyQuery(nilURL, nonNilURL)
+	copyQuery(nonNilURL, nilURL)
+	// No panic = success.
+
+	srcURL := &url.URL{RawQuery: ""}
+	dstURL := &url.URL{RawQuery: "foo=bar"}
+	copyQuery(srcURL, dstURL)
+	if srcURL.RawQuery != "" {
+		t.Errorf("srcURL.RawQuery = %q, want %q", srcURL.RawQuery, "")
+	}
+	if dstURL.RawQuery != "foo=bar" {
+		t.Errorf("dstURL.RawQuery = %q, want %q", dstURL.RawQuery, "foo=bar")
+	}
+
+	srcURL = &url.URL{RawQuery: ""}
+	dstURL = &url.URL{RawQuery: "foo=bar"}
+	copyQuery(dstURL, srcURL)
+	if srcURL.RawQuery != "foo=bar" {
+		t.Errorf("srcURL.RawQuery = %q, want %q", srcURL.RawQuery, "foo=bar")
+	}
+	if dstURL.RawQuery != "foo=bar" {
+		t.Errorf("dstURL.RawQuery = %q, want %q", dstURL.RawQuery, "foo=bar")
+	}
+}
+
+func TestSafeHeaders(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		hdr  http.Header
+		req  bool
+		want []string
+	}{
+		{
+			name: "nil_headers",
+			hdr:  nil,
+			want: nil,
+		},
+		{
+			name: "empty_headers",
+			hdr:  http.Header{},
+			want: []string{},
+		},
+		{
+			name: "remove_request_headers",
+			hdr: http.Header{
+				"Connection":       {"foo"},
+				"Content-Encoding": {"gzip"},
+				"Foo":              {"bar"}, // Should be deleted (see "Connection" header).
+				"Cookie":           {"abc"}, // Should be preserved.
+				"Keep-Alive":       {"timeout=5", "max=1000"},
+			},
+			req:  true,
+			want: []string{"Content-Encoding", "Cookie"},
+		},
+		{
+			name: "remove_response_headers",
+			hdr: http.Header{
+				"Connection":       {"foo"},
+				"Content-Encoding": {"gzip"},
+				"Foo":              {"bar"}, // Should be deleted (see "Connection" header).
+				"Cookie":           {"abc"}, // Should be preserved.
+				"Keep-Alive":       {"timeout=5", "max=1000"},
+			},
+			req:  false,
+			want: []string{"Cookie"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := safeHeaders(tt.hdr, tt.req)
+			slices.Sort(got)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("safeHeaders() = %v, want %v", got, tt.want)
 			}
 		})
 	}

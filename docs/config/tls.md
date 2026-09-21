@@ -5,8 +5,8 @@
 This sub-section can be added to:
 
 - [HTTP](./collector/http.md) and [HTTP/3](./collector/http3.md) collectors
+- [HTTP](./receiver/http.md) and [HTTP/3](./receiver/http3.md) receivers
 - [HTTP](./sender/http.md) and [HTTP/3](./sender/http3.md) senders
-- 🚧 **Coming soon:** receiver support
 
 It is entirely optional, but some fields may be required in some use-cases.
 
