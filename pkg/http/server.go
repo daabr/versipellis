@@ -35,7 +35,7 @@ func (r *Receiver) newUDPServer(handler http.Handler) *http3.Server {
 		Handler:   handler,
 		TLSConfig: r.tls,
 		QUICConfig: &quic.Config{
-			HandshakeIdleTimeout: 5 * time.Second,
+			HandshakeIdleTimeout: min(r.timeout, defaultRequestTimeout),
 			MaxIdleTimeout:       30 * time.Second,
 			KeepAlivePeriod:      15 * time.Second,
 		},
@@ -126,6 +126,7 @@ func (r *Receiver) Close(ctx context.Context) {
 				slog.Error("HTTP server shutdown error", slog.Any("error", err),
 					slog.String("name", r.Name), slog.String("tcp_addr", r.address),
 				)
+				_ = r.tcp.Close() // Force close if graceful shutdown failed.
 			}
 			r.tcp = nil
 		}
@@ -137,6 +138,7 @@ func (r *Receiver) Close(ctx context.Context) {
 				slog.Error("HTTP/3 server shutdown error", slog.Any("error", err),
 					slog.String("name", r.Name), slog.String("udp_addr", r.address),
 				)
+				_ = r.udp.Close() // Force close if graceful shutdown failed.
 			}
 			r.udp = nil
 		}

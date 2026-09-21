@@ -3,7 +3,7 @@ type = "HTTP"
 destination = "sender.http"
 
 [receiver.http]
-address = ":80"
+address = ":2442"
 
 [sender.http]
-url = "http://localhost:8080"
+url = "http://localhost:4884"

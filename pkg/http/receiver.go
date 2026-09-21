@@ -104,8 +104,9 @@ func parseAddress(addr, protoVer string) (string, error) {
 // The input context is used only for starting them, not to control their entire lifecycle.
 func (r *Receiver) Start(ctx context.Context) bool {
 	mux := http.NewServeMux()
+	timedHandler := http.TimeoutHandler(r, r.timeout, "")
 	for _, method := range []string{http.MethodGet, http.MethodPatch, http.MethodPost, http.MethodPut} {
-		mux.Handle(method+" /", r)
+		mux.Handle(method+" /", timedHandler)
 	}
 
 	if r.Type == config.ReceiverTypeHTTP {
@@ -115,7 +116,11 @@ func (r *Receiver) Start(ctx context.Context) bool {
 			return false
 		}
 		go r.serveTCP(r.tcp, ln)
-		slog.Info("listening for HTTP/1.1 and HTTP/2 requests", slog.String("name", r.Name),
+		versions := "HTTP/1.1"
+		if r.tls != nil {
+			versions += " and HTTP/2"
+		}
+		slog.Info(fmt.Sprintf("listening for %s requests", versions), slog.String("name", r.Name),
 			slog.String("tcp_addr", r.address), slog.String("path", "/"),
 		)
 	}
