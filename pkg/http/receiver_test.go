@@ -162,7 +162,7 @@ func TestReceiverServeHTTPAndClose(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			base := &config.BaseReceiver{Type: config.ReceiverTypeHTTP, Name: tt.name, Sender: dest.Discard}
-			cfg := map[string]any{"address": "127.0.0.1:0", "max_body_size": int64(10)}
+			cfg := map[string]any{"address": "127.0.0.1:0", "max_body_size": int64(10), "timeout": "-1s"}
 			rcv, err := NewReceiver(base, cfg)
 			if err != nil {
 				t.Fatalf("NewReceiver() error = %v", err)
