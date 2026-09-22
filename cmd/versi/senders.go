@@ -16,7 +16,7 @@ var (
 		config.SenderTypeHTTP3,
 	}
 
-	senderIndexSuffix = regexp.MustCompile(`\[\d+\]$`)
+	cfgIndexSuffix = regexp.MustCompile(`\[\d+\]$`)
 )
 
 // initSenders initializes all the senders that are defined in the TOML configuration file, and returns
@@ -32,9 +32,6 @@ func initSenders(entireCfg map[string]any) (map[string]config.Sender, bool) {
 		config.SenderTypeStdout: dest.Stdout,
 		config.SenderTypeDLQ:    dest.DeadLetterQueue,
 	}
-	if entireCfg == nil {
-		return senders, true
-	}
 
 	ok := true
 	for name, cfg := range config.ExtractSubSubmaps(entireCfg, "sender", validSenderTypes) {
@@ -42,7 +39,7 @@ func initSenders(entireCfg map[string]any) (map[string]config.Sender, bool) {
 			continue // Ignore empty sender configuration sections (not an error, just useless).
 		}
 
-		baseType := senderIndexSuffix.ReplaceAllString(name, "")
+		baseType := cfgIndexSuffix.ReplaceAllString(name, "")
 		if _, leaf, found := strings.CutLast(baseType, "."); found {
 			baseType = leaf
 		}

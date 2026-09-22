@@ -25,20 +25,18 @@ var validCollectorTypes = []string{
 
 // BaseCollector contains the basic details of any "collector" configuration in the TOML file.
 type BaseCollector struct {
-	Type string
-	Name string
+	// For now, [BaseCollector] is an extension of [BaseReceiver], but
+	// if this changes in the future, it shouldn't break existing code.
+	BaseReceiver
 
 	Cronspec    string
 	Schedule    *cron.Schedule
 	Trigger     string // Not fully implemented yet, but reserved for future use.
 	Concurrency int
-
-	Destination string
-	Sender      Sender
 }
 
-// NewBaseCollector creates a new [BaseCollector] from the given configuration, which was read
-// from a TOML file. It checks the details and returns an error if any of them is invalid.
+// NewBaseCollector creates a new [BaseCollector] from the given configuration, which was read from a TOML file. It checks
+// these details and returns an error if any of them is invalid, but the caller is responsible for providing non-nil input.
 func NewBaseCollector(cfg map[string]any, name string, senders map[string]Sender) (*BaseCollector, error) {
 	c := &BaseCollector{
 		Type:        strings.ToLower(strings.TrimSpace(Value(cfg, "type", ""))),
@@ -53,17 +51,17 @@ func NewBaseCollector(cfg map[string]any, name string, senders map[string]Sender
 
 	switch {
 	case c.Type == "":
-		return nil, errors.New("all collector configurations require a type specification")
-	case c.Type != "" && !slices.Contains(validCollectorTypes, c.Type):
-		return nil, fmt.Errorf("unrecognized collector type %q", c.Type)
+		return nil, errors.New("type field required but not found")
+	case !slices.Contains(validCollectorTypes, c.Type):
+		return nil, fmt.Errorf("unrecognized type %q", c.Type)
 	case !senderFound:
 		return nil, fmt.Errorf("unrecognized destination %q", c.Destination)
 	case c.Cronspec != "" && c.Trigger != "":
-		return nil, errors.New("collector configuration cannot have both a schedule and a trigger")
+		return nil, errors.New("configuration cannot have both a schedule and a trigger")
 	case c.Trigger != "":
 		return c, nil
 	case c.Cronspec == "":
-		return nil, errors.New("collector configuration must have either a schedule or a trigger")
+		return nil, errors.New("configuration must have either a schedule or a trigger")
 	}
 
 	tz, label := LoadLocation(Value(cfg, "timezone", "UTC"))
@@ -72,11 +70,11 @@ func NewBaseCollector(cfg map[string]any, name string, senders map[string]Sender
 	}
 	sched, err := cron.Parse(c.Cronspec, tz)
 	if err != nil {
-		return nil, fmt.Errorf("invalid expression in collector schedule: %w", err)
+		return nil, fmt.Errorf("invalid expression in schedule: %w", err)
 	}
 	c.Cronspec = fmt.Sprintf("TZ=%s %s", label, c.Cronspec)
 	if !sched.RunsOnlyOnce() && sched.Next(time.Now()).IsZero() {
-		return nil, fmt.Errorf("collector schedule %q will never run", c.Cronspec)
+		return nil, fmt.Errorf("schedule %q will never run", c.Cronspec)
 	}
 
 	c.Schedule = sched

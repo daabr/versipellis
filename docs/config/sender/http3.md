@@ -100,13 +100,15 @@
 
 - Optional
 - Default: `"5s"` (5 seconds)
-- Format: string containing decimal numbers, each with a unit suffix, e.g., `h` (hours), `m` (minutes), and `s` (seconds)
+- Format: string containing decimal numbers, each with a unit suffix, e.g., `m` (minutes), and `s` (seconds)
 - Special case: `"0"` and negative values (e.g., `"-1s"`) = no client-side timeout
 
 ## `[sender.http3.tls]` Sub-Section
 
-[See this page](../tls.md)
+- Required
+- [See this page](../tls.md)
 
 ## `[sender.http3.retries]` Sub-Section
 
-[See this page](../retries.md)
+- Optional
+- [See this page](../retries.md)

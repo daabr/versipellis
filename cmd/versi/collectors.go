@@ -37,7 +37,16 @@ func initCollectors(ctx context.Context, senders map[string]config.Sender, entir
 
 		base, err := config.NewBaseCollector(cfg, name, senders)
 		if err != nil {
-			slog.Error("failed to create base collector", slog.Any("error", err), slog.String("name", name))
+			slog.Error("collector creation error", slog.Any("error", err), slog.String("name", name))
+			ok = false
+			continue
+		}
+
+		innerCfg, valid := cfg[base.Type].(map[string]any)
+		if !valid || len(innerCfg) == 0 {
+			slog.Error("missing/invalid/empty collector configuration sub-section",
+				slog.String("name", base.Name), slog.String("type", base.Type),
+			)
 			ok = false
 			continue
 		}
@@ -45,11 +54,11 @@ func initCollectors(ctx context.Context, senders map[string]config.Sender, entir
 		var c collector
 		switch base.Type {
 		case config.CollectorTypeHTTP, config.CollectorTypeHTTP3:
-			c, err = http.NewCollector(base, cfg)
+			c, err = http.NewCollector(base, innerCfg)
 		case config.CollectorTypeSQL:
-			c, err = sql.NewCollector(base, cfg)
+			c, err = sql.NewCollector(base, innerCfg)
 		default:
-			slog.Error("unrecognized collector type", slog.String("name", base.Name), slog.String("type", base.Type))
+			slog.Error("unhandled collector type", slog.String("name", base.Name), slog.String("type", base.Type))
 			ok = false
 			continue
 		}
@@ -68,7 +77,7 @@ func initCollectors(ctx context.Context, senders map[string]config.Sender, entir
 	}
 
 	results := make(chan collectorInitResult, len(collectors))
-	initCollectorsAsync(ctx, collectors, results)
+	startCollectorsAsync(ctx, collectors, results)
 	var done []<-chan struct{}
 	for range collectors {
 		if res := <-results; res.ok {
@@ -83,17 +92,11 @@ func initCollectors(ctx context.Context, senders map[string]config.Sender, entir
 		return nil, false
 	}
 
-	// Temporary: until we add receivers, we require at least one collector in order to run.
-	if len(done) == 0 {
-		slog.Error("no collectors were initialized successfully")
-		return nil, false
-	}
-
 	return done, true
 }
 
-// initCollectorsAsync starts all the collectors concurrently, but without overwhelming the system or the data sources.
-func initCollectorsAsync(ctx context.Context, collectors []collector, results chan<- collectorInitResult) {
+// startCollectorsAsync starts all the collectors concurrently, but without overwhelming the system or the data sources.
+func startCollectorsAsync(ctx context.Context, collectors []collector, results chan<- collectorInitResult) {
 	limit := min(runtime.GOMAXPROCS(0), len(collectors))
 	workers := make(chan collector, limit)
 

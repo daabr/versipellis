@@ -104,19 +104,19 @@
   - Inline - usually when the content is small and simple
   - Relative or absolute path to a file (e.g., `"config/body.json"` or `"/path/body.xml"`) - when it's large, complex, or sensitive
 
-`max_body_size` - maximum byte size of server response bodies
+`max_body_size` - maximum byte size of a server response's whole body
 
 - Optional
 - Default: `10485760` (10,485,760 bytes = 10 MiB)
-- Valid range: any positive integer up to `1073741824` (1 GiB)
+- Valid range: any positive integer up to `104857600` (100 MiB)
 - `0` and negative integers are normalized to the default
 - Integers greater than the maximum are normalized to the maximum
 
-`max_headers_size` - maximum byte size of server response headers (as a whole, not each key-value pair)
+`max_headers_size` - maximum byte size of a server response's headers (as a whole, not each key-value pair)
 
 - Optional
-- Default: `10485760` (10,485,760 bytes = 10 MiB)
-- Valid range: any positive integer up to `1073741824` (1 GiB)
+- Default: `1048576` (1,048,576 bytes = 1 MiB)
+- Valid range: any positive integer up to `104857600` (100 MiB)
 - `0` and negative integers are normalized to the default
 - Integers greater than the maximum are normalized to the maximum
 
@@ -124,13 +124,15 @@
 
 - Optional
 - Default: `"5s"` (5 seconds)
-- Format: string containing decimal numbers, each with a unit suffix, e.g., `h` (hours), `m` (minutes), and `s` (seconds)
+- Format: string containing decimal numbers, each with a unit suffix, e.g., `m` (minutes), and `s` (seconds)
 - Special case: `"0"` and negative values (e.g., `"-1s"`) = no client-side timeout
 
 ## `[collector.http3.tls]` Sub-Section
 
-[See this page](../tls.md)
+- Required
+- [See this page](../tls.md)
 
 ## `[collector.http3.retries]` Sub-Section
 
-[See this page](../retries.md)
+- Optional
+- [See this page](../retries.md)

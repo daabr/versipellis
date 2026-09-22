@@ -24,10 +24,41 @@ import (
 var (
 	transportH2 = cache.NewFastCache[string, *http.Transport]()
 	transportH3 = cache.NewFastCache[string, *http3.Transport]()
-
-	defaultMaxBodySize   int64 = 10 << 20 // 10 MiB.
-	defaultMaxHeaderSize int64 = 10 << 20 // 10 MiB.
 )
+
+const (
+	// MaxSuccessfulStatusCode defines the highest status code considered successful.
+	// Any status code above this value is considered an error, including 3xx
+	// redirections that could not be handled automatically by the client.
+	MaxSuccessfulStatusCode = 299
+)
+
+type (
+	// Used when sending received requests. See [serializeData] and [Destination.sendWithRetries].
+	getBodyFunc func() (io.ReadCloser, error)
+
+	// Used when sending collected responses. See [serializeData] and [Collector.processResponse].
+	bodyProvider interface {
+		GetBody() (io.ReadCloser, error)
+	}
+
+	// Used when sending collected responses. See [Collector.processResponse] and [serializeData].
+	// This is a memory optimization, to avoid duplicate allocations for response bodies during retries,
+	// working around the fact that [http.Response] doesn't have a GetBody() method, unlike [http.Request].
+	reusableBody struct {
+		*bytes.Reader
+
+		raw []byte
+	}
+)
+
+func (b *reusableBody) Close() error {
+	return nil
+}
+
+func (b *reusableBody) GetBody() (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(b.raw)), nil
+}
 
 // clientH2 constructs a client that supports both HTTP/1.1 and HTTP/2. It reuses [http.Transport]
 // instances with the same TLS configuration, to optimize connection pooling. HTTP/2 requires TLS, so
@@ -56,7 +87,7 @@ func clientH2(cfg *tls.Config, maxHeaderSize int64, timeout time.Duration, trans
 
 	reusable, ok := transportH2.Add(transportID, t)
 	if ok {
-		slog.Debug("initializing a new HTTP/1.1 + HTTP/2 client")
+		slog.Debug("initializing a new HTTP/1.1 and HTTP/2 client")
 	}
 	return &http.Client{Transport: reusable, Timeout: timeout}
 }
@@ -89,8 +120,8 @@ func clientH3(cfg *tls.Config, maxHeaderSize int64, timeout time.Duration, trans
 }
 
 // requestWithRetries sends an HTTP request, retrying on transient errors based on [Collector.retries].
-// In-flight execution is governed by execCtx, giving attempt 0 a [Collector.timeout] grace period to complete
-// during graceful shutdown. Subsequent retries (i > 0) also check schedCtx: if collector shutdown has
+// In-flight execution is governed by execCtx, giving attempt 0 a [Collector.timeout] grace period to
+// complete during shutdown. Subsequent retries (i > 0) also check schedCtx: if collector shutdown has
 // already been initiated, retrying against a failing service is aborted to ensure prompt termination.
 func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.Response {
 	resp := newErrorResponse(http.StatusGatewayTimeout)
@@ -105,7 +136,7 @@ func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.
 
 		var retry bool
 		resp, retry = c.requestOnce(execCtx)
-		if resp != nil && resp.StatusCode < http.StatusBadRequest {
+		if resp != nil && resp.StatusCode <= MaxSuccessfulStatusCode {
 			slog.Debug("HTTP request completed successfully",
 				slog.String("name", c.Name), slog.Int("attempt", i+1), slog.String("status", resp.Status),
 				slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
@@ -129,10 +160,10 @@ func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.
 // The provided ctx is the collector's execution context, it signals that the collector is in the process
 // of shutting down, so this function stops retrying when that happens. However, each attempt's own timeout
 // is independent, allowing in-flight requests to finish gracefully too, before being forcefully canceled.
-// Reminder: implement a way for main() to wait for graceful shutdown, and forceful timeout enforcement in a future PR.
-func (d *Destination) sendWithRetries(ctx context.Context, u *url.URL, h http.Header, payload []byte) {
-	resp := newErrorResponse(http.StatusGatewayTimeout)
-	defer resp.Body.Close() // Not really needed, but no harm either.
+//
+// Reminder: implement in a future PR a way for main() to Close() gracefully, with forceful timeout enforcement.
+func (d *Destination) sendWithRetries(ctx context.Context, u *url.URL, h http.Header, getBody getBodyFunc, size int64) {
+	resp := newErrorResponse(http.StatusGatewayTimeout) //nolint:bodyclose // Fake body, no need to close.
 	start := time.Now()
 
 	for i := range d.retries.MaxAttempts {
@@ -141,8 +172,9 @@ func (d *Destination) sendWithRetries(ctx context.Context, u *url.URL, h http.He
 		}
 
 		var retry bool
-		resp, retry = d.sendOnce(context.WithoutCancel(ctx), u, h, payload) //nolint:bodyclose // Body already closed.
-		if resp != nil && resp.StatusCode < http.StatusBadRequest {
+		reqCtx := context.WithoutCancel(ctx)
+		resp, retry = d.sendOnce(reqCtx, u, h, getBody, size) //nolint:bodyclose // Body closed inside [sendOnce].
+		if resp != nil && resp.StatusCode <= MaxSuccessfulStatusCode {
 			slog.Debug("HTTP request completed successfully",
 				slog.String("name", d.Name), slog.Int("attempt", i+1), slog.String("status", resp.Status),
 				slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
@@ -156,7 +188,7 @@ func (d *Destination) sendWithRetries(ctx context.Context, u *url.URL, h http.He
 		d.retries.waitBeforeRetry(ctx, ctx, i)
 	}
 
-	if resp.StatusCode >= http.StatusBadRequest {
+	if resp.StatusCode > MaxSuccessfulStatusCode {
 		slog.Warn("failed to send HTTP request", slog.String("name", d.Name), slog.String("status", resp.Status),
 			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
@@ -178,7 +210,7 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 
 	var body io.Reader
 	if c.body != nil {
-		body = bytes.NewReader(c.body)
+		body = bytes.NewReader(c.body) // Enables content-length & supports body reuse throughout redirects.
 	}
 
 	start := time.Now()
@@ -207,7 +239,7 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 		return newErrorResponse(http.StatusBadGateway), true
 	}
 
-	if resp.StatusCode >= http.StatusBadRequest {
+	if resp.StatusCode > MaxSuccessfulStatusCode {
 		slog.Warn("HTTP server responded with error status", slog.String("name", c.Name), slog.String("status", resp.Status),
 			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
@@ -217,7 +249,7 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 	return resp, retryable(resp.StatusCode)
 }
 
-func (d *Destination) sendOnce(ctx context.Context, u *url.URL, h http.Header, payload []byte) (*http.Response, bool) {
+func (d *Destination) sendOnce(ctx context.Context, u *url.URL, h http.Header, fn getBodyFunc, cl int64) (*http.Response, bool) {
 	var cancel context.CancelFunc
 	if d.timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, d.timeout)
@@ -226,9 +258,10 @@ func (d *Destination) sendOnce(ctx context.Context, u *url.URL, h http.Header, p
 		defer cancel()
 	}
 
-	var body io.Reader
-	if len(payload) != 0 {
-		body = bytes.NewReader(payload)
+	body, err := fn() // The function is guaranteed to be non-nil by [serializeData].
+	if err != nil {
+		slog.Error("cannot get reusable HTTP request body", slog.Any("error", err), slog.String("name", d.Name))
+		return newErrorResponse(http.StatusInternalServerError), false
 	}
 
 	req, err := http.NewRequestWithContext(ctx, d.method, u.String(), body)
@@ -240,13 +273,19 @@ func (d *Destination) sendOnce(ctx context.Context, u *url.URL, h http.Header, p
 		return newErrorResponse(http.StatusInternalServerError), false
 	}
 
+	req.GetBody = fn // Enable body reuse throughout redirects.
+	req.ContentLength = cl
 	req.Header = h.Clone()
-	if host := h.Get("Host"); len(host) > 0 {
+
+	// Customize the request's target address if the "Host" header is specified in the sender's own configured
+	// headers (d.headers), but ignore the "Host" header in responses from collectors (h). Also note that "Host"
+	// headers are automatically stripped (moved to [http.Request.Host]) from requests from receivers.
+	if host := d.headers.Get("Host"); host != "" {
 		req.Host = host // See [http.Request.Host] for details.
 	}
 
 	start := time.Now()
-	resp, err := d.client.Do(req)
+	resp, err := d.client.Do(req) //gosec:disable G704 // False positive.
 	if err != nil {
 		slog.Warn("failed to send HTTP request", slog.Any("error", err), slog.String("name", d.Name),
 			slog.String("host", d.url.Host), slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
@@ -261,7 +300,7 @@ func (d *Destination) sendOnce(ctx context.Context, u *url.URL, h http.Header, p
 	// [http.Response.Body] is drained automatically when closed (up to 256 KiB).
 	_ = resp.Body.Close()
 
-	if resp.StatusCode >= http.StatusBadRequest {
+	if resp.StatusCode > MaxSuccessfulStatusCode {
 		slog.Warn("HTTP server responded with error status", slog.String("name", d.Name), slog.String("status", resp.Status),
 			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
@@ -274,13 +313,13 @@ func (d *Destination) sendOnce(ctx context.Context, u *url.URL, h http.Header, p
 // and [http.Response.ContentLength]. Either way, it returns a copy of the [http.Response] with a guaranteed
 // non-nil and locally-buffered [http.Response.Body] (although it may be empty based on the above).
 //
-// This decouples between the receiving of data over an unreliable network from processing and sending it elsewhere.
+// This decouples receiving data over an unreliable network from processing and sending it elsewhere.
 // Either way, the original response body is consumed and closed, which is important for connection reuse.
 func (c *Collector) processResponse(r *http.Response) *http.Response {
 	// Since Go 1.27, [http.Response.Body] is drained automatically when closed (up to 256 KiB).
 	defer r.Body.Close()
 
-	if r.StatusCode >= http.StatusBadRequest {
+	if r.StatusCode > MaxSuccessfulStatusCode {
 		return newErrorResponse(r.StatusCode)
 	}
 	if r.ContentLength > c.maxBodySize {
@@ -302,7 +341,7 @@ func (c *Collector) processResponse(r *http.Response) *http.Response {
 
 	cpy := *r
 	cpy.ContentLength = int64(len(body))
-	cpy.Body = io.NopCloser(bytes.NewReader(body))
+	cpy.Body = &reusableBody{Reader: bytes.NewReader(body), raw: body}
 	return &cpy
 }
 
@@ -316,7 +355,7 @@ func newErrorResponse(statusCode int) *http.Response {
 }
 
 func retryable(statusCode int) bool {
-	if statusCode < http.StatusBadRequest {
+	if statusCode < http.StatusBadRequest { // All 2xx and 3xx status codes.
 		return false
 	}
 	switch statusCode {

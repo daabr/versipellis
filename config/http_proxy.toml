@@ -1,0 +1,9 @@
+[receiver]
+type = "HTTP"
+destination = "sender.http"
+
+[receiver.http]
+address = ":2442"
+
+[sender.http]
+url = "http://localhost:4884"

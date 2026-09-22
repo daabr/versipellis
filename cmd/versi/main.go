@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/lmittmann/tint"
@@ -39,22 +40,41 @@ func main() {
 	}
 
 	initLog(debugLog, structured, info)
+	ctx, cancel := context.WithCancel(context.Background())
 
 	senders, ok := initSenders(cfg)
 	if !ok {
 		os.Exit(1)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	channels, ok := initCollectors(ctx, senders, cfg)
+	collectorsDone, ok := initCollectors(ctx, senders, cfg)
+	if !ok {
+		cancel()
+		os.Exit(1)
+	}
+	receivers, ok := initReceivers(ctx, senders, cfg)
 	if !ok {
 		cancel()
 		os.Exit(1)
 	}
 
+	if len(collectorsDone)+len(receivers) == 0 {
+		slog.Error("no collectors or receivers initialized")
+		cancel()
+		os.Exit(1)
+	}
+
 	waitForInterrupt(cancel)
-	for _, done := range channels {
+
+	var wg sync.WaitGroup
+	ctx = context.Background()
+	for _, receiver := range receivers {
+		wg.Go(func() { receiver.Close(ctx) })
+	}
+	for _, done := range collectorsDone {
 		<-done
 	}
+	wg.Wait()
+
 	slog.Info("shutting down")
 }
 

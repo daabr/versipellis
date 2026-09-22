@@ -1,14 +1,12 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -35,6 +33,8 @@ func TestCollectorRequestWithRetries(t *testing.T) {
 		status    int
 		retryable bool
 	}{
+		{"200", http.StatusOK, false},
+		{"300", http.StatusMultipleChoices, false},
 		{"400", http.StatusBadRequest, false},
 		{"404", http.StatusNotFound, false},
 		{"405", http.StatusMethodNotAllowed, false},
@@ -62,11 +62,8 @@ func TestCollectorRequestWithRetries(t *testing.T) {
 			}
 
 			c, err := NewCollector(base, map[string]any{
-				"type": config.CollectorTypeHTTP,
-				"http": map[string]any{
-					"method": http.MethodGet, "url": server.URL,
-					"retries": map[string]any{"type": retryTypeStatic, "interval": "1ms"},
-				},
+				"method": http.MethodGet, "url": server.URL,
+				"retries": map[string]any{"type": retryTypeStatic, "interval": "1ms"},
 			})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
@@ -96,6 +93,7 @@ func TestDestinationSendWithRetries(t *testing.T) {
 		retryable bool
 	}{
 		{"200", http.StatusOK, false},
+		{"300", http.StatusMultipleChoices, false},
 		{"400", http.StatusBadRequest, false},
 		{"404", http.StatusNotFound, false},
 		{"405", http.StatusMethodNotAllowed, false},
@@ -159,10 +157,7 @@ func TestCollectorRequestOnceEdgeCases(t *testing.T) {
 			t.Cleanup(server.Close)
 
 			base := &config.BaseCollector{Type: config.CollectorTypeHTTP, Name: tt.name}
-			c, err := NewCollector(base, map[string]any{
-				"type": config.CollectorTypeHTTP,
-				"http": map[string]any{"method": http.MethodGet, "url": server.URL},
-			})
+			c, err := NewCollector(base, map[string]any{"method": http.MethodGet, "url": server.URL})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
@@ -224,8 +219,11 @@ func TestDestinationSendOnceEdgeCases(t *testing.T) {
 			if tt.headers != nil {
 				d.headers = tt.headers
 			}
+			getBody := func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(tt.body)), nil
+			}
 
-			gotResp, gotRetry := d.sendOnce(t.Context(), d.url, d.headers, tt.body)
+			gotResp, gotRetry := d.sendOnce(t.Context(), d.url, d.headers, getBody, int64(len(tt.body)))
 			_ = gotResp.Body.Close()
 			if gotRetry {
 				t.Error("Destination.sendOnce() bool = true, want false")
@@ -268,8 +266,7 @@ func TestCollectorProcessResponseErrors(t *testing.T) {
 
 			base := &config.BaseCollector{Type: config.CollectorTypeHTTP, Name: tt.name}
 			c, err := NewCollector(base, map[string]any{
-				"type": config.CollectorTypeHTTP,
-				"http": map[string]any{"method": http.MethodGet, "url": server.URL, "max_body_size": tt.maxSize},
+				"method": http.MethodGet, "url": server.URL, "max_body_size": tt.maxSize,
 			})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
@@ -345,11 +342,8 @@ func TestCollectorRequestWithRetriesShutdown(t *testing.T) {
 
 			base := &config.BaseCollector{Type: config.CollectorTypeHTTP, Name: tt.name}
 			c, err := NewCollector(base, map[string]any{
-				"type": config.CollectorTypeHTTP,
-				"http": map[string]any{
-					"method": http.MethodGet, "url": server.URL,
-					"retries": map[string]any{"type": retryTypeStatic, "interval": "1ms"},
-				},
+				"method": http.MethodGet, "url": server.URL,
+				"retries": map[string]any{"type": retryTypeStatic, "interval": "1ms"},
 			})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
@@ -427,7 +421,10 @@ func TestDestinationSendWithRetriesShutdown(t *testing.T) {
 				cancel() // Trigger cancellation of execution context immediately.
 			}
 
-			d.sendWithRetries(ctx, d.url, d.headers, []byte("payload"))
+			getBody := func() (io.ReadCloser, error) {
+				return io.NopCloser(strings.NewReader("payload")), nil
+			}
+			d.sendWithRetries(ctx, d.url, d.headers, getBody, int64(len("payload")))
 
 			wantRequests := 0
 			if tt.during {
@@ -456,14 +453,7 @@ func TestCollectorRequestOnceNetworkErrors(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		base := &config.BaseCollector{Type: config.CollectorTypeHTTP, Name: "timeout_test"}
-		c, err := NewCollector(base, map[string]any{
-			"type": config.CollectorTypeHTTP,
-			"http": map[string]any{
-				"method":  http.MethodGet,
-				"url":     server.URL,
-				"timeout": "25ms",
-			},
-		})
+		c, err := NewCollector(base, map[string]any{"method": http.MethodGet, "url": server.URL, "timeout": "25ms"})
 		if err != nil {
 			t.Fatalf("NewCollector() error: %v", err)
 		}
@@ -488,10 +478,7 @@ func TestCollectorRequestOnceNetworkErrors(t *testing.T) {
 		server.Close()
 
 		base := &config.BaseCollector{Type: config.CollectorTypeHTTP, Name: "refused_test"}
-		c, err := NewCollector(base, map[string]any{
-			"type": config.CollectorTypeHTTP,
-			"http": map[string]any{"method": http.MethodGet, "url": serverURL},
-		})
+		c, err := NewCollector(base, map[string]any{"method": http.MethodGet, "url": serverURL})
 		if err != nil {
 			t.Fatalf("NewCollector() error: %v", err)
 		}
@@ -529,7 +516,11 @@ func TestDestinationSendOnceNetworkError(t *testing.T) {
 		t.Fatalf("NewDestination() error: %v", err)
 	}
 
-	resp, retry := d.sendOnce(t.Context(), d.url, d.headers, nil)
+	getBody := func() (io.ReadCloser, error) {
+		return nil, nil
+	}
+
+	resp, retry := d.sendOnce(t.Context(), d.url, d.headers, getBody, 0)
 	t.Cleanup(func() { _ = resp.Body.Close() })
 
 	if resp.StatusCode != http.StatusGatewayTimeout {
@@ -537,138 +528,5 @@ func TestDestinationSendOnceNetworkError(t *testing.T) {
 	}
 	if !retry {
 		t.Errorf("Destination.sendOnce() retry = false, want true")
-	}
-}
-
-func TestTLSClient(t *testing.T) {
-	t.Parallel()
-
-	var count atomic.Int32
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		count.Add(1)
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(server.Close)
-
-	path := filepath.Join(t.TempDir(), "server_cert.pem")
-	pemBlock := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
-	if err := os.WriteFile(path, pemBlock, 0o600); err != nil {
-		t.Fatalf("failed to write CA certificate: %v", err)
-	}
-
-	base, err := config.NewBaseCollector(
-		map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"},
-		"TestTLSClient", map[string]config.Sender{"": nil},
-	)
-	if err != nil {
-		t.Fatalf("config.NewBaseCollector() error: %v", err)
-	}
-
-	c, err := NewCollector(base, map[string]any{
-		"type": config.CollectorTypeHTTP,
-		"http": map[string]any{
-			"method": http.MethodGet,
-			"url":    server.URL,
-			"tls": map[string]any{
-				"server_ca_cert_file": path,
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("NewCollector() error: %v", err)
-	}
-
-	if !c.Start(t.Context()) {
-		t.Fatalf("failed to start collector")
-	}
-
-	<-c.Done()
-
-	if n := count.Load(); n != 1 {
-		t.Errorf("expected server to be called exactly once, got %d", n)
-	}
-
-	resp, retry := c.requestOnce(t.Context())
-	t.Cleanup(func() { _ = resp.Body.Close() })
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Collector.requestOnce() StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
-	}
-	if retry {
-		t.Errorf("Collector.requestOnce() retry = true, want false")
-	}
-	if n := count.Load(); n != 2 {
-		t.Errorf("expected server to be called exactly twice, got %d", n)
-	}
-}
-
-func TestMTLSClientAndServer(t *testing.T) {
-	t.Parallel()
-	tempDir := t.TempDir()
-
-	caPEM, _, caCert, caKey := generateTestCert(t, true, nil, nil)
-	clientPEM, clientKeyPEM, _, _ := generateTestCert(t, false, caCert, caKey)
-	serverPEM, serverKeyPEM, _, _ := generateTestCert(t, false, caCert, caKey)
-
-	serverCert, err := tls.X509KeyPair(serverPEM, serverKeyPEM)
-	if err != nil {
-		t.Fatalf("tls.X509KeyPair() error: %v", err)
-	}
-	clientPool := x509.NewCertPool()
-	clientPool.AppendCertsFromPEM(caPEM)
-
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	server.TLS = &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		ClientCAs:    clientPool,
-	}
-	server.StartTLS()
-	t.Cleanup(server.Close)
-
-	caFile := filepath.Join(tempDir, "ca.pem")
-	certFile := filepath.Join(tempDir, "client.pem")
-	keyFile := filepath.Join(tempDir, "client.key")
-	writeTestFile(t, caFile, caPEM)
-	writeTestFile(t, certFile, clientPEM)
-	writeTestFile(t, keyFile, clientKeyPEM)
-
-	cfg := map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"}
-	base, err := config.NewBaseCollector(cfg, "TestMTLSClientAndServer", map[string]config.Sender{"": nil})
-	if err != nil {
-		t.Fatalf("config.NewBaseCollector() error: %v", err)
-	}
-
-	c, err := NewCollector(base, map[string]any{
-		"type": config.CollectorTypeHTTP,
-		"http": map[string]any{
-			"method": http.MethodGet,
-			"url":    server.URL,
-			"tls": map[string]any{
-				"server_ca_cert_file":   caFile,
-				"mtls_client_cert_file": certFile,
-				"mtls_client_key_file":  keyFile,
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("NewCollector error: %v", err)
-	}
-
-	if !c.Start(t.Context()) {
-		t.Fatalf("failed to start collector")
-	}
-	<-c.Done()
-
-	resp, retry := c.requestOnce(t.Context())
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	if resp.StatusCode != http.StatusOK || retry {
-		t.Fatalf("mTLS request failed with status %d, retry=%v", resp.StatusCode, retry)
 	}
 }

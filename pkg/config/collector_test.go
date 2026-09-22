@@ -21,11 +21,6 @@ func TestNewBaseCollector(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "empty_config_not_allowed",
-			cfg:     map[string]any{},
-			wantErr: true,
-		},
-		{
 			name:    "schedule_without_type",
 			cfg:     map[string]any{"type": "", "schedule": "* * * * *"},
 			wantErr: true,
@@ -37,7 +32,7 @@ func TestNewBaseCollector(t *testing.T) {
 		},
 		{
 			name:    "destination_without_type",
-			cfg:     map[string]any{"type": "", "destination": config.SenderTypeStdout},
+			cfg:     map[string]any{"type": "", "destination": config.SenderTypeDiscard},
 			wantErr: true,
 		},
 		{
@@ -85,11 +80,6 @@ func TestNewBaseCollector(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "explicit_destination_none",
-			cfg:     map[string]any{"type": config.CollectorTypeSQL, "trigger": "boo!", "destination": config.SenderTypeNone},
-			wantErr: false,
-		},
-		{
 			name:    "explicit_destination_discard",
 			cfg:     map[string]any{"type": config.CollectorTypeSQL, "trigger": "boo!", "destination": config.SenderTypeDiscard},
 			wantErr: false,
@@ -104,9 +94,9 @@ func TestNewBaseCollector(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			senders := map[string]config.Sender{"": nil, "discard": nil, "none": nil, "stdout": dest.Stdout}
-			if _, err := config.NewBaseCollector(tt.cfg, "name", senders); (err != nil) != tt.wantErr {
-				t.Errorf("NewBaseCollector() error = %v, wantErr %v", err, tt.wantErr)
+			senders := map[string]config.Sender{"": nil, "discard": dest.Discard}
+			if _, err := config.NewBaseCollector(tt.cfg, tt.name, senders); (err != nil) != tt.wantErr {
+				t.Errorf("NewBaseCollector(%s) error = %v, wantErr %v", tt.name, err, tt.wantErr)
 			}
 		})
 	}
