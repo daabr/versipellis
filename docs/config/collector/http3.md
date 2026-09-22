@@ -129,8 +129,10 @@
 
 ## `[collector.http3.tls]` Sub-Section
 
-[See this page](../tls.md)
+- Required
+- [See this page](../tls.md)
 
 ## `[collector.http3.retries]` Sub-Section
 
-[See this page](../retries.md)
+- Optional
+- [See this page](../retries.md)

@@ -35,4 +35,5 @@
 
 ## `[receiver.http3.tls]` Sub-Section
 
-[See this page](../tls.md)
+- Required
+- [See this page](../tls.md)

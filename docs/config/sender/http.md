@@ -104,8 +104,10 @@
 
 ## `[sender.http.tls]` Sub-Section
 
-[See this page](../tls.md)
+- Optional for HTTP/1.1, required for HTTP/2
+- [See this page](../tls.md)
 
 ## `[sender.http.retries]` Sub-Section
 
-[See this page](../retries.md)
+- Optional
+- [See this page](../retries.md)
