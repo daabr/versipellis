@@ -210,7 +210,7 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 
 	var body io.Reader
 	if c.body != nil {
-		body = bytes.NewReader(c.body) // Enables content-length & supports body reuse in 307 and 308 redirects.
+		body = bytes.NewReader(c.body) // Enables content-length & supports body reuse throughout redirects.
 	}
 
 	start := time.Now()
@@ -273,7 +273,7 @@ func (d *Destination) sendOnce(ctx context.Context, u *url.URL, h http.Header, f
 		return newErrorResponse(http.StatusInternalServerError), false
 	}
 
-	req.GetBody = fn // Enable body reuse in 307 and 308 redirects.
+	req.GetBody = fn // Enable body reuse throughout redirects.
 	req.ContentLength = cl
 	req.Header = h.Clone()
 
@@ -355,7 +355,7 @@ func newErrorResponse(statusCode int) *http.Response {
 }
 
 func retryable(statusCode int) bool {
-	if statusCode <= MaxSuccessfulStatusCode {
+	if statusCode < http.StatusBadRequest { // All 2xx and 3xx status codes.
 		return false
 	}
 	switch statusCode {

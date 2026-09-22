@@ -33,6 +33,8 @@ func TestCollectorRequestWithRetries(t *testing.T) {
 		status    int
 		retryable bool
 	}{
+		{"200", http.StatusOK, false},
+		{"300", http.StatusMultipleChoices, false},
 		{"400", http.StatusBadRequest, false},
 		{"404", http.StatusNotFound, false},
 		{"405", http.StatusMethodNotAllowed, false},
@@ -91,6 +93,7 @@ func TestDestinationSendWithRetries(t *testing.T) {
 		retryable bool
 	}{
 		{"200", http.StatusOK, false},
+		{"300", http.StatusMultipleChoices, false},
 		{"400", http.StatusBadRequest, false},
 		{"404", http.StatusNotFound, false},
 		{"405", http.StatusMethodNotAllowed, false},

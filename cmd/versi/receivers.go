@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log/slog"
+	"slices"
+	"strings"
 
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/http"
@@ -66,8 +68,11 @@ func initReceivers(ctx context.Context, senders map[string]config.Sender, entire
 		return nil, false
 	}
 
-	// Receivers are started synchronously, unlike collectors, to ensure deterministic startup order.
-	// For example: consistent errors when multiple receivers are configured to use the same port.
+	// Receivers are started synchronously and in a deterministic order - unlike collectors - to ensure deterministic
+	// behavior and results. For example: consistent errors when multiple ones are configured to use the same port.
+	slices.SortStableFunc(receivers, func(a, b receiver) int {
+		return strings.Compare(a.Base().Name, b.Base().Name)
+	})
 	for _, r := range receivers {
 		if !r.Start(ctx) {
 			b := r.Base()
