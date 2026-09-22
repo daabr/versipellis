@@ -136,7 +136,7 @@ func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.
 
 		var retry bool
 		resp, retry = c.requestOnce(execCtx)
-		if resp != nil && resp.StatusCode < MaxSuccessfulStatusCode {
+		if resp != nil && resp.StatusCode <= MaxSuccessfulStatusCode {
 			slog.Debug("HTTP request completed successfully",
 				slog.String("name", c.Name), slog.Int("attempt", i+1), slog.String("status", resp.Status),
 				slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
@@ -174,7 +174,7 @@ func (d *Destination) sendWithRetries(ctx context.Context, u *url.URL, h http.He
 		var retry bool
 		reqCtx := context.WithoutCancel(ctx)
 		resp, retry = d.sendOnce(reqCtx, u, h, getBody, size) //nolint:bodyclose // Body closed inside [sendOnce].
-		if resp != nil && resp.StatusCode < MaxSuccessfulStatusCode {
+		if resp != nil && resp.StatusCode <= MaxSuccessfulStatusCode {
 			slog.Debug("HTTP request completed successfully",
 				slog.String("name", d.Name), slog.Int("attempt", i+1), slog.String("status", resp.Status),
 				slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
@@ -355,7 +355,7 @@ func newErrorResponse(statusCode int) *http.Response {
 }
 
 func retryable(statusCode int) bool {
-	if statusCode < MaxSuccessfulStatusCode {
+	if statusCode <= MaxSuccessfulStatusCode {
 		return false
 	}
 	switch statusCode {
