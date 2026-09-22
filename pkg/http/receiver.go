@@ -103,10 +103,13 @@ func parseAddress(addr, protoVer string) (string, error) {
 // address. This function returns immediately, and the server runs asynchronously in the background.
 // The input context is used only for starting them, not to control their entire lifecycle.
 func (r *Receiver) Start(ctx context.Context) bool {
+	handler := http.Handler(r)
+	if r.timeout > 0 {
+		handler = http.TimeoutHandler(r, r.timeout, "")
+	}
 	mux := http.NewServeMux()
-	timedHandler := http.TimeoutHandler(r, r.timeout, "")
 	for _, method := range []string{http.MethodGet, http.MethodPatch, http.MethodPost, http.MethodPut} {
-		mux.Handle(method+" /", timedHandler)
+		mux.Handle(method+" /", handler)
 	}
 
 	if r.Type == config.ReceiverTypeHTTP {

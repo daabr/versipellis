@@ -23,7 +23,9 @@ const (
 	httpScheme  = "http"
 	httpsScheme = "https"
 
-	maxByteSize int64 = 100 << 20 // 100 MiB (which is already quite large for a single HTTP request).
+	maxByteSize          int64 = 100 << 20 // 100 MiB (which is already quite large for a single HTTP request).
+	defaultMaxBodySize   int64 = 10 << 20  // 10 MiB.
+	defaultMaxHeaderSize int64 = 1 << 20   // 1 MiB.
 
 	defaultRequestTimeout = 5 * time.Second
 )

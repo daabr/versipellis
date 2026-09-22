@@ -219,7 +219,7 @@ func (c *Collector) checkConcurrency(schedCtx, execCtx context.Context, sem chan
 			defer func() { <-sem }()
 
 			resp := c.requestWithRetries(schedCtx, execCtx) //nolint:bodyclose // See [Collector.requestOnce].
-			if resp.StatusCode < http.StatusBadRequest && c.Sender != nil {
+			if resp.StatusCode < MaxSuccessfulStatusCode && c.Sender != nil {
 				c.Sender(execCtx, resp) // Returns quickly (usually asynchronous internally).
 			}
 		})

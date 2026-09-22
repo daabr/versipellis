@@ -158,7 +158,7 @@ func serializeData(data any, outURL *url.URL, outHdr http.Header) (getBodyFunc, 
 		if t.GetBody != nil { // Optimization to avoid duplicate memory allocations for the request body.
 			return t.GetBody, t.ContentLength, nil
 		}
-		defer t.Body.Close()
+		defer t.Body.Close() // Redundant but harmless (see [http.Request.Body] for server requests).
 		b, err := io.ReadAll(t.Body)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to read HTTP request body: %w", err)
@@ -178,7 +178,7 @@ func serializeData(data any, outURL *url.URL, outHdr http.Header) (getBodyFunc, 
 			// bodies during retries), working around the fact that [http.Response] doesn't have a GetBody() method.
 			return b.GetBody, t.ContentLength, nil
 		}
-		defer t.Body.Close()
+		defer t.Body.Close() // It's important to call this before [io.ReadAll], but only here, not above.
 		b, err := io.ReadAll(t.Body)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to read HTTP response body: %w", err)

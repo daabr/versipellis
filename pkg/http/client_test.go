@@ -216,8 +216,11 @@ func TestDestinationSendOnceEdgeCases(t *testing.T) {
 			if tt.headers != nil {
 				d.headers = tt.headers
 			}
-			body := io.NopCloser(bytes.NewReader(tt.body))
-			gotResp, gotRetry := d.sendOnce(t.Context(), d.url, d.headers, body, int64(len(tt.body)))
+			getBody := func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(tt.body)), nil
+			}
+
+			gotResp, gotRetry := d.sendOnce(t.Context(), d.url, d.headers, getBody, int64(len(tt.body)))
 			_ = gotResp.Body.Close()
 			if gotRetry {
 				t.Error("Destination.sendOnce() bool = true, want false")
@@ -510,7 +513,11 @@ func TestDestinationSendOnceNetworkError(t *testing.T) {
 		t.Fatalf("NewDestination() error: %v", err)
 	}
 
-	resp, retry := d.sendOnce(t.Context(), d.url, d.headers, nil, 0)
+	getBody := func() (io.ReadCloser, error) {
+		return nil, nil
+	}
+
+	resp, retry := d.sendOnce(t.Context(), d.url, d.headers, getBody, 0)
 	t.Cleanup(func() { _ = resp.Body.Close() })
 
 	if resp.StatusCode != http.StatusGatewayTimeout {

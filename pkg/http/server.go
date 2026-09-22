@@ -126,8 +126,8 @@ func (r *Receiver) Close(ctx context.Context) {
 				slog.Error("HTTP server shutdown error", slog.Any("error", err),
 					slog.String("name", r.Name), slog.String("tcp_addr", r.address),
 				)
-				_ = r.tcp.Close() // Force close if graceful shutdown failed.
 			}
+			_ = r.tcp.Close() // In case of a [context.DeadlineExceeded] (redundant but harmless otherwise).
 			r.tcp = nil
 		}
 
@@ -138,8 +138,8 @@ func (r *Receiver) Close(ctx context.Context) {
 				slog.Error("HTTP/3 server shutdown error", slog.Any("error", err),
 					slog.String("name", r.Name), slog.String("udp_addr", r.address),
 				)
-				_ = r.udp.Close() // Force close if graceful shutdown failed.
 			}
+			_ = r.udp.Close() // In case of a [context.DeadlineExceeded] (redundant but harmless otherwise).
 			r.udp = nil
 		}
 	})
