@@ -41,8 +41,9 @@ type Sender struct {
 	batch       atomic.Bool
 
 	inProgress sync.WaitGroup
-	closeOnce  sync.Once
 	lameDuck   atomic.Bool
+	closeMu    sync.RWMutex
+	closeOnce  sync.Once
 	stop       chan struct{}
 }
 
@@ -132,6 +133,13 @@ func (s *Sender) Send(ctx context.Context, data any) {
 		return
 	}
 
+	s.closeMu.RLock()
+	defer s.closeMu.RUnlock()
+
+	if s.lameDuck.Load() {
+		return
+	}
+
 	s.inProgress.Go(func() {
 		s.sendWithRetries(ctx, outURL, outHdr, getBody, contentLength)
 	})
@@ -141,7 +149,9 @@ func (s *Sender) Send(ctx context.Context, data any) {
 // rejects new ones. If pending requests don't finish in time, the sender will forcefully close their connections.
 func (s *Sender) Close(ctx context.Context) {
 	s.closeOnce.Do(func() {
+		s.closeMu.Lock()
 		s.lameDuck.Store(true)
+		s.closeMu.Unlock()
 
 		timeout := s.timeout
 		if timeout <= 0 || timeout > CloseTimeout {

@@ -35,6 +35,7 @@ type DeadLetterQueue struct {
 
 	inProgress sync.WaitGroup
 	lameDuck   atomic.Bool
+	closeMu    sync.RWMutex
 	closeOnce  sync.Once
 }
 
@@ -70,6 +71,13 @@ func (d *DeadLetterQueue) Send(_ context.Context, data any) {
 		return
 	}
 
+	d.closeMu.RLock()
+	defer d.closeMu.RUnlock()
+
+	if d.lameDuck.Load() {
+		return
+	}
+
 	d.inProgress.Go(func() {
 		for range attempts {
 			if d.asyncWriteFile(payload, now, dirPermissions, filePermissions) {
@@ -83,7 +91,10 @@ func (d *DeadLetterQueue) Send(_ context.Context, data any) {
 // complete, and prevents new files from being created. This is the last step before process termination.
 func (d *DeadLetterQueue) Close(ctx context.Context) {
 	d.closeOnce.Do(func() {
+		d.closeMu.Lock()
 		d.lameDuck.Store(true)
+		d.closeMu.Unlock()
+
 		defer d.root.Close()
 
 		shutdownCtx, cancel := context.WithTimeout(ctx, time.Second)
@@ -100,7 +111,7 @@ func (d *DeadLetterQueue) Close(ctx context.Context) {
 			// All done.
 		case <-shutdownCtx.Done():
 			slog.Error("closing Dead-Letter-Queue writer forcefully")
-			// Not *reqlly* stopping disk writes, but the next step in
+			// Not *really* stopping disk writes, but the next step in
 			// main() is process termination, which does achieve this.
 			return
 		}
