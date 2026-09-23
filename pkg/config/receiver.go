@@ -24,28 +24,27 @@ type BaseReceiver struct {
 	Name string
 
 	Destination string
-	Sender      Sender
+	Sender      SendFunc
 }
 
-// NewBaseReceiver creates a new [BaseReceiver] from the given configuration, which was read from a TOML file. It checks
-// these details and returns an error if any of them is invalid, but the caller is responsible for providing non-nil input.
+// NewBaseReceiver creates a new [BaseReceiver] from the given configuration,
+// which was read from a TOML file. It checks these details and returns an error
+// if any of them is invalid, but the caller is responsible for providing non-nil input.
 func NewBaseReceiver(cfg map[string]any, name string, senders map[string]Sender) (*BaseReceiver, error) {
-	r := &BaseReceiver{
-		Type:        strings.ToLower(strings.TrimSpace(Value(cfg, "type", ""))),
-		Name:        name,
-		Destination: strings.TrimSpace(Value(cfg, "destination", "")), // Attention: case sensitive!
+	r := &BaseReceiver{Type: strings.ToLower(strings.TrimSpace(Value(cfg, "type", ""))), Name: name}
+	r.Destination = strings.TrimSpace(Value(cfg, "destination", "")) // Attention: case sensitive!
+	if sender, found := senders[r.Destination]; found {
+		r.Sender = sender.Send
 	}
-	var senderFound bool
-	r.Sender, senderFound = senders[r.Destination]
 
 	switch {
 	case r.Type == "":
 		return nil, errors.New("type field required but not found")
 	case !slices.Contains(validReceiverTypes, r.Type):
 		return nil, fmt.Errorf("unrecognized type %q", r.Type)
-	case !senderFound:
+	case r.Sender == nil:
 		return nil, fmt.Errorf("unrecognized destination %q", r.Destination)
+	default:
+		return r, nil
 	}
-
-	return r, nil
 }

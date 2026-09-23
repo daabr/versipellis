@@ -35,26 +35,29 @@ type BaseCollector struct {
 	Concurrency int
 }
 
-// NewBaseCollector creates a new [BaseCollector] from the given configuration, which was read from a TOML file. It checks
-// these details and returns an error if any of them is invalid, but the caller is responsible for providing non-nil input.
+// NewBaseCollector creates a new [BaseCollector] from the given configuration,
+// which was read from a TOML file. It checks these details and returns an error if
+// any of them is invalid, but the caller is responsible for providing non-nil input.
 func NewBaseCollector(cfg map[string]any, name string, senders map[string]Sender) (*BaseCollector, error) {
 	c := &BaseCollector{
-		Type:        strings.ToLower(strings.TrimSpace(Value(cfg, "type", ""))),
-		Name:        name,
+		Type: strings.ToLower(strings.TrimSpace(Value(cfg, "type", ""))),
+		Name: name,
+
 		Cronspec:    Value(cfg, "schedule", ""),
 		Trigger:     Value(cfg, "trigger", ""),
 		Concurrency: concurrencyLimit(cfg, name),
-		Destination: strings.TrimSpace(Value(cfg, "destination", "")), // Attention: case sensitive!
 	}
-	var senderFound bool
-	c.Sender, senderFound = senders[c.Destination]
+	c.Destination = strings.TrimSpace(Value(cfg, "destination", "")) // Attention: case sensitive!
+	if sender, found := senders[c.Destination]; found {
+		c.Sender = sender.Send
+	}
 
 	switch {
 	case c.Type == "":
 		return nil, errors.New("type field required but not found")
 	case !slices.Contains(validCollectorTypes, c.Type):
 		return nil, fmt.Errorf("unrecognized type %q", c.Type)
-	case !senderFound:
+	case c.Sender == nil:
 		return nil, fmt.Errorf("unrecognized destination %q", c.Destination)
 	case c.Cronspec != "" && c.Trigger != "":
 		return nil, errors.New("configuration cannot have both a schedule and a trigger")

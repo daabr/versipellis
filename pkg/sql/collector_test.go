@@ -247,7 +247,7 @@ func TestCollectorConnectionStringError(t *testing.T) {
 
 	base, err := config.NewBaseCollector(
 		map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"},
-		"TestCollectorConnectionStringError", map[string]config.Sender{"": nil},
+		"TestCollectorConnectionStringError", map[string]config.Sender{"": dest.Discard},
 	)
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
@@ -329,7 +329,7 @@ func TestScheduleNextQuery(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				base, err := config.NewBaseCollector(
 					map[string]any{"type": config.CollectorTypeSQL, "schedule": tt.schedule},
-					tt.name, map[string]config.Sender{"": nil},
+					tt.name, map[string]config.Sender{"": dest.Discard},
 				)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
@@ -436,7 +436,7 @@ func TestCollectorExecuteQuery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("cron.Parse() error: %v", err)
 			}
-			base := &config.BaseCollector{Type: config.CollectorTypeSQL, Schedule: sched, Sender: dest.Discard}
+			base := &config.BaseCollector{Type: config.CollectorTypeSQL, Schedule: sched, Sender: dest.Discard.Send}
 			c, err := NewCollector(base, tt.cfg)
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
@@ -770,7 +770,7 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				base, err := config.NewBaseCollector(
 					map[string]any{"type": config.CollectorTypeSQL, "schedule": "@every 1s", "concurrency_limit": tt.limit},
-					tt.name, map[string]config.Sender{"": nil},
+					tt.name, map[string]config.Sender{"": dest.Discard},
 				)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)

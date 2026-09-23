@@ -326,7 +326,7 @@ func TestScheduleNextRequest(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				base, err := config.NewBaseCollector(
 					map[string]any{"type": config.CollectorTypeHTTP, "schedule": tt.schedule},
-					tt.name, map[string]config.Sender{"": nil},
+					tt.name, map[string]config.Sender{"": dest.Discard},
 				)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
@@ -483,7 +483,7 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				base, err := config.NewBaseCollector(
 					map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@every 1s", "concurrency_limit": tt.limit},
-					tt.name, map[string]config.Sender{"": nil},
+					tt.name, map[string]config.Sender{"": dest.Discard},
 				)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
@@ -539,7 +539,7 @@ func TestCollectorCheckConcurrencyCanceled(t *testing.T) {
 	ch := make(chan struct{}, 1)
 	ch <- struct{}{}
 
-	c.checkConcurrency(ctx, t.Context(), ch, time.Now())
+	c.requestWithRateLimit(ctx, t.Context(), ch, time.Now())
 
 	if len(ch) != 1 {
 		t.Errorf("len(ch) = %d, want 1", len(ch))

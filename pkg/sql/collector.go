@@ -92,15 +92,17 @@ func (c *Collector) Base() *config.BaseCollector {
 	return &config.BaseCollector{
 		Type:        c.Type,
 		Name:        c.Name,
+		Destination: c.Destination,
+
 		Cronspec:    c.Cronspec,
 		Trigger:     c.Trigger,
 		Concurrency: c.Concurrency,
-		Destination: c.Destination,
 	}
 }
 
-// NewCollector creates a new [Collector] from the given configuration, which was read from a TOML file. It checks the details
-// and returns an error if any of them is semantically invalid, but the caller is responsible for providing usable input.
+// NewCollector creates a new [Collector] from the given configuration, which was
+// read from a TOML file. It checks the details and returns an error if any of them
+// is semantically invalid, but the caller is responsible for providing usable input.
 func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, error) {
 	c := &Collector{
 		BaseCollector: *base,
@@ -334,8 +336,8 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 
 	data, err := processResults(queryCtx, rows, 1)
 	end := time.Now()
-	if len(data) > 0 && c.Sender != nil {
-		c.Sender(ctx, data) // Returns quickly (usually asynchronous internally).
+	if len(data) > 0 {
+		c.Sender(context.WithoutCancel(ctx), data) // Returns quickly (usually asynchronous internally).
 	}
 
 	ok := err == nil

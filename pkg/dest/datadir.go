@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -14,26 +15,53 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const (
-	dataDir = "data"
+	attempts = 3
 
 	dirPermissions  = 0o700
 	filePermissions = 0o600
 	fileFlags       = os.O_CREATE | os.O_EXCL | os.O_WRONLY
-	dlqAttempts     = 3
 )
 
-var dlqInProgress sync.WaitGroup // Reminder: expose to main() a time-bounded wait function in a future PR.
+// DeadLetterQueue is an alternative destination for data that couldn't be delivered
+// successfully by other senders. It behaves similarly to [Stdout], but writes the
+// data into a local directory instead, specifically to a k-sortable filename.
+type DeadLetterQueue struct {
+	root *os.Root
 
-// DeadLetterQueue is an alternative destination for data that could not be delivered successfully
-// by other [config.Sender]s. It behaves very similarly to [Stdout], but writes the output to the
-// local filesystem instead, specifically to a k-sortable filename in the app's data directory.
-func DeadLetterQueue(_ context.Context, data any) {
-	if data == nil {
-		return // Don't log nil data, other senders use it as a sentinel for batches.
+	inProgress sync.WaitGroup
+	lameDuck   atomic.Bool
+	closeOnce  sync.Once
+}
+
+// InitDeadLetterQueue initializes an alternative destination for data that couldn't be
+// delivered successfully by other senders. It behaves similarly to [Stdout], but writes
+// the data into a local directory instead, specifically to a k-sortable filename.
+func InitDeadLetterQueue(rootDir string) *DeadLetterQueue {
+	// No need to check for errors here: if the directory creation fails
+	// for any reason, the subsequent file creation will fail as well.
+	_ = os.MkdirAll(rootDir, dirPermissions)
+
+	r, err := os.OpenRoot(rootDir)
+	if err != nil {
+		slog.Error("dead-letter-queue directory initialization error", slog.Any("error", err))
+		return nil
+	}
+
+	return &DeadLetterQueue{root: r}
+}
+
+// Send serializes and writes any data into a file with a k-sortable name
+// within the "data" directory in the process's current working directory.
+func (d *DeadLetterQueue) Send(_ context.Context, data any) {
+	// Don't log nil data, other senders use it as a sentinel for batches.
+	// Also, don't write a new file if we're almost done shutting down.
+	if data == nil || d.lameDuck.Load() {
+		return
 	}
 
 	now := time.Now().UTC()
@@ -42,41 +70,49 @@ func DeadLetterQueue(_ context.Context, data any) {
 		return
 	}
 
-	dlqInProgress.Go(func() {
-		for range dlqAttempts {
-			if asyncWriteToDataDir(payload, now) {
+	d.inProgress.Go(func() {
+		for range attempts {
+			if d.asyncWriteFile(payload, now, dirPermissions, filePermissions) {
 				return
 			}
 		}
 	})
 }
 
-func asyncWriteToDataDir(data []byte, now time.Time) bool {
-	dir, file := uniqueKSortablePath(dataDir, now)
-	path := filepath.Join(dir, file)
+// Close waits (up to 1 second, not [CloseTimeout]) for disk writes which are currently in progress to
+// complete, and prevents new files from being created. This is the last step before process termination.
+func (d *DeadLetterQueue) Close(ctx context.Context) {
+	d.closeOnce.Do(func() {
+		d.lameDuck.Store(true)
+		defer d.root.Close()
 
-	err := os.MkdirAll(dir, dirPermissions)
-	if err == nil {
-		var f *os.File
-		f, err = os.OpenFile(path, fileFlags, filePermissions) //gosec:disable G304: Self-generated path.
-		if err == nil {
-			defer f.Close()
-			if _, err = f.Write(data); err == nil {
-				if err = f.Sync(); err == nil {
-					return true
-				}
-			}
-			_ = os.Remove(path) // Cleanup in case the file was created but writing to it failed.
+		shutdownCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			d.inProgress.Wait()
+		}()
+
+		select {
+		case <-done:
+			// All done.
+		case <-shutdownCtx.Done():
+			slog.Error("closing Dead-Letter-Queue writer forcefully")
+			// Not *reqlly* stopping disk writes, but the next step in
+			// main() is process termination, which does achieve this.
+			return
 		}
-	}
-	slog.Error("failed to write data to DLQ file", slog.Any("error", err), slog.String("path", path))
-	return false
+	})
 }
 
 func serializeData(data any) []byte {
 	switch t := data.(type) {
 	case []byte:
-		return bytes.Clone(t)
+		// Mutation of the original byte slice is not a concern because it's already abandoned by the data
+		// source. On the other hand, GC pressure due to duplicating huge blobs is something we need to avoid.
+		return t
 
 	case *http.Request:
 		if t == nil {
@@ -85,8 +121,8 @@ func serializeData(data any) []byte {
 		if t.Body != nil {
 			defer t.Body.Close()
 		}
-		var buf bytes.Buffer
-		if err := t.Write(&buf); err != nil {
+		buf := new(bytes.Buffer)
+		if err := t.Write(buf); err != nil {
 			slog.Error("failed to serialize HTTP request into DLQ file", slog.Any("error", err))
 			return nil
 		}
@@ -99,8 +135,8 @@ func serializeData(data any) []byte {
 		if t.Body != nil {
 			defer t.Body.Close()
 		}
-		var buf bytes.Buffer
-		if err := t.Write(&buf); err != nil {
+		buf := new(bytes.Buffer)
+		if err := t.Write(buf); err != nil {
 			slog.Error("failed to serialize HTTP response into DLQ file", slog.Any("error", err))
 			return nil
 		}
@@ -108,8 +144,8 @@ func serializeData(data any) []byte {
 	}
 
 	// Fall-back to JSON encoding for other data types.
-	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
+	buf := new(bytes.Buffer)
+	encoder := json.NewEncoder(buf)
 	encoder.SetEscapeHTML(false) // Passing raw data, not rendering it, so don't alter it.
 
 	if err := encoder.Encode(data); err != nil {
@@ -120,19 +156,50 @@ func serializeData(data any) []byte {
 	return buf.Bytes()
 }
 
-func uniqueKSortablePath(prefix string, now time.Time) (dir, file string) {
-	// Intentionally not reusing the 'now' parameter: in case we fail to
-	// generate a random number below, we still have a unique timestamp.
+func (d *DeadLetterQueue) asyncWriteFile(data []byte, now time.Time, dirPerms, filePerms os.FileMode) bool {
+	dir, file := uniqueKSortablePath(now)
+	path := filepath.Join(dir, file)
+
+	if err := d.root.Mkdir(dir, dirPerms); err != nil && !errors.Is(err, os.ErrExist) {
+		slog.Error("failed to create DLQ subdirectory", slog.Any("error", err), slog.String("dir", dir))
+		return false
+	}
+
+	f, err := d.root.OpenFile(path, fileFlags, filePerms)
+	if err != nil {
+		slog.Error("failed to create DLQ file", slog.Any("error", err), slog.String("path", path))
+		return false
+	}
+	defer f.Close()
+
+	if err := writeAndSync(f, data); err != nil {
+		slog.Error("failed to write DLQ file", slog.Any("error", err), slog.String("path", path))
+		_ = d.root.Remove(path) // Cleanup in case the file was created but writing to it failed.
+		return false
+	}
+
+	return true
+}
+
+func uniqueKSortablePath(now time.Time) (dir, file string) {
+	// Intentionally not reusing the 'now' parameter: in case we fail to generate
+	// a random number below, we still have a relatively unique timestamp to use,
+	// even if there are multiple files being created at the same time.
 	n := time.Now().UnixNano()
 
-	for range dlqAttempts {
+	for range attempts {
 		if r, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt64)); err == nil && r.IsInt64() {
 			n = r.Int64()
 			break
 		}
 	}
 
-	dir = filepath.Join(prefix, now.Format("2006-01-02__15"))
+	dir = now.Format("2006-01-02__15")
 	file = fmt.Sprintf("%d__%s", now.UnixNano(), strconv.FormatInt(n, 36))
 	return dir, file
+}
+
+func writeAndSync(f *os.File, data []byte) error {
+	_, err := f.Write(data)
+	return errors.Join(err, f.Sync())
 }

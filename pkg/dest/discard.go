@@ -5,9 +5,17 @@ import (
 	"net/http"
 )
 
-// Discard is a simple function that doesn't output anything, but it does
-// close any resources associated with the data, unlike a nil [config.Sender].
-func Discard(_ context.Context, data any) {
+// Discard is a trivial sender that doesn't output anything, but it does
+// close any resources associated with known data types, unlike a nil sender.
+var Discard = newDiscard()
+
+type discardSender struct{}
+
+func newDiscard() discardSender {
+	return discardSender{}
+}
+
+func (discardSender) Send(_ context.Context, data any) {
 	switch t := data.(type) {
 	case *http.Request:
 		if t != nil && t.Body != nil {
@@ -19,3 +27,5 @@ func Discard(_ context.Context, data any) {
 		}
 	}
 }
+
+func (discardSender) Close(context.Context) {}

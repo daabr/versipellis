@@ -32,7 +32,6 @@ func main() {
 	if exit {
 		os.Exit(0)
 	}
-
 	cfg, err := config.ParseFile(path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
@@ -44,6 +43,7 @@ func main() {
 
 	senders, ok := initSenders(cfg)
 	if !ok {
+		cancel()
 		os.Exit(1)
 	}
 	collectorsDone, ok := initCollectors(ctx, senders, cfg)
@@ -56,7 +56,6 @@ func main() {
 		cancel()
 		os.Exit(1)
 	}
-
 	if len(collectorsDone)+len(receivers) == 0 {
 		slog.Error("no collectors or receivers initialized")
 		cancel()
@@ -74,6 +73,16 @@ func main() {
 		<-done
 	}
 	wg.Wait()
+
+	// Close the Dead Letter Queue (DLQ) only after all other senders are closed, to
+	// ensure it can still handle undelivered data from them while they're being closed.
+	dlq := senders[config.SenderTypeDLQ]
+	delete(senders, config.SenderTypeDLQ)
+	for _, sender := range senders {
+		wg.Go(func() { sender.Close(ctx) })
+	}
+	wg.Wait()
+	dlq.Close(ctx)
 
 	slog.Info("shutting down")
 }
@@ -119,6 +128,6 @@ func waitForInterrupt(cancel context.CancelFunc) {
 	defer signal.Stop(ch)
 	sig := <-ch
 
-	slog.Warn("intercepted OS signal", slog.String("type", sig.String()))
+	slog.Warn("intercepted OS signal, entering lame-duck mode", slog.String("signal", sig.String()))
 	cancel()
 }

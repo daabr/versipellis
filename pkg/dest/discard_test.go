@@ -1,12 +1,10 @@
-package dest_test
+package dest
 
 import (
 	"io"
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/daabr/versipellis/pkg/dest"
 )
 
 func TestDiscard(t *testing.T) {
@@ -53,7 +51,10 @@ func TestDiscard(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			dest.Discard(t.Context(), tt.data) // The best we can do is to ensure it doesn't panic.
+			// The most we can check is that this doesn't panic.
+			d := newDiscard()
+			d.Send(t.Context(), tt.data)
+			d.Close(t.Context())
 		})
 	}
 }

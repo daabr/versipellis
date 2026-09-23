@@ -4,15 +4,19 @@ import (
 	"encoding/json"
 	"io"
 	"io/fs"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestDeadLetterQueue(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		data     any
@@ -22,6 +26,11 @@ func TestDeadLetterQueue(t *testing.T) {
 		{
 			name:     "nil",
 			data:     nil,
+			wantSkip: true,
+		},
+		{
+			name:     "empty_byte_slice",
+			data:     []byte(""),
 			wantSkip: true,
 		},
 		{
@@ -91,13 +100,18 @@ func TestDeadLetterQueue(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Chdir(t.TempDir())
+			t.Parallel()
 
-			DeadLetterQueue(t.Context(), tt.data)
-			dlqInProgress.Wait()
+			tempDir := t.TempDir()
+			dlq := InitDeadLetterQueue(tempDir)
+			if dlq == nil {
+				t.Fatalf("failed to initialize DeadLetterQueue")
+			}
+			dlq.Send(t.Context(), tt.data)
+			dlq.Close(t.Context())
 
 			got := ""
-			err := filepath.WalkDir(dataDir, func(path string, d fs.DirEntry, err error) error {
+			err := filepath.WalkDir(tempDir, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
 					return err
 				}
@@ -106,17 +120,17 @@ func TestDeadLetterQueue(t *testing.T) {
 				}
 				f, err := os.ReadFile(path) //gosec:disable G122 G304 // Unit test.
 				if err != nil {
-					return err
+					t.Fatalf("failed to read file %q: %v", path, err)
 				}
 				got = string(f)
 				return nil
 			})
-			if (err != nil) != tt.wantSkip {
-				t.Fatalf("filepath.WalkDir(%s) error = %v, file = %q, wantSkip %v, ", tt.name, err, got, tt.wantSkip)
+			if err != nil {
+				t.Fatalf("filepath.WalkDir(%s) error = %v", tt.name, err)
 			}
 
 			if tt.wantSkip && got != "" {
-				t.Errorf("DeadLetterQueue(%s) = %q, want to skip", tt.name, got)
+				t.Errorf("DeadLetterQueue(%s) = %q, want no file", tt.name, got)
 			} else if got != tt.want {
 				t.Errorf("DeadLetterQueue(%s) = %q, want %q", tt.name, got, tt.want)
 			}
@@ -124,29 +138,33 @@ func TestDeadLetterQueue(t *testing.T) {
 	}
 }
 
-const (
-	goroutines        = 10
-	callsPerGoroutine = 10
-)
-
 func TestDeadLetterQueueConcurrency(t *testing.T) {
-	t.Chdir(t.TempDir())
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	dlq := InitDeadLetterQueue(tempDir)
+	if dlq == nil {
+		t.Fatalf("failed to initialize DeadLetterQueue")
+	}
+	t.Cleanup(func() { dlq.Close(t.Context()) })
+
+	const concurrencyFactor = 10
 
 	var wg sync.WaitGroup
-	for g := range goroutines {
+	for goroutine := range concurrencyFactor {
 		wg.Go(func() {
-			for i := range callsPerGoroutine {
-				DeadLetterQueue(t.Context(), map[string]any{"goroutine": g, "call": i})
+			for call := range concurrencyFactor {
+				dlq.Send(t.Context(), map[string]any{"goroutine": goroutine, "call": call})
 			}
 		})
 	}
 	wg.Wait()
-	dlqInProgress.Wait()
+	dlq.inProgress.Wait()
 
-	seen := [goroutines][callsPerGoroutine]int{}
-	gotLines := 0
+	seen := [concurrencyFactor][concurrencyFactor]int{}
+	gotFiles := 0
 
-	err := filepath.WalkDir(dataDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(tempDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -154,35 +172,71 @@ func TestDeadLetterQueueConcurrency(t *testing.T) {
 			return nil
 		}
 
-		f, err := os.ReadFile(path) //gosec:disable G122 G304 // Purely for testing.
+		f, err := os.ReadFile(path) //gosec:disable G122 G304 // Self-generated path for testing.
 		if err != nil {
 			return err
 		}
-		got := new(struct {
-			Goroutine int `json:"goroutine"`
-			Call      int `json:"call"`
+
+		gotFile := new(struct {
+			G int `json:"goroutine"`
+			C int `json:"call"`
 		})
-		if err := json.Unmarshal(f, got); err != nil {
-			return err //nolint:wrapcheck // Purely for testing.
+		if err = json.Unmarshal(f, gotFile); err != nil {
+			t.Fatalf("invalid JSON in file %q: %v", path, err)
 		}
 
-		gotLines++
-		if got.Goroutine < 0 || got.Goroutine >= goroutines || got.Call < 0 || got.Call >= callsPerGoroutine {
-			t.Errorf("invalid index(es) in line %d: %+v", gotLines, got)
+		if n := concurrencyFactor; gotFile.G < 0 || gotFile.G >= n || gotFile.C < 0 || gotFile.C >= n {
+			t.Fatalf("invalid index(es) in file %q: %+v", path, gotFile)
 		}
 
-		seen[got.Goroutine][got.Call]++
-		if seen[got.Goroutine][got.Call] > 1 {
-			t.Errorf("instance no. %d of: goroutine %d, call %d", seen[got.Goroutine][got.Call], got.Goroutine, got.Call)
-		}
+		seen[gotFile.G][gotFile.C]++
+		gotFiles++
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("filepath.WalkDir(%s) error = %v", t.Name(), err)
 	}
 
-	wantLines := goroutines * callsPerGoroutine
-	if gotLines != wantLines {
-		t.Errorf("got %d lines in total, want %d", gotLines, wantLines)
+	if wantFiles := concurrencyFactor * concurrencyFactor; gotFiles != wantFiles {
+		t.Errorf("got %d files in total, want %d", gotFiles, wantFiles)
+	}
+	for g := range concurrencyFactor {
+		for c := range concurrencyFactor {
+			if seen[g][c] != 1 {
+				t.Errorf("goroutine %d, call %d: seen %d times, want 1", g+1, c+1, seen[g][c])
+			}
+		}
+	}
+}
+
+func TestAsyncWriteFileErrors(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	dlq := InitDeadLetterQueue(tempDir)
+	if dlq == nil {
+		t.Fatalf("failed to initialize DeadLetterQueue")
+	}
+	t.Cleanup(func() { dlq.Close(t.Context()) })
+
+	tests := []struct {
+		name      string
+		dirPerms  os.FileMode
+		filePerms os.FileMode
+		wantOK    bool
+	}{
+		{"valid_perms", dirPermissions, filePermissions, true},
+		{"invalid_dir_perms", os.FileMode(math.MaxUint32), filePermissions, false},
+		{"invalid_file_perms", dirPermissions, os.FileMode(math.MaxUint32), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gotOK := dlq.asyncWriteFile([]byte("data"), time.Now().UTC(), tt.dirPerms, tt.filePerms)
+			if gotOK != tt.wantOK {
+				t.Errorf("asyncWriteFile() = %v, want %v", gotOK, tt.wantOK)
+			}
+		})
 	}
 }

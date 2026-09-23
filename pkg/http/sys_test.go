@@ -98,7 +98,7 @@ func TestCollectorReceiverSender(t *testing.T) {
 					}
 					serverReceived.Write(body)
 					w.WriteHeader(http.StatusOK)
-					t.Logf("server received from destination: %q", body)
+					t.Logf("server received from sender: %q", body)
 					close(done)
 				}
 			})
@@ -108,11 +108,11 @@ func TestCollectorReceiverSender(t *testing.T) {
 			if tt.tls {
 				cfg["tls"] = map[string]any{"server_ca_cert_file": certPath}
 			}
-			dst, err := NewDestination(cfg, "TestCollectorReceiverSender.sender", tt.baseType)
+			sender, err := NewSender(cfg, "TestCollectorReceiverSender.sender", tt.baseType)
 			if err != nil {
-				t.Fatalf("NewDestination() error: %v", err)
+				t.Fatalf("NewSender() error: %v", err)
 			}
-			senders := map[string]config.Sender{"test": dst.Send}
+			senders := map[string]config.Sender{"test": sender}
 
 			// Collector.
 			if tt.collector {
@@ -165,9 +165,9 @@ func TestCollectorReceiverSender(t *testing.T) {
 					cfg["url"] = "https://" + rcv.address
 					cfg["tls"] = map[string]any{"server_ca_cert_file": caPath}
 				}
-				dst, err = NewDestination(cfg, "TestCollectorReceiverSender.client", tt.baseType)
+				sender, err = NewSender(cfg, "TestCollectorReceiverSender.client", tt.baseType)
 				if err != nil {
-					t.Fatalf("NewDestination() error: %v", err)
+					t.Fatalf("NewSender() error: %v", err)
 				}
 
 				body := rand.Text()
@@ -176,7 +176,7 @@ func TestCollectorReceiverSender(t *testing.T) {
 				getBody := func() (io.ReadCloser, error) {
 					return io.NopCloser(strings.NewReader(body)), nil
 				}
-				_, retry := dst.sendOnce(t.Context(), dst.url, dst.headers, getBody, l) //nolint:bodyclose // Closed in sendOnce.
+				_, retry := sender.sendOnce(t.Context(), sender.url, sender.headers, getBody, l) //nolint:bodyclose // sendOnce
 				if retry {
 					t.Fatalf("client failed to send to receiver")
 				}

@@ -16,15 +16,15 @@ type receiver interface {
 	Close(context.Context)
 }
 
-// initReceivers initializes, starts, and returns all the receivers that are defined in the TOML
-// configuration file. It does not fail fast; it attempts to initialize all of them before aborting if
-// any of them failed. This provides a better experience for first-time users with multiple configuration
-// mistakes, as they get feedback on all issues at once rather than encountering them one by one.
-func initReceivers(ctx context.Context, senders map[string]config.Sender, entireCfg map[string]any) ([]receiver, bool) {
+// initReceivers initializes, starts, and returns all the receivers that are defined in the
+// TOML configuration file. It does not fail fast; it attempts to initialize all of them before
+// aborting if any of them failed. This provides a better experience for first-time users with multiple
+// configuration mistakes, as they get feedback on all issues at once rather than encountering them one by one.
+func initReceivers(ctx context.Context, senders map[string]config.Sender, cfg map[string]any) ([]receiver, bool) {
 	var receivers []receiver
 	ok := true
 
-	for name, cfg := range config.ExtractSubmaps(entireCfg, "receiver") {
+	for name, cfg := range config.ExtractSubmaps(cfg, "receiver") {
 		if len(cfg) == 0 {
 			continue // Ignore empty receiver configuration sections (not an error, just useless).
 		}

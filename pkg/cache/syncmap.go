@@ -159,8 +159,14 @@ func (c *FastCache[K, V]) Get(key K) (V, bool) {
 }
 
 // Delete removes a specified item from the cache. If the item does not exist, this is a no-op.
-func (c *FastCache[K, V]) Delete(key K) {
-	c.m.Delete(key)
+func (c *FastCache[K, V]) Delete(key K) (V, bool) {
+	if v, found := c.m.LoadAndDelete(key); found {
+		if item, ok := v.(Item[V]); ok {
+			return item.Value, !item.Expired()
+		}
+	}
+	var zero V
+	return zero, false
 }
 
 // Clear removes all items from the cache.
