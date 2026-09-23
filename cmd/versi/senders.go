@@ -24,16 +24,18 @@ var (
 // any of them failed. This provides a better experience for first-time users with multiple configuration
 // mistakes, as they get feedback on all issues at once rather than encountering them one by one.
 func initSenders(cfg map[string]any) (map[string]config.Sender, bool) {
+	dlq := dest.InitDeadLetterQueue("data")
+	ok := dlq != nil
+
 	senders := map[string]config.Sender{
 		"":                       dest.Discard,
 		config.SenderTypeDiscard: dest.Discard,
 		config.SenderTypeNone:    dest.Discard,
 
 		config.SenderTypeStdout: dest.Stdout,
-		config.SenderTypeDLQ:    dest.InitDeadLetterQueue("data"),
+		config.SenderTypeDLQ:    dlq,
 	}
 
-	ok := senders[config.SenderTypeDLQ] != nil
 	for name, cfg := range config.ExtractSubSubmaps(cfg, "sender", validSenderTypes) {
 		if len(cfg) == 0 {
 			continue // Ignore empty sender configuration sections (not an error, just useless).
