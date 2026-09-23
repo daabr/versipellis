@@ -9,7 +9,7 @@ require (
 	github.com/godror/godror v0.51.5
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/lmittmann/tint v1.2.0
-	github.com/microsoft/go-mssqldb v1.11.0
+	github.com/microsoft/go-mssqldb v1.11.2
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/quic-go/quic-go v0.63.0
 	github.com/snowflakedb/gosnowflake/v2 v2.2.0
@@ -85,7 +85,7 @@ require (
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
-	modernc.org/libc v1.77.0 // indirect
+	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
