@@ -18,52 +18,55 @@ func TestDeadLetterQueue(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		lameDuck bool
-		data     any
-		want     string
-		wantSkip bool
+		name        string
+		lameDuck    bool
+		data        any
+		wantFiles   int
+		wantContent string
 	}{
 		{
-			name:     "nil",
-			data:     nil,
-			wantSkip: true,
+			name:      "nil",
+			data:      nil,
+			wantFiles: 0,
 		},
 		{
-			name:     "empty_byte_slice",
-			data:     []byte(""),
-			wantSkip: true,
+			name:      "empty_byte_slice",
+			data:      []byte(""),
+			wantFiles: 0,
 		},
 		{
-			name:     "send_during_close",
-			lameDuck: true,
-			data:     []byte("payload"),
-			wantSkip: true,
+			name:      "send_during_close",
+			lameDuck:  true,
+			data:      []byte("payload"),
+			wantFiles: 0,
 		},
 		{
-			name: "bytes",
-			data: []byte("payload"),
-			want: "payload",
+			name:        "bytes",
+			data:        []byte("payload"),
+			wantFiles:   1,
+			wantContent: "payload",
 		},
 		{
-			name: "json",
-			data: map[string]any{"key": "value", "number": 42, "list": []any{1, 2, 3}},
-			want: `{"key":"value","list":[1,2,3],"number":42}` + "\n",
+			name:        "json",
+			data:        map[string]any{"key": "value", "number": 42, "list": []any{1, 2, 3}},
+			wantFiles:   1,
+			wantContent: `{"key":"value","list":[1,2,3],"number":42}` + "\n",
 		},
 		{
-			name: "json_with_unencoded_html",
-			data: map[string]any{"html": "& < >"},
-			want: `{"html":"& < >"}` + "\n",
+			name:        "json_with_unencoded_html",
+			data:        map[string]any{"html": "& < >"},
+			wantFiles:   1,
+			wantContent: `{"html":"& < >"}` + "\n",
 		},
 		{
-			name:     "not_json",
-			data:     map[string]any{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
-			wantSkip: true,
+			name:      "not_json",
+			data:      map[string]any{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
+			wantFiles: 0,
 		},
 		{
-			name:     "nil_http_request",
-			data:     (*http.Request)(nil),
-			wantSkip: true,
+			name:      "nil_http_request",
+			data:      (*http.Request)(nil),
+			wantFiles: 0,
 		},
 		{
 			name: "http_request_without_body",
@@ -71,7 +74,8 @@ func TestDeadLetterQueue(t *testing.T) {
 				req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com", nil)
 				return req
 			}(),
-			want: "GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Go-http-client/1.1\r\n\r\n",
+			wantFiles:   1,
+			wantContent: "GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Go-http-client/1.1\r\n\r\n",
 		},
 		{
 			name: "http_request_with_body",
@@ -80,12 +84,13 @@ func TestDeadLetterQueue(t *testing.T) {
 				req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.com", body)
 				return req
 			}(),
-			want: "POST / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Go-http-client/1.1\r\nContent-Length: 4\r\n\r\nbody",
+			wantFiles:   1,
+			wantContent: "POST / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Go-http-client/1.1\r\nContent-Length: 4\r\n\r\nbody",
 		},
 		{
-			name:     "nil_http_response",
-			data:     (*http.Response)(nil),
-			wantSkip: true,
+			name:      "nil_http_response",
+			data:      (*http.Response)(nil),
+			wantFiles: 0,
 		},
 		{
 			name: "http_response",
@@ -102,7 +107,8 @@ func TestDeadLetterQueue(t *testing.T) {
 					Body:       io.NopCloser(body),
 				}
 			}(), //nolint:bodyclose // Unit test.
-			want: "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nbody",
+			wantFiles:   1,
+			wantContent: "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nbody",
 		},
 	}
 	for _, tt := range tests {
@@ -120,7 +126,8 @@ func TestDeadLetterQueue(t *testing.T) {
 			dlq.Send(t.Context(), tt.data)
 			dlq.Close(t.Context())
 
-			got := ""
+			gotFiles := 0
+			gotContent := ""
 			err := filepath.WalkDir(tempDir, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
 					return err
@@ -132,17 +139,18 @@ func TestDeadLetterQueue(t *testing.T) {
 				if err != nil {
 					t.Fatalf("failed to read file %q: %v", path, err)
 				}
-				got = string(f)
+				gotFiles++
+				gotContent = string(f)
 				return nil
 			})
 			if err != nil {
 				t.Fatalf("filepath.WalkDir(%s) error = %v", tt.name, err)
 			}
 
-			if tt.wantSkip && got != "" {
-				t.Errorf("DeadLetterQueue(%s) = %q, want no file", tt.name, got)
-			} else if got != tt.want {
-				t.Errorf("DeadLetterQueue(%s) = %q, want %q", tt.name, got, tt.want)
+			if gotFiles != tt.wantFiles {
+				t.Errorf("DeadLetterQueue(%s) = %d files, want %d files", tt.name, gotFiles, tt.wantFiles)
+			} else if gotContent != tt.wantContent {
+				t.Errorf("DeadLetterQueue(%s) = %q, want %q", tt.name, gotContent, tt.wantContent)
 			}
 		})
 	}

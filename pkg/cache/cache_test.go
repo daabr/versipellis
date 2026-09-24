@@ -213,6 +213,13 @@ func TestCacheDelete(t *testing.T) {
 			if found || got != 0 {
 				t.Errorf("Cache.Delete(after delete) = (%v, %v), want (0, false)", got, found)
 			}
+
+			c.Set(2, 2, cache.WithCustomExpiration(time.Nanosecond)) // Impossible not to exceed expiration.
+
+			got, found = c.Delete(2)
+			if found || got != 2 {
+				t.Errorf("Cache.Delete(after set) = (%v, %v), want (2, false)", got, found)
+			}
 		})
 	}
 }
