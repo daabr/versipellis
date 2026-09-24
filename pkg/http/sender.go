@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/dest"
 )
 
 const (
@@ -109,17 +110,18 @@ func NewSender(cfg map[string]any, name, baseType string) (*Sender, error) {
 // [http.Response]s are proxied with their headers and body preserved. Other data types are encoded
 // as JSON, if possible. Nil data is treated as a sentinel marking the beginning and the end of batches.
 func (s *Sender) Send(ctx context.Context, data any) {
-	if s.lameDuck.Load() {
-		slog.Warn("cannot send HTTP request: shutdown in progress", slog.String("name", s.Name))
-		return
-	}
-
 	// Don't send nil data, it is used as a sentinel for batches.
 	// Reminder: not fully implemented yet (batch size & batching duration limits).
 	if data == nil {
 		b := s.batch.Load()
 		s.batch.CompareAndSwap(b, !b) // Reminder: consider concurrency (how to handle overlapping batches).
 
+		return
+	}
+
+	if s.lameDuck.Load() {
+		slog.Warn("cannot send HTTP request: shutdown in progress", slog.String("name", s.Name))
+		dest.Discard.Send(ctx, data)
 		return
 	}
 
@@ -137,6 +139,8 @@ func (s *Sender) Send(ctx context.Context, data any) {
 	defer s.closeMu.RUnlock()
 
 	if s.lameDuck.Load() {
+		slog.Warn("cannot send HTTP request: shutdown in progress", slog.String("name", s.Name))
+		dest.Discard.Send(ctx, data)
 		return
 	}
 

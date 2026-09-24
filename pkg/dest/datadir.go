@@ -58,10 +58,13 @@ func InitDeadLetterQueue(rootDir string) *DeadLetterQueue {
 
 // Send serializes and writes any data into a file with a k-sortable name
 // within the "data" directory in the process's current working directory.
-func (d *DeadLetterQueue) Send(_ context.Context, data any) {
-	// Don't log nil data, other senders use it as a sentinel for batches.
-	// Also, don't write a new file if we're almost done shutting down.
-	if data == nil || d.lameDuck.Load() {
+func (d *DeadLetterQueue) Send(ctx context.Context, data any) {
+	if data == nil {
+		return // Don't log nil data, other senders use it as a sentinel for batches.
+	}
+
+	if d.lameDuck.Load() {
+		Discard.Send(ctx, data)
 		return
 	}
 
@@ -75,6 +78,7 @@ func (d *DeadLetterQueue) Send(_ context.Context, data any) {
 	defer d.closeMu.RUnlock()
 
 	if d.lameDuck.Load() {
+		Discard.Send(ctx, data)
 		return
 	}
 
