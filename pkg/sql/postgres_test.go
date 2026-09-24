@@ -277,7 +277,7 @@ func (p fakePGPool) BeginTx(_ context.Context, _ pgx.TxOptions) (pgx.Tx, error) 
 
 func (p fakePGPool) Close() {
 	if p.closeTimeout {
-		synctest.Sleep(2 * closeTimeout)
+		synctest.Sleep(2 * CloseTimeout)
 	}
 }
 

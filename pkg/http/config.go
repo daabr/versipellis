@@ -20,6 +20,8 @@ const (
 	// the connection. This is used during shutdown, so it's intentionally short and not configurable.
 	CloseTimeout = 5 * time.Second
 
+	abortTimeout = time.Second
+
 	httpScheme  = "http"
 	httpsScheme = "https"
 

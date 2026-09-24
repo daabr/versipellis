@@ -363,7 +363,7 @@ func TestScheduleNextRequest(t *testing.T) {
 func TestCollectorCloseTimeout(t *testing.T) {
 	t.Parallel()
 
-	testTimeout := 5 * time.Second
+	testTimeout := CloseTimeout + abortTimeout
 
 	tests := []struct {
 		name    string

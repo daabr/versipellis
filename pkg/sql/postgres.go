@@ -67,7 +67,7 @@ func (c *Collector) executePostgresQuery(execCtx, queryCtx context.Context) bool
 
 	data, err := processPostgresResults(queryCtx, rows)
 	end := time.Now()
-	if len(data) > 0 {
+	if len(data) > 0 && !c.aborted.Load() {
 		c.Sender(context.WithoutCancel(execCtx), data) // Returns quickly (usually asynchronous internally).
 	}
 

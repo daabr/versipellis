@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	// Import drivers for runtime registration in [sql].
@@ -54,8 +55,12 @@ var validDriverTypes = []string{
 }
 
 const (
-	closeTimeout = 5 * time.Second
+	// CloseTimeout is the maximum amount of time to wait for SQL queries to finish before forcibly closing
+	// their connection pool. This is used during shutdown, so it's intentionally short and not configurable.
+	CloseTimeout = 5 * time.Second
+
 	pingTimeout  = 5 * time.Second
+	abortTimeout = time.Second
 
 	defaultQueryTimeout = time.Minute
 )
@@ -84,6 +89,7 @@ type Collector struct {
 	closeDone   chan struct{}
 	inProgress  sync.WaitGroup
 	closeOnce   sync.Once
+	aborted     atomic.Bool
 }
 
 // Base returns a copy of the collector's static and generic configuration details.
@@ -336,7 +342,7 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 
 	data, err := processResults(queryCtx, rows, 1)
 	end := time.Now()
-	if len(data) > 0 {
+	if len(data) > 0 && !c.aborted.Load() {
 		c.Sender(context.WithoutCancel(ctx), data) // Returns quickly (usually asynchronous internally).
 	}
 
@@ -453,8 +459,8 @@ func (c *Collector) Close() {
 		}()
 
 		timeout := c.timeout
-		if timeout <= 0 || timeout > closeTimeout {
-			timeout = closeTimeout // Ensure the timeout is within acceptable bounds.
+		if timeout <= 0 || timeout > CloseTimeout {
+			timeout = CloseTimeout // Ensure the timeout is within acceptable bounds.
 		}
 
 		select {
@@ -467,6 +473,18 @@ func (c *Collector) Close() {
 			if c.cancelExec != nil {
 				c.cancelExec()
 			}
+		}
+
+		// Wait for aborted workers to actually stop, if there are any.
+		select {
+		case <-done:
+			// Immediate if the previous select block didn't encounter a timeout,
+			// So no need to nest this select block inside the previous one.
+		case <-time.After(abortTimeout):
+			slog.Error("aborted SQL collector didn't stop immediately",
+				slog.String("driver", c.driver), slog.String("name", c.Name),
+			)
+			c.aborted.Store(true)
 		}
 
 		if c.closeDone != nil {

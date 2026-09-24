@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
@@ -38,6 +39,7 @@ type Collector struct {
 	closeDone   chan struct{}
 	inProgress  sync.WaitGroup
 	closeOnce   sync.Once
+	aborted     atomic.Bool
 }
 
 // Base returns a copy of the collector's static and generic configuration details.
@@ -221,7 +223,7 @@ func (c *Collector) requestWithRateLimit(schedCtx, execCtx context.Context, sem 
 			defer func() { <-sem }()
 
 			resp := c.requestWithRetries(schedCtx, execCtx) //nolint:bodyclose // See [Collector.requestOnce].
-			if resp.StatusCode <= MaxSuccessfulStatusCode {
+			if resp.StatusCode <= MaxSuccessfulStatusCode && !c.aborted.Load() {
 				c.Sender(context.WithoutCancel(execCtx), resp) // Returns quickly (usually asynchronous internally).
 			}
 		})
@@ -270,6 +272,16 @@ func (c *Collector) Close() {
 			if c.cancelExec != nil {
 				c.cancelExec()
 			}
+		}
+
+		// Wait for aborted workers to actually stop, if there are any.
+		select {
+		case <-done:
+			// Immediate if the previous select block didn't encounter a timeout,
+			// So no need to nest this select block inside the previous one.
+		case <-time.After(abortTimeout):
+			slog.Error("aborted HTTP collector didn't stop immediately", slog.String("name", c.Name))
+			c.aborted.Store(true)
 		}
 
 		if c.closeDone != nil {
