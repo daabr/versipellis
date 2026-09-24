@@ -95,8 +95,6 @@ func (d *DeadLetterQueue) Close(ctx context.Context) {
 		d.lameDuck.Store(true)
 		d.closeMu.Unlock()
 
-		defer d.root.Close()
-
 		shutdownCtx, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
 
@@ -104,6 +102,7 @@ func (d *DeadLetterQueue) Close(ctx context.Context) {
 		go func() {
 			defer close(done)
 			d.inProgress.Wait()
+			_ = d.root.Close()
 		}()
 
 		select {
