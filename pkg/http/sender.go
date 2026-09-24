@@ -174,6 +174,9 @@ func (s *Sender) Close(ctx context.Context) {
 			slog.Warn("closing HTTP sender forcefully",
 				slog.String("name", s.Name), slog.Duration("timeout", timeout),
 			)
+			// Irrelevant for the done channel case: it's closed after [Sender.inProgress.Wait]
+			// returns, i.e. nothing is currently being sent that needs to be aborted, and new
+			// [Sender.Send] calls cannot start because [Sender.lameDuck] is already true.
 			close(s.stop)
 		}
 	})
