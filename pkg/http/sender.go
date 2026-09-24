@@ -171,7 +171,7 @@ func (s *Sender) Close(ctx context.Context) {
 		case <-done:
 			// All done.
 		case <-shutdownCtx.Done():
-			slog.Warn("closing HTTP sender forcefully",
+			slog.Warn("closing HTTP sender forcefully", slog.Any("error", shutdownCtx.Err()),
 				slog.String("name", s.Name), slog.Duration("timeout", timeout),
 			)
 			// Irrelevant for the done channel case: it's closed after [Sender.inProgress.Wait]

@@ -87,8 +87,8 @@ func (d *DeadLetterQueue) Send(_ context.Context, data any) {
 	})
 }
 
-// Close waits (up to 1 second, not [CloseTimeout]) for disk writes which are currently in progress to
-// complete, and prevents new files from being created. This is the last step before process termination.
+// Close waits (up to 1 second) for disk writes which are currently in progress to complete,
+// and prevents new files from being created. This is the last step before process termination.
 func (d *DeadLetterQueue) Close(ctx context.Context) {
 	d.closeOnce.Do(func() {
 		d.closeMu.Lock()

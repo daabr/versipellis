@@ -19,6 +19,7 @@ func TestDeadLetterQueue(t *testing.T) {
 
 	tests := []struct {
 		name     string
+		lameDuck bool
 		data     any
 		want     string
 		wantSkip bool
@@ -31,6 +32,12 @@ func TestDeadLetterQueue(t *testing.T) {
 		{
 			name:     "empty_byte_slice",
 			data:     []byte(""),
+			wantSkip: true,
+		},
+		{
+			name:     "send_during_close",
+			lameDuck: true,
+			data:     []byte("payload"),
 			wantSkip: true,
 		},
 		{
@@ -106,6 +113,9 @@ func TestDeadLetterQueue(t *testing.T) {
 			dlq := InitDeadLetterQueue(tempDir)
 			if dlq == nil {
 				t.Fatalf("failed to initialize DeadLetterQueue")
+			}
+			if tt.lameDuck {
+				dlq.lameDuck.Store(true)
 			}
 			dlq.Send(t.Context(), tt.data)
 			dlq.Close(t.Context())
