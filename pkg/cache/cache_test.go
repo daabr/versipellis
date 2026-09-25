@@ -175,6 +175,55 @@ func TestCacheSingleItemMethods(t *testing.T) {
 	}
 }
 
+func TestCacheDelete(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		cache func(...cache.Option) cache.Cache[int, int]
+	}{
+		{
+			name:  "syncmap",
+			cache: cache.NewFastCache[int, int],
+		},
+		{
+			name:  "mutexmap",
+			cache: cache.NewLeanCache[int, int],
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := tt.cache(cache.WithCleanup(0))
+
+			got, found := c.Delete(1)
+			if found || got != 0 {
+				t.Errorf("Cache.Delete(before set) = (%v, %v), want (0, false)", got, found)
+			}
+
+			c.Set(1, 1)
+
+			got, found = c.Delete(1)
+			if !found || got != 1 {
+				t.Errorf("Cache.Delete(after set) = (%v, %v), want (1, true)", got, found)
+			}
+
+			got, found = c.Delete(1)
+			if found || got != 0 {
+				t.Errorf("Cache.Delete(after delete) = (%v, %v), want (0, false)", got, found)
+			}
+
+			c.Set(2, 2, cache.WithCustomExpiration(time.Nanosecond)) // Impossible not to exceed expiration.
+
+			got, found = c.Delete(2)
+			if found || got != 2 {
+				t.Errorf("Cache.Delete(after set) = (%v, %v), want (2, false)", got, found)
+			}
+		})
+	}
+}
+
 func TestCacheItemExpiration(t *testing.T) {
 	t.Parallel()
 

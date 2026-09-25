@@ -64,7 +64,9 @@ type Cache[K comparable, V comparable] interface {
 	Get(key K) (V, bool)
 
 	// Delete removes a specified item from the cache. If the item does not exist, this is a no-op.
-	Delete(key K)
+	// Either way, it returns the deleted value (zero value if not found) and a deletion success
+	// indicator (i.e. false if the item was technically present but already expired).
+	Delete(key K) (V, bool)
 
 	// Clear removes all items from the cache.
 	Clear()

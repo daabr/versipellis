@@ -121,7 +121,7 @@ func parseRetryInterval(value string, minInterval, maxInterval time.Duration, na
 	return d, nil
 }
 
-func (r *retries) waitBeforeRetry(schedCtx, execCtx context.Context, attempt int) {
+func (r *retries) waitBeforeRetry(schedCtx, execCtx context.Context, closing <-chan struct{}, attempt int) {
 	interval := r.Interval
 	switch {
 	case attempt >= r.MaxAttempts-1:
@@ -134,6 +134,8 @@ func (r *retries) waitBeforeRetry(schedCtx, execCtx context.Context, attempt int
 	case <-schedCtx.Done():
 		return
 	case <-execCtx.Done():
+		return
+	case <-closing:
 		return
 	case <-time.After(interval):
 		return

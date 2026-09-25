@@ -94,7 +94,7 @@ func TestNewBaseCollector(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			senders := map[string]config.Sender{"": nil, "discard": dest.Discard}
+			senders := map[string]config.Sender{"": dest.Discard, "discard": dest.Discard}
 			if _, err := config.NewBaseCollector(tt.cfg, tt.name, senders); (err != nil) != tt.wantErr {
 				t.Errorf("NewBaseCollector(%s) error = %v, wantErr %v", tt.name, err, tt.wantErr)
 			}

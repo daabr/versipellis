@@ -18,15 +18,15 @@ import (
 	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/dest"
 )
 
 const (
 	contentTypeHeader = "Content-Type"
-	jsonContentType   = "application/json"
 )
 
-// Destination contains all the configuration and state details for sending HTTP requests.
-type Destination struct {
+// Sender contains all the configuration and state details for sending HTTP requests.
+type Sender struct {
 	Name string
 	Type string
 
@@ -42,94 +42,149 @@ type Destination struct {
 	batch       atomic.Bool
 
 	inProgress sync.WaitGroup
+	lameDuck   atomic.Bool
+	closeMu    sync.RWMutex
+	closeOnce  sync.Once
+	closing    chan struct{}
+	stop       chan struct{}
 }
 
-// NewDestination creates a new [Destination] from the given configuration, which was read
+// NewSender creates a new [config.Sender] with the provided configuration, which was read
 // from a TOML file. It checks the details and returns an error if any of them is invalid.
-func NewDestination(cfg map[string]any, name, baseType string) (*Destination, error) {
+func NewSender(cfg map[string]any, name, baseType string) (*Sender, error) {
+	s := &Sender{Name: name, Type: baseType, closing: make(chan struct{}), stop: make(chan struct{})}
 	var err error
-	d := &Destination{
-		Name: name,
-		Type: baseType,
-	}
 
-	if d.url, err = parseURL(config.Value(cfg, "url", ""), d.Type); err != nil {
+	if s.url, err = parseURL(config.Value(cfg, "url", ""), s.Type); err != nil {
 		return nil, err
 	}
-	if d.method, err = parseMethod(config.Value(cfg, "method", http.MethodPost), "sending"); err != nil {
+	if s.method, err = parseMethod(config.Value(cfg, "method", http.MethodPost), "sending"); err != nil {
 		return nil, err
 	}
-	if d.method == http.MethodGet {
-		return nil, fmt.Errorf("HTTP method %q not supported for sending data", d.method)
+	if s.method == http.MethodGet {
+		return nil, fmt.Errorf("HTTP method %q not supported for sending data", s.method)
 	}
-	if err := parseQuery(d.url, cfg["query"], "sender"); err != nil {
+	if err := parseQuery(s.url, cfg["query"], "sender"); err != nil {
 		return nil, err
 	}
-	if d.headers, err = parseHeaders(cfg["headers"], "sender"); err != nil {
+	if s.headers, err = parseHeaders(cfg["headers"], "sender"); err != nil {
 		return nil, err
 	}
-	if d.retries, err = parseRetries(cfg["retries"], d.method, d.Name); err != nil {
+	if s.retries, err = parseRetries(cfg["retries"], s.method, s.Name); err != nil {
 		return nil, err
 	}
 
-	if d.tls, d.transportID, err = loadClientTLSConfig(cfg["tls"], d.Type); err != nil {
+	if s.tls, s.transportID, err = loadClientTLSConfig(cfg["tls"], s.Type); err != nil {
 		return nil, err
 	}
-	if d.url.Scheme == httpScheme && cfg["tls"] != nil {
+	if s.url.Scheme == httpScheme && cfg["tls"] != nil {
 		if m, ok := cfg["tls"].(map[string]any); ok && len(m) > 0 {
 			slog.Warn("TLS config details are ineffective because URL scheme is unencrypted HTTP",
-				slog.String("name", d.Name), slog.String("url", d.url.Redacted()),
+				slog.String("name", s.Name), slog.String("url", s.url.Redacted()),
 			)
 		}
 	}
-	if d.timeout, err = time.ParseDuration(config.Value(cfg, "timeout", defaultRequestTimeout.String())); err != nil {
+	if s.timeout, err = time.ParseDuration(config.Value(cfg, "timeout", defaultRequestTimeout.String())); err != nil {
 		return nil, fmt.Errorf("invalid timeout duration: %w", err)
 	}
 	// For us, 0 is the same as negative values, but not in Go.
 	// This normalization simplifies HTTP client construction.
-	d.timeout = max(d.timeout, 0)
+	s.timeout = max(s.timeout, 0)
 	// HTTP transport configuration is affected by TLS, maximum header size, and timeout
 	// settings, so this prevents clients with different configurations from sharing transports.
-	d.transportID = fmt.Sprintf("%s,%d,%s", d.transportID, defaultMaxHeaderSize, d.timeout)
+	s.transportID = fmt.Sprintf("%s,%d,%s", s.transportID, defaultMaxHeaderSize, s.timeout)
 
-	switch d.Type {
+	switch s.Type {
 	case config.SenderTypeHTTP:
-		d.client = clientH2(d.tls.Clone(), defaultMaxHeaderSize, d.timeout, d.transportID)
+		s.client = clientH2(s.tls.Clone(), defaultMaxHeaderSize, s.timeout, s.transportID)
 	case config.SenderTypeHTTP3:
-		d.client = clientH3(d.tls.Clone(), defaultMaxHeaderSize, d.timeout, d.transportID)
+		s.client = clientH3(s.tls.Clone(), defaultMaxHeaderSize, s.timeout, s.transportID)
 	default:
-		return nil, fmt.Errorf("unexpected sender type %q", d.Type)
+		return nil, fmt.Errorf("unexpected sender type %q", s.Type)
 	}
 
-	return d, nil
+	return s, nil
 }
 
-// Send sends any data as an HTTP request to the configured [Destination], retrying on transient errors
-// based on [Destination.retries]. Byte buffers are sent as raw payloads, received [http.Request]s and
-// [http.Response]s are proxied with their headers and content preserved. Other data types are encoded
+// Send sends any data as an HTTP request to the configured [Sender], retrying on transient errors
+// based on [Sender.retries]. Byte buffers are sent as raw payloads, received [http.Request]s and
+// [http.Response]s are proxied with their headers and body preserved. Other data types are encoded
 // as JSON, if possible. Nil data is treated as a sentinel marking the beginning and the end of batches.
-func (d *Destination) Send(ctx context.Context, data any) {
+func (s *Sender) Send(ctx context.Context, data any) {
 	// Don't send nil data, it is used as a sentinel for batches.
 	// Reminder: not fully implemented yet (batch size & batching duration limits).
 	if data == nil {
-		b := d.batch.Load()
-		d.batch.CompareAndSwap(b, !b) // Reminder: consider concurrency (how to handle overlapping batches).
+		b := s.batch.Load()
+		s.batch.CompareAndSwap(b, !b) // Reminder: consider concurrency (how to handle overlapping batches).
 
 		return
 	}
 
-	outURL := d.url.Clone()
-	outHdr := d.headers.Clone()
+	if s.lameDuck.Load() {
+		slog.Warn("cannot send HTTP request: shutdown in progress", slog.String("name", s.Name))
+		dest.Discard.Send(ctx, data)
+		return
+	}
+
+	outURL := s.url.Clone()
+	outHdr := s.headers.Clone()
 	getBody, contentLength, err := serializeData(data, outURL, outHdr)
 	if err != nil {
 		slog.Error("failed to serialize payload for HTTP request", slog.Any("error", err),
-			slog.String("name", d.Name), slog.String("url", outURL.Redacted()),
+			slog.String("name", s.Name), slog.String("url", outURL.Redacted()),
 		)
 		return
 	}
 
-	d.inProgress.Go(func() {
-		d.sendWithRetries(ctx, outURL, outHdr, getBody, contentLength)
+	s.closeMu.RLock()
+	defer s.closeMu.RUnlock()
+
+	if s.lameDuck.Load() {
+		slog.Warn("cannot send HTTP request: shutdown in progress", slog.String("name", s.Name))
+		dest.Discard.Send(ctx, data)
+		return
+	}
+
+	s.inProgress.Go(func() {
+		s.sendWithRetries(ctx, outURL, outHdr, getBody, contentLength)
+	})
+}
+
+// Close waits (up to [CloseTimeout] or a context deadline) for requests that are in progress to finish, and
+// rejects new ones. If pending requests don't finish in time, the sender will forcefully close their connections.
+func (s *Sender) Close(ctx context.Context) {
+	s.closeOnce.Do(func() {
+		s.closeMu.Lock()
+		s.lameDuck.Store(true)
+		close(s.closing)
+		s.closeMu.Unlock()
+
+		timeout := s.timeout
+		if timeout <= 0 || timeout > CloseTimeout {
+			timeout = CloseTimeout // Ensure the timeout is within acceptable bounds.
+		}
+
+		shutdownCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			s.inProgress.Wait()
+		}()
+
+		select {
+		case <-done:
+			// All done.
+		case <-shutdownCtx.Done():
+			slog.Warn("closing HTTP sender forcefully", slog.Any("error", shutdownCtx.Err()),
+				slog.String("name", s.Name), slog.Duration("timeout", timeout),
+			)
+			// Irrelevant for the done channel case: it's closed after [Sender.inProgress.Wait]
+			// returns, i.e. nothing is currently being sent that needs to be aborted, and new
+			// [Sender.Send] calls cannot start because [Sender.lameDuck] is already true.
+			close(s.stop)
+		}
 	})
 }
 
@@ -195,7 +250,7 @@ func serializeData(data any, outURL *url.URL, outHdr http.Header) (getBodyFunc, 
 		return nil, 0, fmt.Errorf("failed to serialize JSON: %w", err)
 	}
 	if outHdr.Get(contentTypeHeader) == "" {
-		outHdr.Set(contentTypeHeader, jsonContentType)
+		outHdr.Set(contentTypeHeader, "application/json")
 	}
 	body := buf.Bytes()
 	return func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }, int64(len(body)), nil

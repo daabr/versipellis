@@ -34,7 +34,7 @@ const (
 )
 
 type (
-	// Used when sending received requests. See [serializeData] and [Destination.sendWithRetries].
+	// Used when sending received requests. See [serializeData] and [Sender.sendWithRetries].
 	getBodyFunc func() (io.ReadCloser, error)
 
 	// Used when sending collected responses. See [serializeData] and [Collector.processResponse].
@@ -124,7 +124,7 @@ func clientH3(cfg *tls.Config, maxHeaderSize int64, timeout time.Duration, trans
 // complete during shutdown. Subsequent retries (i > 0) also check schedCtx: if collector shutdown has
 // already been initiated, retrying against a failing service is aborted to ensure prompt termination.
 func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.Response {
-	resp := newErrorResponse(http.StatusGatewayTimeout)
+	resp := newErrorResponse(http.StatusServiceUnavailable)
 	start := time.Now()
 
 	for i := range c.retries.MaxAttempts {
@@ -148,35 +148,28 @@ func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.
 			break
 		}
 
-		c.retries.waitBeforeRetry(schedCtx, execCtx, i)
+		c.retries.waitBeforeRetry(schedCtx, execCtx, nil, i)
 	}
 	return resp
 }
 
-// sendWithRetries sends an HTTP request, retrying on transient errors based on [Destination.retries].
+// sendWithRetries sends an HTTP request, retrying on transient errors based on [Sender.retries].
 // It runs asynchronously in a separate goroutine and does not return any error to the caller. The
 // request parameters were either cloned or constructed by the caller in order to prevent data races.
-//
-// The provided ctx is the collector's execution context, it signals that the collector is in the process
-// of shutting down, so this function stops retrying when that happens. However, each attempt's own timeout
-// is independent, allowing in-flight requests to finish gracefully too, before being forcefully canceled.
-//
-// Reminder: implement in a future PR a way for main() to Close() gracefully, with forceful timeout enforcement.
-func (d *Destination) sendWithRetries(ctx context.Context, u *url.URL, h http.Header, getBody getBodyFunc, size int64) {
-	resp := newErrorResponse(http.StatusGatewayTimeout) //nolint:bodyclose // Fake body, no need to close.
+func (s *Sender) sendWithRetries(ctx context.Context, u *url.URL, h http.Header, getBody getBodyFunc, size int64) {
+	resp := newErrorResponse(http.StatusServiceUnavailable) //nolint:bodyclose // Fake body, no need to close.
 	start := time.Now()
 
-	for i := range d.retries.MaxAttempts {
-		if ctx.Err() != nil {
+	for i := range s.retries.MaxAttempts {
+		if ctx.Err() != nil || (i > 0 && s.lameDuck.Load()) {
 			break
 		}
 
 		var retry bool
-		reqCtx := context.WithoutCancel(ctx)
-		resp, retry = d.sendOnce(reqCtx, u, h, getBody, size) //nolint:bodyclose // Body closed inside [sendOnce].
+		resp, retry = s.sendOnce(ctx, u, h, getBody, size) //nolint:bodyclose // Body closed inside [sendOnce].
 		if resp != nil && resp.StatusCode <= MaxSuccessfulStatusCode {
 			slog.Debug("HTTP request completed successfully",
-				slog.String("name", d.Name), slog.Int("attempt", i+1), slog.String("status", resp.Status),
+				slog.String("name", s.Name), slog.Int("attempt", i+1), slog.String("status", resp.Status),
 				slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 			)
 			break
@@ -185,11 +178,12 @@ func (d *Destination) sendWithRetries(ctx context.Context, u *url.URL, h http.He
 			break
 		}
 
-		d.retries.waitBeforeRetry(ctx, ctx, i)
+		// Interrupted by [Sender.closing] when [Sender.Close] is called.
+		s.retries.waitBeforeRetry(ctx, ctx, s.closing, i)
 	}
 
 	if resp.StatusCode > MaxSuccessfulStatusCode {
-		slog.Warn("failed to send HTTP request", slog.String("name", d.Name), slog.String("status", resp.Status),
+		slog.Warn("failed to send HTTP request", slog.String("name", s.Name), slog.String("status", resp.Status),
 			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
 	}
@@ -249,26 +243,34 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 	return resp, retryable(resp.StatusCode)
 }
 
-func (d *Destination) sendOnce(ctx context.Context, u *url.URL, h http.Header, fn getBodyFunc, cl int64) (*http.Response, bool) {
+func (s *Sender) sendOnce(ctx context.Context, u *url.URL, h http.Header, fn getBodyFunc, cl int64) (*http.Response, bool) {
 	var cancel context.CancelFunc
-	if d.timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, d.timeout)
+	if s.timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, s.timeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
 	}
-	if cancel != nil {
-		defer cancel()
-	}
+	defer cancel()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-s.stop:
+			cancel()
+		}
+	}()
 
 	body, err := fn() // The function is guaranteed to be non-nil by [serializeData].
 	if err != nil {
-		slog.Error("cannot get reusable HTTP request body", slog.Any("error", err), slog.String("name", d.Name))
+		slog.Error("cannot get reusable HTTP request body", slog.Any("error", err), slog.String("name", s.Name))
 		return newErrorResponse(http.StatusInternalServerError), false
 	}
 
-	req, err := http.NewRequestWithContext(ctx, d.method, u.String(), body)
+	req, err := http.NewRequestWithContext(ctx, s.method, u.String(), body)
 	if err != nil {
 		slog.Error("failed to construct HTTP request",
-			slog.Any("error", err), slog.String("name", d.Name),
-			slog.String("method", d.method), slog.String("url", u.Redacted()),
+			slog.Any("error", err), slog.String("name", s.Name),
+			slog.String("method", s.method), slog.String("url", u.Redacted()),
 		)
 		return newErrorResponse(http.StatusInternalServerError), false
 	}
@@ -278,30 +280,33 @@ func (d *Destination) sendOnce(ctx context.Context, u *url.URL, h http.Header, f
 	req.Header = h.Clone()
 
 	// Customize the request's target address if the "Host" header is specified in the sender's own configured
-	// headers (d.headers), but ignore the "Host" header in responses from collectors (h). Also note that "Host"
+	// headers (s.headers), but ignore the "Host" header in responses from collectors (h). Also note that "Host"
 	// headers are automatically stripped (moved to [http.Request.Host]) from requests from receivers.
-	if host := d.headers.Get("Host"); host != "" {
+	if host := s.headers.Get("Host"); host != "" {
 		req.Host = host // See [http.Request.Host] for details.
 	}
 
 	start := time.Now()
-	resp, err := d.client.Do(req) //gosec:disable G704 // False positive.
+	resp, err := s.client.Do(req) //gosec:disable G704 // False positive.
 	if err != nil {
-		slog.Warn("failed to send HTTP request", slog.Any("error", err), slog.String("name", d.Name),
-			slog.String("host", d.url.Host), slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+		slog.Warn("failed to send HTTP request", slog.Any("error", err), slog.String("name", s.Name),
+			slog.String("host", s.url.Host), slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
+		if errors.Is(err, context.Canceled) {
+			return newErrorResponse(http.StatusServiceUnavailable), false
+		}
 		if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
 			return newErrorResponse(http.StatusGatewayTimeout), true
 		}
 		return newErrorResponse(http.StatusBadGateway), true
 	}
 
-	// We don't care about responses from destinations. Also, since Go 1.27
+	// We don't care about responses from senders. Also, since Go 1.27,
 	// [http.Response.Body] is drained automatically when closed (up to 256 KiB).
 	_ = resp.Body.Close()
 
 	if resp.StatusCode > MaxSuccessfulStatusCode {
-		slog.Warn("HTTP server responded with error status", slog.String("name", d.Name), slog.String("status", resp.Status),
+		slog.Warn("HTTP server responded with error status", slog.String("name", s.Name), slog.String("status", resp.Status),
 			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 		)
 	}

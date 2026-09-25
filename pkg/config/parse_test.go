@@ -11,6 +11,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/dest"
 )
 
 func TestParseFile(t *testing.T) {
@@ -487,7 +488,7 @@ func TestConcurrencyLimit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			base, err := config.NewBaseCollector(tt.cfg, tt.name, map[string]config.Sender{"": nil})
+			base, err := config.NewBaseCollector(tt.cfg, tt.name, map[string]config.Sender{"": dest.Discard})
 			if err != nil {
 				t.Fatalf("NewBaseCollector() error = %v", err)
 			}

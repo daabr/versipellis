@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,11 +12,13 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
 )
 
-func TestNewDestination(t *testing.T) {
+func TestNewSender(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -125,26 +128,26 @@ func TestNewDestination(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, gotErr := NewDestination(tt.cfg, tt.name, tt.baseType)
+			_, gotErr := NewSender(tt.cfg, tt.name, tt.baseType)
 			if (gotErr != nil) != tt.wantErr {
-				t.Errorf("NewDestination() error = %v, wantErr %v", gotErr, tt.wantErr)
+				t.Errorf("NewSender() error = %v, wantErr %v", gotErr, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestNewDestinationHTTP3(t *testing.T) {
+func TestNewSenderHTTP3(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewDestination(
-		map[string]any{"url": "https://example.com"}, "TestNewDestinationHTTP3", config.SenderTypeHTTP3,
+	_, err := NewSender(
+		map[string]any{"url": "https://example.com"}, "TestNewSenderHTTP3", config.SenderTypeHTTP3,
 	)
 	if err != nil {
-		t.Fatalf("NewDestination() error = %v, wantErr %v", err, false)
+		t.Fatalf("NewSender() error = %v, wantErr %v", err, false)
 	}
 }
 
-func TestDestinationSendBatch(t *testing.T) {
+func TestSenderSendBatch(t *testing.T) {
 	t.Parallel()
 
 	var counter atomic.Int64
@@ -162,23 +165,31 @@ func TestDestinationSendBatch(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	d, err := NewDestination(map[string]any{"url": server.URL}, "TestDestinationSendBatch", config.SenderTypeHTTP)
-	if d == nil {
-		t.Fatalf("NewDestination() error = %v", err)
+	sender, err := NewSender(
+		map[string]any{"url": server.URL, "timeout": "0"},
+		"TestSenderSendBatch", config.SenderTypeHTTP,
+	)
+	if sender == nil {
+		t.Fatalf("NewSender() error = %v", err)
 	}
 
 	// Aside: cover the logic for not sending an empty byte slice.
-	d.Send(t.Context(), []byte{})
+	sender.Send(t.Context(), []byte{})
 
 	// Step 1: start batch.
-	d.Send(t.Context(), nil)
+	sender.Send(t.Context(), nil)
 
 	// Reminder: join multiple parts into a single batch.
+	sender.Send(t.Context(), []byte("part1"))
+	sender.Send(t.Context(), []byte("part2"))
+	sender.Send(t.Context(), []byte("part3"))
 
 	// Step 3: finalize & send batch.
-	d.Send(t.Context(), nil)
+	sender.Send(t.Context(), nil)
 
-	want := int64(0) // Reminder: change to 1 when batches are implemented.
+	sender.Close(t.Context())
+
+	want := int64(3) // Reminder: change to 1 when batches are implemented.
 	if got := counter.Load(); got != want {
 		t.Errorf("counter = %d, want %d", got, want)
 	}
@@ -536,4 +547,117 @@ func TestSafeHeaders(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSenderClose(t *testing.T) {
+	t.Parallel()
+
+	var counter atomic.Int64
+	s, err := NewSender(map[string]any{"url": "http://example.com"}, "TestSenderClose", config.SenderTypeHTTP)
+	if err != nil {
+		t.Fatalf("NewSender() error: %v", err)
+	}
+
+	s.client.Transport = roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
+		counter.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Body:       io.NopCloser(strings.NewReader("ok")),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	s.Send(t.Context(), []byte("payload"))
+	s.Close(t.Context())
+
+	if got := counter.Load(); got != 1 {
+		t.Errorf("server received %d requests, want 1", got)
+	}
+
+	// Calling Send after Close should be rejected.
+	s.Send(t.Context(), []byte("another payload"))
+	s.Close(t.Context()) // Idempotent.
+
+	if got := counter.Load(); got != 1 {
+		t.Errorf("server received %d requests after Close, want 1", got)
+	}
+}
+
+func TestSenderCloseTimeout(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		s, err := NewSender(
+			map[string]any{"url": "http://example.com", "timeout": "100ms"},
+			"TestSenderCloseTimeout",
+			config.SenderTypeHTTP,
+		)
+		if err != nil {
+			t.Fatalf("NewSender() error: %v", err)
+		}
+
+		s.client.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		})
+
+		s.Send(t.Context(), []byte("payload"))
+
+		want := 50 * time.Millisecond
+		ctx, cancel := context.WithTimeout(t.Context(), want)
+		t.Cleanup(cancel)
+
+		start := time.Now()
+		s.Close(ctx)
+
+		if got := time.Since(start); got != want {
+			t.Errorf("Sender.Close() timeout took %v, want %v", got, want)
+		}
+	})
+}
+
+func TestSenderCloseDuringRetryDelay(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		s, err := NewSender(map[string]any{
+			"url":     "http://example.com",
+			"timeout": "5s",
+			"retries": map[string]any{
+				"type":     retryTypeStatic,
+				"interval": "1m",
+			},
+		}, "TestSenderCloseDuringRetryDelay", config.SenderTypeHTTP)
+		if err != nil {
+			t.Fatalf("NewSender() error: %v", err)
+		}
+
+		s.client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       http.NoBody,
+				Header:     make(http.Header),
+			}, nil
+		})
+
+		s.Send(t.Context(), []byte("payload"))
+
+		// Allow attempt 0 to fail and enter the 1-minute retry wait.
+		time.Sleep(10 * time.Millisecond)
+
+		start := time.Now()
+		s.Close(t.Context())
+
+		// Close should return immediately without waiting for CloseTimeout (5s) or retry interval (1m).
+		if elapsed := time.Since(start); elapsed == CloseTimeout {
+			t.Errorf("Sender.Close() took %v, want graceful close well under %v", elapsed, CloseTimeout)
+		}
+	})
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }

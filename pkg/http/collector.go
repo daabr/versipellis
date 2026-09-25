@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
@@ -35,9 +36,10 @@ type Collector struct {
 
 	cancelSched context.CancelFunc
 	cancelExec  context.CancelFunc
-	closeDone   chan struct{}
 	inProgress  sync.WaitGroup
 	closeOnce   sync.Once
+	closed      chan struct{}
+	aborted     atomic.Bool
 }
 
 // Base returns a copy of the collector's static and generic configuration details.
@@ -46,19 +48,21 @@ func (c *Collector) Base() *config.BaseCollector {
 	return &config.BaseCollector{
 		Type:        c.Type,
 		Name:        c.Name,
+		Destination: c.Destination,
+
 		Cronspec:    c.Cronspec,
 		Trigger:     c.Trigger,
 		Concurrency: c.Concurrency,
-		Destination: c.Destination,
 	}
 }
 
-// NewCollector creates a new [Collector] from the given configuration, which was read from a TOML file. It checks the details
-// and returns an error if any of them is semantically invalid, but the caller is responsible for providing usable input.
+// NewCollector creates a new [Collector] from the given configuration, which was
+// read from a TOML file. It checks the details and returns an error if any of them
+// is semantically invalid, but the caller is responsible for providing usable input.
 func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, error) {
 	c := &Collector{BaseCollector: *base}
-
 	var err error
+
 	if c.url, err = parseURL(config.Value(cfg, "url", ""), c.Type); err != nil {
 		return nil, err
 	}
@@ -154,7 +158,7 @@ func (c *Collector) Start(ctx context.Context) bool {
 	var schedCtx, execCtx context.Context
 	schedCtx, c.cancelSched = context.WithCancel(ctx)
 	execCtx, c.cancelExec = context.WithCancel(context.WithoutCancel(ctx))
-	c.closeDone = make(chan struct{})
+	c.closed = make(chan struct{})
 
 	slog.Info("starting to send HTTP requests",
 		slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
@@ -203,13 +207,13 @@ func (c *Collector) scheduleNext(schedCtx, execCtx context.Context, prev time.Ti
 		case <-schedCtx.Done():
 			return
 		case <-time.After(time.Until(nextStart)):
-			c.checkConcurrency(schedCtx, execCtx, sem, nextStart)
+			c.requestWithConcurrencyLimit(schedCtx, execCtx, sem, nextStart)
 			prev = nextStart
 		}
 	}
 }
 
-func (c *Collector) checkConcurrency(schedCtx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
+func (c *Collector) requestWithConcurrencyLimit(schedCtx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
 	if schedCtx.Err() != nil { // Instead of schedCtx.Done() in the select block below - to check ctx before sem.
 		return
 	}
@@ -219,8 +223,8 @@ func (c *Collector) checkConcurrency(schedCtx, execCtx context.Context, sem chan
 			defer func() { <-sem }()
 
 			resp := c.requestWithRetries(schedCtx, execCtx) //nolint:bodyclose // See [Collector.requestOnce].
-			if resp.StatusCode <= MaxSuccessfulStatusCode && c.Sender != nil {
-				c.Sender(execCtx, resp) // Returns quickly (usually asynchronous internally).
+			if resp.StatusCode <= MaxSuccessfulStatusCode && !c.aborted.Load() {
+				c.Sender(context.WithoutCancel(execCtx), resp) // Returns quickly (usually asynchronous internally).
 			}
 		})
 	default:
@@ -232,7 +236,7 @@ func (c *Collector) checkConcurrency(schedCtx, execCtx context.Context, sem chan
 
 // Done returns a channel that closes when shutdown completes or its grace period expires.
 func (c *Collector) Done() <-chan struct{} {
-	return c.closeDone
+	return c.closed
 }
 
 // Close waits (up to [CloseTimeout]) for requests that are in progress to finish, after new ones are no longer being scheduled.
@@ -270,8 +274,18 @@ func (c *Collector) Close() {
 			}
 		}
 
-		if c.closeDone != nil {
-			close(c.closeDone)
+		// Wait for aborted workers to actually stop, if there are any.
+		select {
+		case <-done:
+			// Immediate if the previous select block didn't encounter a timeout,
+			// So no need to nest this select block inside the previous one.
+		case <-time.After(abortTimeout):
+			slog.Error("aborted HTTP collector didn't stop immediately", slog.String("name", c.Name))
+			c.aborted.Store(true)
+		}
+
+		if c.closed != nil {
+			close(c.closed)
 		}
 	})
 }

@@ -247,7 +247,7 @@ func TestCollectorConnectionStringError(t *testing.T) {
 
 	base, err := config.NewBaseCollector(
 		map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"},
-		"TestCollectorConnectionStringError", map[string]config.Sender{"": nil},
+		"TestCollectorConnectionStringError", map[string]config.Sender{"": dest.Discard},
 	)
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
@@ -329,7 +329,7 @@ func TestScheduleNextQuery(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				base, err := config.NewBaseCollector(
 					map[string]any{"type": config.CollectorTypeSQL, "schedule": tt.schedule},
-					tt.name, map[string]config.Sender{"": nil},
+					tt.name, map[string]config.Sender{"": dest.Discard},
 				)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
@@ -436,7 +436,7 @@ func TestCollectorExecuteQuery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("cron.Parse() error: %v", err)
 			}
-			base := &config.BaseCollector{Type: config.CollectorTypeSQL, Schedule: sched, Sender: dest.Discard}
+			base := &config.BaseCollector{Type: config.CollectorTypeSQL, Schedule: sched, Sender: dest.Discard.Send}
 			c, err := NewCollector(base, tt.cfg)
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
@@ -564,7 +564,7 @@ func TestCollectorClose(t *testing.T) {
 
 		c := &Collector{pgPool: fakePGPool{}, usingPG: true}
 		_, c.cancelSched = context.WithCancel(t.Context())
-		c.closeDone = make(chan struct{})
+		c.closed = make(chan struct{})
 		t.Cleanup(c.cancelSched)
 
 		c.Close()
@@ -583,7 +583,7 @@ func TestCollectorClose(t *testing.T) {
 
 		c := &Collector{db: db}
 		_, c.cancelSched = context.WithCancel(t.Context())
-		c.closeDone = make(chan struct{})
+		c.closed = make(chan struct{})
 
 		c.Close()
 
@@ -594,7 +594,7 @@ func TestCollectorClose(t *testing.T) {
 func TestCollectorCloseTimeout(t *testing.T) {
 	t.Parallel()
 
-	testTimeout := 5 * time.Second
+	testTimeout := CloseTimeout + abortTimeout
 
 	tests := []struct {
 		name   string
@@ -770,7 +770,7 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				base, err := config.NewBaseCollector(
 					map[string]any{"type": config.CollectorTypeSQL, "schedule": "@every 1s", "concurrency_limit": tt.limit},
-					tt.name, map[string]config.Sender{"": nil},
+					tt.name, map[string]config.Sender{"": dest.Discard},
 				)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)

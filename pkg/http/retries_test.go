@@ -261,16 +261,24 @@ func TestRetriesWaitBeforeRetry(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		retries   *retries
-		attempt   int
-		wantSleep time.Duration
+		name       string
+		retries    *retries
+		attempt    int
+		stopClosed bool
+		wantSleep  time.Duration
 	}{
 		{
 			name:      "no_retries",
 			retries:   &retries{Coefficient: retryCoeffDisabled, MaxAttempts: 1},
 			attempt:   0,
 			wantSleep: 0,
+		},
+		{
+			name:       "stop_channel_closed",
+			retries:    &retries{Coefficient: retryCoeffStatic, MaxAttempts: 3, Interval: time.Second},
+			attempt:    0,
+			stopClosed: true,
+			wantSleep:  0,
 		},
 		{
 			name:      "static_attempt_1",
@@ -387,8 +395,13 @@ func TestRetriesWaitBeforeRetry(t *testing.T) {
 				wantMin := 9 * tt.wantSleep / 10
 				wantMax := 11 * tt.wantSleep / 10
 
+				stop := make(chan struct{})
+				if tt.stopClosed {
+					close(stop)
+				}
+
 				start := time.Now()
-				tt.retries.waitBeforeRetry(t.Context(), t.Context(), tt.attempt)
+				tt.retries.waitBeforeRetry(t.Context(), t.Context(), stop, tt.attempt)
 				got := time.Since(start)
 
 				if tt.retries.Coefficient != retryCoeffBackoff && got != tt.wantSleep {

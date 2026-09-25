@@ -165,10 +165,15 @@ func (c *LeanCache[K, V]) Get(key K) (V, bool) {
 }
 
 // Delete removes a specified item from the cache. If the item does not exist, this is a no-op.
-func (c *LeanCache[K, V]) Delete(key K) {
+// Either way, it returns the deleted value (zero value if not found) and a deletion success
+// indicator (i.e. false if the item was technically present but already expired).
+func (c *LeanCache[K, V]) Delete(key K) (V, bool) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	item, found := c.data[key]
 	delete(c.data, key)
-	c.mu.Unlock()
+	return item.Value, found && !item.Expired()
 }
 
 // Clear removes all items from the cache.

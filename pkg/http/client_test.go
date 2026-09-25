@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/dest"
 )
 
 func TestClientH3WithoutTLSReturnsNil(t *testing.T) {
@@ -55,7 +56,7 @@ func TestCollectorRequestWithRetries(t *testing.T) {
 
 			base, err := config.NewBaseCollector(
 				map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"},
-				tt.name, map[string]config.Sender{"": nil},
+				tt.name, map[string]config.Sender{"": dest.Discard},
 			)
 			if err != nil {
 				t.Fatalf("config.NewBaseCollector() error: %v", err)
@@ -86,7 +87,7 @@ func TestCollectorRequestWithRetries(t *testing.T) {
 	}
 }
 
-func TestDestinationSendWithRetries(t *testing.T) {
+func TestSenderSendWithRetries(t *testing.T) {
 	tests := []struct {
 		name      string
 		status    int
@@ -112,20 +113,20 @@ func TestDestinationSendWithRetries(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			d, err := NewDestination(map[string]any{
+			sender, err := NewSender(map[string]any{
 				"method": http.MethodPost, "url": server.URL,
 				"retries": map[string]any{"type": retryTypeStatic, "interval": "1ms"},
 			}, tt.name, config.SenderTypeHTTP)
 			if err != nil {
-				t.Fatalf("NewDestination() error: %v", err)
+				t.Fatalf("NewSender() error: %v", err)
 			}
 
-			d.Send(t.Context(), []byte("payload"))
-			d.inProgress.Wait()
+			sender.Send(t.Context(), []byte("payload"))
+			sender.inProgress.Wait()
 
 			wantRequests := 1
 			if tt.retryable {
-				wantRequests = d.retries.MaxAttempts
+				wantRequests = sender.retries.MaxAttempts
 			}
 			if got := int(requests.Load()); got != wantRequests {
 				t.Errorf("handler received %d requests, want %d", got, wantRequests)
@@ -182,7 +183,7 @@ func TestCollectorRequestOnceEdgeCases(t *testing.T) {
 	}
 }
 
-func TestDestinationSendOnceEdgeCases(t *testing.T) {
+func TestSenderSendOnceEdgeCases(t *testing.T) {
 	tests := []struct {
 		name      string
 		methodErr bool
@@ -204,29 +205,29 @@ func TestDestinationSendOnceEdgeCases(t *testing.T) {
 			server := httptest.NewServer(fakeHandler(t, 0, http.StatusOK, string(tt.body)))
 			t.Cleanup(server.Close)
 
-			d, err := NewDestination(
+			sender, err := NewSender(
 				map[string]any{"method": http.MethodPost, "url": server.URL},
 				tt.name, config.SenderTypeHTTP,
 			)
 			if err != nil {
-				t.Fatalf("NewDestination() error: %v", err)
+				t.Fatalf("NewSender() error: %v", err)
 			}
 
-			d.client = clientH2(&tls.Config{}, 0, 0, tt.name)
+			sender.client = clientH2(&tls.Config{}, 0, 0, tt.name)
 			if tt.methodErr {
-				d.method = "???"
+				sender.method = "???"
 			}
 			if tt.headers != nil {
-				d.headers = tt.headers
+				sender.headers = tt.headers
 			}
 			getBody := func() (io.ReadCloser, error) {
 				return io.NopCloser(bytes.NewReader(tt.body)), nil
 			}
 
-			gotResp, gotRetry := d.sendOnce(t.Context(), d.url, d.headers, getBody, int64(len(tt.body)))
+			gotResp, gotRetry := sender.sendOnce(t.Context(), sender.url, sender.headers, getBody, int64(len(tt.body)))
 			_ = gotResp.Body.Close()
 			if gotRetry {
-				t.Error("Destination.sendOnce() bool = true, want false")
+				t.Error("Sender.sendOnce() bool = true, want false")
 			}
 		})
 	}
@@ -303,22 +304,17 @@ func TestCollectorRequestWithRetriesShutdown(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name           string
-		shutdownBefore bool
-		shutdownDuring bool
-		cancelBefore   bool
+		name   string
+		before bool
+		during bool
 	}{
 		{
-			name:           "shutdown_before_first_request",
-			shutdownBefore: true,
+			name:   "shutdown_before_first_request",
+			before: true,
 		},
 		{
-			name:           "shutdown_during_retries",
-			shutdownDuring: true,
-		},
-		{
-			name:         "cancel_before_first_request",
-			cancelBefore: true,
+			name:   "shutdown_during_retries",
+			during: true,
 		},
 	}
 	for _, tt := range tests {
@@ -333,7 +329,7 @@ func TestCollectorRequestWithRetriesShutdown(t *testing.T) {
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				requests.Add(1)
-				if tt.shutdownDuring {
+				if tt.during {
 					cancelSched() // Trigger shutdown on the first attempt so retries are aborted.
 					w.WriteHeader(http.StatusServiceUnavailable)
 				}
@@ -350,32 +346,29 @@ func TestCollectorRequestWithRetriesShutdown(t *testing.T) {
 			}
 			c.client = clientH2(&tls.Config{}, 0, 0, tt.name)
 
-			if tt.shutdownBefore || tt.cancelBefore {
+			if tt.before {
 				cancelExec() // Trigger cancellation of execution context immediately.
 			}
 
 			resp := c.requestWithRetries(schedCtx, execCtx)
 			_ = resp.Body.Close()
 
-			var wantRequests, wantStatusCode int
-			switch {
-			case tt.shutdownBefore, tt.cancelBefore:
-				wantRequests, wantStatusCode = 0, http.StatusGatewayTimeout
-			case tt.shutdownDuring:
-				wantRequests, wantStatusCode = 1, http.StatusServiceUnavailable
+			want := 0
+			if tt.during {
+				want = 1
 			}
-
-			if gotRequests := requests.Load(); gotRequests != int32(wantRequests) {
-				t.Errorf("Collector.requestWithRetries() sent %d requests, want %d", gotRequests, wantRequests)
+			if gotRequests := requests.Load(); gotRequests != int32(want) {
+				t.Errorf("Collector.requestWithRetries() sent %d requests, want %d", gotRequests, want)
 			}
-			if resp.StatusCode != wantStatusCode {
-				t.Errorf("Collector.requestWithRetries() status = %d, want %d", resp.StatusCode, wantStatusCode)
+			want = http.StatusServiceUnavailable
+			if resp.StatusCode != want {
+				t.Errorf("Collector.requestWithRetries() status = %d, want %d", resp.StatusCode, want)
 			}
 		})
 	}
 }
 
-func TestDestinationSendWithRetriesShutdown(t *testing.T) {
+func TestSenderSendWithRetriesShutdown(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -409,12 +402,12 @@ func TestDestinationSendWithRetriesShutdown(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			d, err := NewDestination(map[string]any{
+			sender, err := NewSender(map[string]any{
 				"method": http.MethodPost, "url": server.URL,
 				"retries": map[string]any{"type": retryTypeStatic, "interval": "1ms"},
 			}, tt.name, config.SenderTypeHTTP)
 			if err != nil {
-				t.Fatalf("NewDestination() error: %v", err)
+				t.Fatalf("NewSender() error: %v", err)
 			}
 
 			if tt.before {
@@ -424,14 +417,14 @@ func TestDestinationSendWithRetriesShutdown(t *testing.T) {
 			getBody := func() (io.ReadCloser, error) {
 				return io.NopCloser(strings.NewReader("payload")), nil
 			}
-			d.sendWithRetries(ctx, d.url, d.headers, getBody, int64(len("payload")))
+			sender.sendWithRetries(ctx, sender.url, sender.headers, getBody, int64(len("payload")))
 
-			wantRequests := 0
+			want := 0
 			if tt.during {
-				wantRequests = 1
+				want = 1
 			}
-			if gotRequests := requests.Load(); gotRequests != int32(wantRequests) {
-				t.Errorf("Destination.sendWithRetries() sent %d requests, want %d", gotRequests, wantRequests)
+			if gotRequests := requests.Load(); gotRequests != int32(want) {
+				t.Errorf("Sender.sendWithRetries() sent %d requests, want %d", gotRequests, want)
 			}
 		})
 	}
@@ -496,7 +489,7 @@ func TestCollectorRequestOnceNetworkErrors(t *testing.T) {
 	})
 }
 
-func TestDestinationSendOnceNetworkError(t *testing.T) {
+func TestSenderSendOnceNetworkError(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -508,25 +501,25 @@ func TestDestinationSendOnceNetworkError(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	d, err := NewDestination(
+	sender, err := NewSender(
 		map[string]any{"method": http.MethodPut, "url": server.URL, "timeout": "25ms"},
-		"TestDestinationSendOnceNetworkError", config.SenderTypeHTTP,
+		"TestSenderSendOnceNetworkError", config.SenderTypeHTTP,
 	)
 	if err != nil {
-		t.Fatalf("NewDestination() error: %v", err)
+		t.Fatalf("NewSender() error: %v", err)
 	}
 
 	getBody := func() (io.ReadCloser, error) {
 		return nil, nil
 	}
 
-	resp, retry := d.sendOnce(t.Context(), d.url, d.headers, getBody, 0)
+	resp, retry := sender.sendOnce(t.Context(), sender.url, sender.headers, getBody, 0)
 	t.Cleanup(func() { _ = resp.Body.Close() })
 
 	if resp.StatusCode != http.StatusGatewayTimeout {
-		t.Errorf("Destination.sendOnce() StatusCode = %d, want %d", resp.StatusCode, http.StatusGatewayTimeout)
+		t.Errorf("Sender.sendOnce() StatusCode = %d, want %d", resp.StatusCode, http.StatusGatewayTimeout)
 	}
 	if !retry {
-		t.Errorf("Destination.sendOnce() retry = false, want true")
+		t.Errorf("Sender.sendOnce() retry = false, want true")
 	}
 }

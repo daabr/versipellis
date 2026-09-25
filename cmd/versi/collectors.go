@@ -26,11 +26,11 @@ type collectorInitResult struct {
 // file, and returns their done channels. It does not fail fast; it attempts to initialize all of them
 // before aborting if any of them failed. This provides a better experience for first-time users with multiple
 // configuration mistakes, as they get feedback on all issues at once rather than encountering them one by one.
-func initCollectors(ctx context.Context, senders map[string]config.Sender, entireCfg map[string]any) ([]<-chan struct{}, bool) {
+func initCollectors(ctx context.Context, senders map[string]config.Sender, cfg map[string]any) ([]<-chan struct{}, bool) {
 	var collectors []collector
 	ok := true
 
-	for name, cfg := range config.ExtractSubmaps(entireCfg, "collector") {
+	for name, cfg := range config.ExtractSubmaps(cfg, "collector") {
 		if len(cfg) == 0 {
 			continue // Ignore empty collector configuration sections (not an error, just useless).
 		}

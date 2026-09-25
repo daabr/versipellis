@@ -8,6 +8,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/dest"
 )
 
 const (
@@ -23,9 +26,9 @@ func BenchmarkCollector(b *testing.B) {
 		intCols  int
 		textCols int
 	}{
-		{"1k_rows", 1000, 5, 5},
-		{"10k_rows", 10000, 5, 5},
-		{"100k_rows", 100000, 5, 5},
+		{"1k_rows", 1_000, 5, 5},
+		{"10k_rows", 10_000, 5, 5},
+		{"100k_rows", 100_000, 5, 5},
 	}
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
@@ -44,7 +47,15 @@ func BenchmarkCollector(b *testing.B) {
 				// The collector's query execution timestamps are not thread-safe,
 				// so we have to create a separate collector for each goroutine. Similarly,
 				// each collector has its own read-only [sql.DB] to minimize SQLite locking.
-				c := &Collector{driver: DriverTypeSQLite, query: benchQuery, db: readers[i]}
+				c := &Collector{
+					Type:   config.CollectorTypeSQL,
+					Name:   tt.name,
+					Sender: dest.Discard.Send,
+
+					driver: DriverTypeSQLite,
+					query:  benchQuery,
+					db:     readers[i],
+				}
 
 				for pb.Next() {
 					if !c.executeQuery(ctx) {

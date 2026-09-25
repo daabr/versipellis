@@ -6,19 +6,13 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 )
 
 func TestStdout(t *testing.T) {
-	writer = new(strings.Builder)
-	lazyInit()
-	t.Cleanup(func() {
-		writer = os.Stdout
-		lazyInit() // Reset encoder to use [os.Stdout].
-	})
+	t.Parallel()
 
 	tests := []struct {
 		name string
@@ -120,75 +114,85 @@ func TestStdout(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			Stdout(t.Context(), tt.data)
+			t.Parallel()
 
-			sb, ok := writer.(*strings.Builder)
-			if !ok {
-				t.Fatalf("unexpected writer type: %T", writer)
-			}
-			if got := sb.String(); got != tt.want {
+			fakeStdout := new(strings.Builder)
+			s := newStdout(fakeStdout)
+			s.Send(t.Context(), tt.data)
+			s.Close(t.Context())
+
+			if got := fakeStdout.String(); got != tt.want {
 				t.Errorf("Stdout(%s) stdout = %q, want %q", tt.name, got, tt.want)
 			}
-
-			sb.Reset() // Clear the buffer for the next test case.
 		})
 	}
 }
 
 func TestStdoutConcurrency(t *testing.T) {
-	writer = new(bytes.Buffer)
-	lazyInit()
-	t.Cleanup(func() {
-		writer = os.Stdout
-		lazyInit() // Reset encoder to use [os.Stdout].
-	})
+	t.Parallel()
+
+	fakeStdout := new(bytes.Buffer)
+	sender := newStdout(fakeStdout)
+	t.Cleanup(func() { sender.Close(t.Context()) })
+
+	const concurrencyFactor = 100
 
 	var wg sync.WaitGroup
-	for g := range goroutines {
+	for goroutine := range concurrencyFactor {
 		wg.Go(func() {
-			for i := range callsPerGoroutine {
-				Stdout(t.Context(), map[string]any{"goroutine": g, "call": i})
+			for call := range concurrencyFactor {
+				sender.Send(t.Context(), map[string]any{"goroutine": goroutine, "call": call})
 			}
 		})
 	}
 	wg.Wait()
 
-	buf, ok := writer.(*bytes.Buffer)
-	if !ok {
-		t.Fatalf("unexpected writer type: %T", writer)
-	}
-
-	seen := [goroutines][callsPerGoroutine]int{}
+	seen := [concurrencyFactor][concurrencyFactor]int{}
 	gotLines := 0
 
-	data, err := buf.ReadBytes('\n')
+	output, err := fakeStdout.ReadBytes('\n')
 	for err == nil {
-		got := new(struct {
-			Goroutine int `json:"goroutine"`
-			Call      int `json:"call"`
-		})
-		if err = json.Unmarshal(data, got); err != nil {
-			t.Fatalf("invalid JSON in line %d: %q: %v", gotLines+1, data, err)
-		}
-
 		gotLines++
-		if got.Goroutine < 0 || got.Goroutine >= goroutines || got.Call < 0 || got.Call >= callsPerGoroutine {
-			t.Errorf("invalid index(es) in line %d: %+v", gotLines, got)
+		gotLine := new(struct {
+			G int `json:"goroutine"`
+			C int `json:"call"`
+		})
+		if err = json.Unmarshal(output, gotLine); err != nil {
+			t.Fatalf("invalid JSON in line %d (%s): %v", gotLines, output, err)
 		}
 
-		seen[got.Goroutine][got.Call]++
-		if seen[got.Goroutine][got.Call] > 1 {
-			t.Errorf("instance no. %d of: goroutine %d, call %d", seen[got.Goroutine][got.Call], got.Goroutine, got.Call)
+		if n := concurrencyFactor; gotLine.G < 0 || gotLine.G >= n || gotLine.C < 0 || gotLine.C >= n {
+			t.Fatalf("invalid index(es) in line %d: %+v", gotLines, gotLine)
 		}
+		seen[gotLine.G][gotLine.C]++
 
-		data, err = buf.ReadBytes('\n')
+		output, err = fakeStdout.ReadBytes('\n')
 	}
 	if !errors.Is(err, io.EOF) {
-		t.Errorf("error reading from buffer: %v", err)
+		t.Fatalf("error reading from buffer: %v", err)
 	}
 
-	wantLines := goroutines * callsPerGoroutine
-	if gotLines != wantLines {
+	if wantLines := concurrencyFactor * concurrencyFactor; gotLines != wantLines {
 		t.Errorf("got %d lines in total, want %d", gotLines, wantLines)
+	}
+	for g := range concurrencyFactor {
+		for c := range concurrencyFactor {
+			if seen[g][c] != 1 {
+				t.Errorf("goroutine %d, call %d: seen %d times, want 1", g+1, c+1, seen[g][c])
+			}
+		}
+	}
+}
+
+func TestStdoutSendDuringClose(t *testing.T) {
+	t.Parallel()
+
+	fakeStdout := new(strings.Builder)
+	s := newStdout(fakeStdout)
+	s.Close(t.Context())
+
+	s.Send(t.Context(), "should be dropped")
+	if got := fakeStdout.String(); got != "" {
+		t.Errorf("Send() after Close() wrote %q, want empty", got)
 	}
 }

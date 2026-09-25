@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	// Import drivers for runtime registration in [sql].
@@ -54,8 +55,12 @@ var validDriverTypes = []string{
 }
 
 const (
-	closeTimeout = 5 * time.Second
+	// CloseTimeout is the maximum amount of time to wait for SQL queries to finish before forcibly closing
+	// their connection pool. This is used during shutdown, so it's intentionally short and not configurable.
+	CloseTimeout = 5 * time.Second
+
 	pingTimeout  = 5 * time.Second
+	abortTimeout = time.Second
 
 	defaultQueryTimeout = time.Minute
 )
@@ -81,9 +86,10 @@ type Collector struct {
 
 	cancelSched context.CancelFunc
 	cancelExec  context.CancelFunc
-	closeDone   chan struct{}
 	inProgress  sync.WaitGroup
 	closeOnce   sync.Once
+	closed      chan struct{}
+	aborted     atomic.Bool
 }
 
 // Base returns a copy of the collector's static and generic configuration details.
@@ -92,15 +98,17 @@ func (c *Collector) Base() *config.BaseCollector {
 	return &config.BaseCollector{
 		Type:        c.Type,
 		Name:        c.Name,
+		Destination: c.Destination,
+
 		Cronspec:    c.Cronspec,
 		Trigger:     c.Trigger,
 		Concurrency: c.Concurrency,
-		Destination: c.Destination,
 	}
 }
 
-// NewCollector creates a new [Collector] from the given configuration, which was read from a TOML file. It checks the details
-// and returns an error if any of them is semantically invalid, but the caller is responsible for providing usable input.
+// NewCollector creates a new [Collector] from the given configuration, which was
+// read from a TOML file. It checks the details and returns an error if any of them
+// is semantically invalid, but the caller is responsible for providing usable input.
 func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, error) {
 	c := &Collector{
 		BaseCollector: *base,
@@ -203,7 +211,7 @@ func (c *Collector) Start(ctx context.Context) bool {
 	var schedCtx, execCtx context.Context
 	schedCtx, c.cancelSched = context.WithCancel(ctx)
 	execCtx, c.cancelExec = context.WithCancel(context.WithoutCancel(ctx))
-	c.closeDone = make(chan struct{})
+	c.closed = make(chan struct{})
 
 	slog.Info("starting to execute SQL queries", slog.String("driver", c.driver),
 		slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
@@ -334,8 +342,8 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 
 	data, err := processResults(queryCtx, rows, 1)
 	end := time.Now()
-	if len(data) > 0 && c.Sender != nil {
-		c.Sender(ctx, data) // Returns quickly (usually asynchronous internally).
+	if len(data) > 0 && !c.aborted.Load() {
+		c.Sender(context.WithoutCancel(ctx), data) // Returns quickly (usually asynchronous internally).
 	}
 
 	ok := err == nil
@@ -421,7 +429,7 @@ func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
 
 // Done returns a channel that closes when shutdown completes or its grace period expires.
 func (c *Collector) Done() <-chan struct{} {
-	return c.closeDone
+	return c.closed
 }
 
 // Close waits (up to [Collector.timeout]) for queries that are in progress to finish, after new ones are no longer being
@@ -451,8 +459,8 @@ func (c *Collector) Close() {
 		}()
 
 		timeout := c.timeout
-		if timeout <= 0 || timeout > closeTimeout {
-			timeout = closeTimeout // Ensure the timeout is within acceptable bounds.
+		if timeout <= 0 || timeout > CloseTimeout {
+			timeout = CloseTimeout // Ensure the timeout is within acceptable bounds.
 		}
 
 		select {
@@ -467,8 +475,20 @@ func (c *Collector) Close() {
 			}
 		}
 
-		if c.closeDone != nil {
-			close(c.closeDone)
+		// Wait for aborted workers to actually stop, if there are any.
+		select {
+		case <-done:
+			// Immediate if the previous select block didn't encounter a timeout,
+			// So no need to nest this select block inside the previous one.
+		case <-time.After(abortTimeout):
+			slog.Error("aborted SQL collector didn't stop immediately",
+				slog.String("driver", c.driver), slog.String("name", c.Name),
+			)
+			c.aborted.Store(true)
+		}
+
+		if c.closed != nil {
+			close(c.closed)
 		}
 	})
 }

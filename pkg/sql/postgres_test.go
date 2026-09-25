@@ -72,7 +72,7 @@ func TestCollectorStartPostgres(t *testing.T) {
 
 	base, err := config.NewBaseCollector(
 		map[string]any{"type": config.CollectorTypeSQL, "schedule": "@once"},
-		"TestCollectorStartPostgres", map[string]config.Sender{"": nil},
+		"TestCollectorStartPostgres", map[string]config.Sender{"": dest.Discard},
 	)
 	if err != nil {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
@@ -155,7 +155,13 @@ func TestCollectorExecutePostgresQueryErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			coll := &Collector{driver: DriverTypePostgres, query: "SELECT 1", pgPool: tt.pool, usingPG: true}
+			coll := &Collector{
+				Sender:  dest.Discard.Send,
+				driver:  DriverTypePostgres,
+				query:   "SELECT 1",
+				pgPool:  tt.pool,
+				usingPG: true,
+			}
 			if ok := coll.executeQuery(t.Context()); ok != tt.wantOK {
 				t.Errorf("Collector.executeQuery() = %v, want %v", ok, tt.wantOK)
 			}
@@ -271,7 +277,7 @@ func (p fakePGPool) BeginTx(_ context.Context, _ pgx.TxOptions) (pgx.Tx, error) 
 
 func (p fakePGPool) Close() {
 	if p.closeTimeout {
-		synctest.Sleep(2 * closeTimeout)
+		synctest.Sleep(2 * CloseTimeout)
 	}
 }
 
