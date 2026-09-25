@@ -539,7 +539,7 @@ func TestCollectorCheckConcurrencyCanceled(t *testing.T) {
 	ch := make(chan struct{}, 1)
 	ch <- struct{}{}
 
-	c.requestWithRateLimit(ctx, t.Context(), ch, time.Now())
+	c.requestWithConcurrencyLimit(ctx, t.Context(), ch, time.Now())
 
 	if len(ch) != 1 {
 		t.Errorf("len(ch) = %d, want 1", len(ch))
