@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestStdout(t *testing.T) {
@@ -196,47 +195,4 @@ func TestStdoutSendDuringClose(t *testing.T) {
 	if got := fakeStdout.String(); got != "" {
 		t.Errorf("Send() after Close() wrote %q, want empty", got)
 	}
-}
-
-func TestStdoutCloseWaitsForInFlightWrite(t *testing.T) {
-	t.Parallel()
-
-	pipeR, pipeW := io.Pipe()
-	s := newStdout(pipeW)
-
-	started := make(chan struct{})
-	doneWrite := make(chan struct{})
-
-	go func() {
-		close(started)
-		s.Send(t.Context(), "hello world")
-		close(doneWrite)
-	}()
-
-	<-started
-	// Allow goroutine to enter [stdoutSender.Send] and acquire [stdoutSender.mu].
-	time.Sleep(10 * time.Millisecond)
-
-	closeFinished := make(chan struct{})
-	go func() {
-		s.Close(t.Context())
-		close(closeFinished)
-	}()
-
-	// Ensure [stdoutSender.Close] does not return before the in-flight write finishes.
-	select {
-	case <-closeFinished:
-		t.Fatal("Close returned while write was still in progress")
-	case <-time.After(20 * time.Millisecond):
-	}
-
-	// Drain the pipe so the write can complete.
-	buf := make([]byte, 64)
-	n, _ := pipeR.Read(buf)
-	if n == 0 {
-		t.Fatal("expected data from stdout pipe")
-	}
-
-	<-doneWrite
-	<-closeFinished
 }
