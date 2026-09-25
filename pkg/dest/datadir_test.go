@@ -230,13 +230,6 @@ func TestDeadLetterQueueConcurrency(t *testing.T) {
 func TestAsyncWriteFileErrors(t *testing.T) {
 	t.Parallel()
 
-	tempDir := t.TempDir()
-	dlq := InitDeadLetterQueue(tempDir)
-	if dlq == nil {
-		t.Fatalf("failed to initialize DeadLetterQueue")
-	}
-	t.Cleanup(func() { dlq.Close(t.Context()) })
-
 	tests := []struct {
 		name      string
 		dirPerms  os.FileMode
@@ -250,6 +243,13 @@ func TestAsyncWriteFileErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+
+			tempDir := t.TempDir()
+			dlq := InitDeadLetterQueue(tempDir)
+			if dlq == nil {
+				t.Fatalf("failed to initialize DeadLetterQueue")
+			}
+			t.Cleanup(func() { dlq.Close(t.Context()) })
 
 			gotOK := dlq.asyncWriteFile([]byte("data"), time.Now().UTC(), tt.dirPerms, tt.filePerms)
 			if gotOK != tt.wantOK {

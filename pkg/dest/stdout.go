@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // Stdout prints any input data to [os.Stdout]. Simple data types are printed as-is, complex structures
@@ -25,6 +27,9 @@ type stdoutSender struct {
 	// Synchronize all Send calls, to prevent concurrent callers from interleaving their output mid-line.
 	// [os.Stdout] is a shared resource, it doesn't have built-in concurrency like other destinations.
 	mu sync.Mutex
+
+	lameDuck  atomic.Bool
+	closeOnce sync.Once
 }
 
 func newStdout(w io.Writer) *stdoutSender {
@@ -33,13 +38,23 @@ func newStdout(w io.Writer) *stdoutSender {
 	return s
 }
 
-func (s *stdoutSender) Send(_ context.Context, data any) {
+func (s *stdoutSender) Send(ctx context.Context, data any) {
 	if data == nil {
 		return // Don't log nil data, other senders use it as a sentinel for batches.
 	}
 
+	if s.lameDuck.Load() {
+		Discard.Send(ctx, data)
+		return
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.lameDuck.Load() {
+		Discard.Send(ctx, data)
+		return
+	}
 
 	var err error
 	switch t := data.(type) {
@@ -78,4 +93,26 @@ func (s *stdoutSender) Send(_ context.Context, data any) {
 	}
 }
 
-func (*stdoutSender) Close(context.Context) {}
+// Close waits (up to 1 second) for data to be printed to [os.Stdout], and prevents new data from being printed.
+func (s *stdoutSender) Close(ctx context.Context) {
+	s.closeOnce.Do(func() {
+		s.lameDuck.Store(true)
+
+		shutdownCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+
+		done := make(chan struct{})
+		go func() {
+			s.mu.Lock()
+			close(done)
+			s.mu.Unlock()
+		}()
+
+		select {
+		case <-done:
+			// All done.
+		case <-shutdownCtx.Done():
+			slog.Error("closing stdout sender forcefully", slog.Any("error", shutdownCtx.Err()))
+		}
+	})
+}

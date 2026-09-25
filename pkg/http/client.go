@@ -178,9 +178,8 @@ func (s *Sender) sendWithRetries(ctx context.Context, u *url.URL, h http.Header,
 			break
 		}
 
-		// Waiting is aborted when [Sender.stop] is closed, which can only happen after [sender.lameDuck] is
-		// set to true (both in [Sender.Close]), so there's no need to check either of them here explicitly.
-		s.retries.waitBeforeRetry(ctx, ctx, s.stop, i)
+		// Interrupted by [Sender.closing] when [Sender.Close] is called.
+		s.retries.waitBeforeRetry(ctx, ctx, s.closing, i)
 	}
 
 	if resp.StatusCode > MaxSuccessfulStatusCode {

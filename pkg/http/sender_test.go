@@ -617,6 +617,45 @@ func TestSenderCloseTimeout(t *testing.T) {
 	})
 }
 
+func TestSenderCloseDuringRetryDelay(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		s, err := NewSender(map[string]any{
+			"url":     "http://example.com",
+			"timeout": "5s",
+			"retries": map[string]any{
+				"type":     retryTypeStatic,
+				"interval": "1m",
+			},
+		}, "TestSenderCloseDuringRetryDelay", config.SenderTypeHTTP)
+		if err != nil {
+			t.Fatalf("NewSender() error: %v", err)
+		}
+
+		s.client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       http.NoBody,
+				Header:     make(http.Header),
+			}, nil
+		})
+
+		s.Send(t.Context(), []byte("payload"))
+
+		// Allow attempt 0 to fail and enter the 1-minute retry wait.
+		time.Sleep(10 * time.Millisecond)
+
+		start := time.Now()
+		s.Close(t.Context())
+
+		// Close should return immediately without waiting for CloseTimeout (5s) or retry interval (1m).
+		if elapsed := time.Since(start); elapsed == CloseTimeout {
+			t.Errorf("Sender.Close() took %v, want graceful close well under %v", elapsed, CloseTimeout)
+		}
+	})
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {

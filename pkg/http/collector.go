@@ -36,9 +36,9 @@ type Collector struct {
 
 	cancelSched context.CancelFunc
 	cancelExec  context.CancelFunc
-	closeDone   chan struct{}
 	inProgress  sync.WaitGroup
 	closeOnce   sync.Once
+	closed      chan struct{}
 	aborted     atomic.Bool
 }
 
@@ -158,7 +158,7 @@ func (c *Collector) Start(ctx context.Context) bool {
 	var schedCtx, execCtx context.Context
 	schedCtx, c.cancelSched = context.WithCancel(ctx)
 	execCtx, c.cancelExec = context.WithCancel(context.WithoutCancel(ctx))
-	c.closeDone = make(chan struct{})
+	c.closed = make(chan struct{})
 
 	slog.Info("starting to send HTTP requests",
 		slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
@@ -236,7 +236,7 @@ func (c *Collector) requestWithRateLimit(schedCtx, execCtx context.Context, sem 
 
 // Done returns a channel that closes when shutdown completes or its grace period expires.
 func (c *Collector) Done() <-chan struct{} {
-	return c.closeDone
+	return c.closed
 }
 
 // Close waits (up to [CloseTimeout]) for requests that are in progress to finish, after new ones are no longer being scheduled.
@@ -284,8 +284,8 @@ func (c *Collector) Close() {
 			c.aborted.Store(true)
 		}
 
-		if c.closeDone != nil {
-			close(c.closeDone)
+		if c.closed != nil {
+			close(c.closed)
 		}
 	})
 }

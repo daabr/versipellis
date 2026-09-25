@@ -45,13 +45,14 @@ type Sender struct {
 	lameDuck   atomic.Bool
 	closeMu    sync.RWMutex
 	closeOnce  sync.Once
+	closing    chan struct{}
 	stop       chan struct{}
 }
 
 // NewSender creates a new [config.Sender] with the provided configuration, which was read
 // from a TOML file. It checks the details and returns an error if any of them is invalid.
 func NewSender(cfg map[string]any, name, baseType string) (*Sender, error) {
-	s := &Sender{Name: name, Type: baseType, stop: make(chan struct{})}
+	s := &Sender{Name: name, Type: baseType, closing: make(chan struct{}), stop: make(chan struct{})}
 	var err error
 
 	if s.url, err = parseURL(config.Value(cfg, "url", ""), s.Type); err != nil {
@@ -155,6 +156,7 @@ func (s *Sender) Close(ctx context.Context) {
 	s.closeOnce.Do(func() {
 		s.closeMu.Lock()
 		s.lameDuck.Store(true)
+		close(s.closing)
 		s.closeMu.Unlock()
 
 		timeout := s.timeout

@@ -86,9 +86,9 @@ type Collector struct {
 
 	cancelSched context.CancelFunc
 	cancelExec  context.CancelFunc
-	closeDone   chan struct{}
 	inProgress  sync.WaitGroup
 	closeOnce   sync.Once
+	closed      chan struct{}
 	aborted     atomic.Bool
 }
 
@@ -211,7 +211,7 @@ func (c *Collector) Start(ctx context.Context) bool {
 	var schedCtx, execCtx context.Context
 	schedCtx, c.cancelSched = context.WithCancel(ctx)
 	execCtx, c.cancelExec = context.WithCancel(context.WithoutCancel(ctx))
-	c.closeDone = make(chan struct{})
+	c.closed = make(chan struct{})
 
 	slog.Info("starting to execute SQL queries", slog.String("driver", c.driver),
 		slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
@@ -429,7 +429,7 @@ func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
 
 // Done returns a channel that closes when shutdown completes or its grace period expires.
 func (c *Collector) Done() <-chan struct{} {
-	return c.closeDone
+	return c.closed
 }
 
 // Close waits (up to [Collector.timeout]) for queries that are in progress to finish, after new ones are no longer being
@@ -487,8 +487,8 @@ func (c *Collector) Close() {
 			c.aborted.Store(true)
 		}
 
-		if c.closeDone != nil {
-			close(c.closeDone)
+		if c.closed != nil {
+			close(c.closed)
 		}
 	})
 }

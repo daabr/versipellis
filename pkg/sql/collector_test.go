@@ -564,7 +564,7 @@ func TestCollectorClose(t *testing.T) {
 
 		c := &Collector{pgPool: fakePGPool{}, usingPG: true}
 		_, c.cancelSched = context.WithCancel(t.Context())
-		c.closeDone = make(chan struct{})
+		c.closed = make(chan struct{})
 		t.Cleanup(c.cancelSched)
 
 		c.Close()
@@ -583,7 +583,7 @@ func TestCollectorClose(t *testing.T) {
 
 		c := &Collector{db: db}
 		_, c.cancelSched = context.WithCancel(t.Context())
-		c.closeDone = make(chan struct{})
+		c.closed = make(chan struct{})
 
 		c.Close()
 
