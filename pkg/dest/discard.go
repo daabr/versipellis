@@ -15,6 +15,7 @@ func newDiscard() discardSender {
 	return discardSender{}
 }
 
+//bodyclose:handled
 func (discardSender) Send(_ context.Context, data any) {
 	switch t := data.(type) {
 	case *http.Request:

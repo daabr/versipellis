@@ -71,7 +71,7 @@ func TestDeadLetterQueue(t *testing.T) {
 		{
 			name: "http_request_without_body",
 			data: func() *http.Request {
-				req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com", nil)
+				req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com", http.NoBody)
 				return req
 			}(),
 			wantFiles:   1,
@@ -106,7 +106,7 @@ func TestDeadLetterQueue(t *testing.T) {
 					ProtoMinor: 1,
 					Body:       io.NopCloser(body),
 				}
-			}(), //nolint:bodyclose // Unit test.
+			}(), //nolint:bodyclose // Closed by [DeadLetterQueue.Send] in unit test.
 			wantFiles:   1,
 			wantContent: "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nbody",
 		},

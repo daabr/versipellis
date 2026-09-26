@@ -79,7 +79,7 @@ func TestStdout(t *testing.T) {
 		{
 			name: "http_request_without_body",
 			data: func() *http.Request {
-				req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.com", nil)
+				req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.com", http.NoBody)
 				return req
 			}(),
 			want: "POST / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Go-http-client/1.1\r\nContent-Length: 0\r\n\r\n",
@@ -98,7 +98,7 @@ func TestStdout(t *testing.T) {
 					ProtoMinor: 1,
 					Body:       io.NopCloser(body),
 				}
-			}(), //nolint:bodyclose // The [Stdout] function closes the response body during the test.
+			}(), //nolint:bodyclose // Closed by [stdoutSender.Send] in unit test.
 			want: "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nbody",
 		},
 		{

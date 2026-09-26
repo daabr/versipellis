@@ -13,9 +13,7 @@ import (
 	"github.com/daabr/versipellis/pkg/dest"
 )
 
-func TestNewReceiver(t *testing.T) {
-	// Can't use [testing.T.Parallel] here because [parseAddress] requires network access.
-
+func TestNewReceiver(t *testing.T) { //nolint:paralleltest // [parseAddress] requires network access.
 	tempDir := t.TempDir()
 	caPEM, _, _, caKey := generateTestCert(t, true, nil, nil)
 	caPath := filepath.Join(tempDir, "ca.pem")
@@ -66,7 +64,7 @@ func TestNewReceiver(t *testing.T) {
 			wantErr: false,
 		},
 	}
-	for _, tt := range tests {
+	for _, tt := range tests { //nolint:paralleltest // [parseAddress] requires network access.
 		t.Run(tt.name, func(t *testing.T) {
 			r, gotErr := NewReceiver(tt.base, tt.cfg)
 			if (gotErr != nil) != tt.wantErr {
@@ -83,9 +81,7 @@ func TestNewReceiver(t *testing.T) {
 	}
 }
 
-func TestParseAddress(t *testing.T) {
-	// Can't use [testing.T.Parallel] here because [parseAddress] requires network access.
-
+func TestParseAddress(t *testing.T) { //nolint:paralleltest // [parseAddress] requires network access.
 	tests := []struct {
 		name    string
 		addr    string
@@ -124,7 +120,7 @@ func TestParseAddress(t *testing.T) {
 			want:  ":443",
 		},
 	}
-	for _, tt := range tests {
+	for _, tt := range tests { //nolint:paralleltest // [parseAddress] requires network access.
 		t.Run(tt.name, func(t *testing.T) {
 			got, gotErr := parseAddress(tt.addr, tt.proto)
 			if (gotErr != nil) != tt.wantErr {
@@ -137,9 +133,7 @@ func TestParseAddress(t *testing.T) {
 	}
 }
 
-func TestReceiverServeHTTPAndClose(t *testing.T) {
-	// Can't use [testing.T.Parallel] here because [parseAddress] requires network access.
-
+func TestReceiverServeHTTPAndClose(t *testing.T) { //nolint:paralleltest // [parseAddress] requires network access.
 	tests := []struct {
 		name       string
 		length     int64
@@ -159,7 +153,7 @@ func TestReceiverServeHTTPAndClose(t *testing.T) {
 			wantStatus: http.StatusAccepted,
 		},
 	}
-	for _, tt := range tests {
+	for _, tt := range tests { //nolint:paralleltest // [parseAddress] requires network access.
 		t.Run(tt.name, func(t *testing.T) {
 			base := &config.BaseReceiver{Type: config.ReceiverTypeHTTP, Name: tt.name, Sender: dest.Discard.Send}
 			cfg := map[string]any{"address": "127.0.0.1:0", "max_body_size": int64(10), "timeout": "-1s"}

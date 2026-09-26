@@ -48,7 +48,7 @@ func TestCollectorConnectToPostgres(t *testing.T) {
 		},
 		{
 			name:    "pool_already_set",
-			coll:    &Collector{pgPool: fakePGPool{}},
+			coll:    &Collector{pgPool: new(fakePGPool)},
 			ctx:     t.Context(),
 			wantErr: false,
 		},
@@ -87,7 +87,7 @@ func TestCollectorStartPostgres(t *testing.T) {
 		t.Fatalf("NewCollector() error: %v", err)
 	}
 
-	c.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
+	c.pgPool = &fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
 
 	if ok := c.Start(t.Context()); !ok {
 		t.Fatal("Collector.Start() failed")
@@ -114,7 +114,7 @@ func TestCollectorExecutePostgresQuery(t *testing.T) {
 		t.Fatalf("NewCollector() error: %v", err)
 	}
 
-	c.pgPool = fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
+	c.pgPool = &fakePGPool{cols: []string{"1"}, rows: [][]any{{1}}}
 	c.usingPG = true
 
 	if !c.executeQuery(t.Context()) {
@@ -159,7 +159,7 @@ func TestCollectorExecutePostgresQueryErrors(t *testing.T) {
 				Sender:  dest.Discard.Send,
 				driver:  DriverTypePostgres,
 				query:   "SELECT 1",
-				pgPool:  tt.pool,
+				pgPool:  &tt.pool,
 				usingPG: true,
 			}
 			if ok := coll.executeQuery(t.Context()); ok != tt.wantOK {
@@ -268,14 +268,14 @@ type fakePGPool struct {
 	finalErr error
 }
 
-func (p fakePGPool) BeginTx(_ context.Context, _ pgx.TxOptions) (pgx.Tx, error) {
+func (p *fakePGPool) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
 	if p.beginErr != nil {
 		return nil, p.beginErr
 	}
-	return fakePGTx{cols: p.cols, rows: p.rows, queryErr: p.queryErr, finalErr: p.finalErr}, nil
+	return &fakePGTx{cols: p.cols, rows: p.rows, queryErr: p.queryErr, finalErr: p.finalErr}, nil
 }
 
-func (p fakePGPool) Close() {
+func (p *fakePGPool) Close() {
 	if p.closeTimeout {
 		synctest.Sleep(2 * CloseTimeout)
 	}
@@ -292,59 +292,60 @@ type fakePGTx struct {
 }
 
 // Begin starts a pseudo nested transaction.
-func (t fakePGTx) Begin(_ context.Context) (pgx.Tx, error) {
-	return fakePGTx{cols: t.cols, rows: t.rows}, nil
+func (t *fakePGTx) Begin(context.Context) (pgx.Tx, error) {
+	return &fakePGTx{cols: t.cols, rows: t.rows}, nil
 }
 
 // Commit commits the transaction if this is a real transaction or releases the savepoint if this is a pseudo nested
-// transaction. Commit will return an error where errors.Is([pgx.ErrTxClosed]) is true if the Tx is already closed,
-// but is otherwise safe to call multiple times. If the commit fails with a rollback status (e.g., the transaction
-// was already in a broken state) then an error where errors.Is([pgx.ErrTxCommitRollback]) is true will be returned.
-func (t fakePGTx) Commit(_ context.Context) error {
+// transaction. Commit will return an error where [errors.Is]([pgx.ErrTxClosed]) is true if the Tx is already closed,
+// but is otherwise safe to call multiple times. If the commit fails with a rollback status (e.g., the transaction was
+// already in a broken state) then an error where [errors.Is]([pgx.ErrTxCommitRollback]) is true will be returned.
+func (t *fakePGTx) Commit(context.Context) error {
 	return t.commitErr
 }
 
-// Rollback rolls back the transaction if this is a real transaction or rolls back to the savepoint if this is a pseudo
-// nested transaction. Rollback will return an error where errors.Is([pgx.ErrTxClosed]) is true if the Tx is already closed,
-// but is otherwise safe to call multiple times. Hence, a defer [pgx.Tx.Rollback] is safe even if [pgx.Tx.Commit] will be
-// caller first in a non-error condition. Any other failure of a real transaction will result in the connection being closed.
-func (t fakePGTx) Rollback(_ context.Context) error {
+// Rollback rolls back the transaction if this is a real transaction or rolls back to the savepoint if
+// this is a pseudo nested transaction. Rollback will return an error where [errors.Is]([pgx.ErrTxClosed])
+// is true if the Tx is already closed, but is otherwise safe to call multiple times. Hence, a defer
+// [pgx.Tx.Rollback] is safe even if [pgx.Tx.Commit] will be called first in a non-error condition.
+// Any other failure of a real transaction will result in the connection being closed.
+func (t *fakePGTx) Rollback(context.Context) error {
 	return nil
 }
 
 // Query executes a query against the database and returns the resulting rows.
-func (t fakePGTx) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
+func (t *fakePGTx) Query(context.Context, string, ...any) (pgx.Rows, error) {
 	if t.queryErr != nil {
 		return nil, t.queryErr
 	}
 	return &fakePGRows{cols: t.cols, rows: t.rows, index: -1, finalErr: t.finalErr}, nil
 }
 
-func (t fakePGTx) CopyFrom(_ context.Context, _ pgx.Identifier, _ []string, _ pgx.CopyFromSource) (int64, error) {
+func (t *fakePGTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
-func (t fakePGTx) SendBatch(_ context.Context, _ *pgx.Batch) pgx.BatchResults {
+func (t *fakePGTx) SendBatch(context.Context, *pgx.Batch) pgx.BatchResults {
 	return nil // Not implemented.
 }
 
-func (t fakePGTx) LargeObjects() pgx.LargeObjects {
+func (t *fakePGTx) LargeObjects() pgx.LargeObjects {
 	return pgx.LargeObjects{} // Not implemented.
 }
 
-func (t fakePGTx) Prepare(_ context.Context, _, _ string) (*pgconn.StatementDescription, error) {
+func (t *fakePGTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (t fakePGTx) Exec(_ context.Context, _ string, _ ...any) (commandTag pgconn.CommandTag, err error) {
+func (t *fakePGTx) Exec(context.Context, string, ...any) (commandTag pgconn.CommandTag, err error) {
 	return pgconn.CommandTag{}, errors.New("not implemented")
 }
 
-func (t fakePGTx) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
+func (t *fakePGTx) QueryRow(context.Context, string, ...any) pgx.Row {
 	return nil // Not implemented.
 }
 
-func (t fakePGTx) Conn() *pgx.Conn {
+func (t *fakePGTx) Conn() *pgx.Conn {
 	return nil // Not implemented.
 }
 
@@ -391,16 +392,18 @@ func (r *fakePGRows) FieldDescriptions() []pgconn.FieldDescription {
 // Callers should check [pgx.Rows.Err] after [pgx.Rows.Next] returns false to detect whether
 // result-set reading ended prematurely due to an error. See [pgx.Conn.Query] for details.
 //
-// For simpler error handling, consider using the higher-level pgx v5 [pgx.CollectRows] and [pgx.ForEachRow] helpers instead.
+// For simpler error handling, consider using the higher-level pgx v5 [pgx.CollectRows]
+// and [pgx.ForEachRow] helpers instead.
 func (r *fakePGRows) Next() bool {
 	r.index++
 	return r.index < len(r.rows)
 }
 
-// Scan reads the values from the current row into dest values positionally. Dest can include pointers to core types, values
-// implementing the [pgx.RowScanner] interface, and nil. Nil will skip the value entirely. It is an error to call [pgx.Rows.Scan]
-// without first calling [pgx.Rows.Next] and checking that it returned true. [pgx.Rows] is automatically closed upon error.
-func (r *fakePGRows) Scan(dest ...any) error {
+// Scan reads the values from the current row into dest values positionally. Dests can include pointers
+// to core types, values implementing the [pgx.RowScanner] interface, and nil. Nil will skip the value
+// entirely. It is an error to call [pgx.Rows.Scan] without first calling [pgx.Rows.Next] and checking
+// that it returned true. [pgx.Rows] is automatically closed upon error.
+func (r *fakePGRows) Scan(dests ...any) error {
 	if r.scanErr != nil {
 		return r.scanErr
 	}
@@ -409,14 +412,14 @@ func (r *fakePGRows) Scan(dest ...any) error {
 		return pgx.ErrNoRows
 	}
 
-	if len(dest) == 1 {
-		if rc, ok := dest[0].(pgx.RowScanner); ok {
+	if len(dests) == 1 {
+		if rc, ok := dests[0].(pgx.RowScanner); ok {
 			return rc.ScanRow(r) //nolint:wrapcheck // Fake for testing purposes, propagate the error as-is.
 		}
 	}
 
-	for i := range dest {
-		ptr, _ := dest[i].(*any)
+	for i := range dests {
+		ptr, _ := dests[i].(*any)
 		*ptr = r.rows[r.index][i]
 	}
 	return nil

@@ -157,7 +157,7 @@ func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.
 // It runs asynchronously in a separate goroutine and does not return any error to the caller. The
 // request parameters were either cloned or constructed by the caller in order to prevent data races.
 func (s *Sender) sendWithRetries(ctx context.Context, u *url.URL, h http.Header, getBody getBodyFunc, size int64) {
-	resp := newErrorResponse(http.StatusServiceUnavailable) //nolint:bodyclose // Fake body, no need to close.
+	resp := newErrorResponse(http.StatusServiceUnavailable) //nolint:bodyclose // False positive despite bodyclose:handled.
 	start := time.Now()
 
 	for i := range s.retries.MaxAttempts {
@@ -166,7 +166,7 @@ func (s *Sender) sendWithRetries(ctx context.Context, u *url.URL, h http.Header,
 		}
 
 		var retry bool
-		resp, retry = s.sendOnce(ctx, u, h, getBody, size) //nolint:bodyclose // Body closed inside [sendOnce].
+		resp, retry = s.sendOnce(ctx, u, h, getBody, size) //nolint:bodyclose // False positive despite bodyclose:handled.
 		if resp != nil && resp.StatusCode <= MaxSuccessfulStatusCode {
 			slog.Debug("HTTP request completed successfully",
 				slog.String("name", s.Name), slog.Int("attempt", i+1), slog.String("status", resp.Status),
@@ -218,7 +218,7 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 	}
 
 	req.Header = c.headers.Clone()
-	if host := c.headers.Get("Host"); len(host) > 0 {
+	if host := c.headers.Get("Host"); host != "" {
 		req.Host = host // See [http.Request.Host] for details.
 	}
 
@@ -243,6 +243,7 @@ func (c *Collector) requestOnce(ctx context.Context) (*http.Response, bool) {
 	return resp, retryable(resp.StatusCode)
 }
 
+//bodyclose:handled
 func (s *Sender) sendOnce(ctx context.Context, u *url.URL, h http.Header, fn getBodyFunc, cl int64) (*http.Response, bool) {
 	var cancel context.CancelFunc
 	if s.timeout > 0 {
@@ -320,6 +321,8 @@ func (s *Sender) sendOnce(ctx context.Context, u *url.URL, h http.Header, fn get
 //
 // This decouples receiving data over an unreliable network from processing and sending it elsewhere.
 // Either way, the original response body is consumed and closed, which is important for connection reuse.
+//
+//bodyclose:handled
 func (c *Collector) processResponse(r *http.Response) *http.Response {
 	// Since Go 1.27, [http.Response.Body] is drained automatically when closed (up to 256 KiB).
 	defer r.Body.Close()
@@ -350,6 +353,7 @@ func (c *Collector) processResponse(r *http.Response) *http.Response {
 	return &cpy
 }
 
+//bodyclose:handled
 func newErrorResponse(statusCode int) *http.Response {
 	return &http.Response{
 		Body:          http.NoBody,

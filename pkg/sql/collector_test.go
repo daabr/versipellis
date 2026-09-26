@@ -477,7 +477,7 @@ func TestProcessResults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.QueryContext() error: %v", err)
 	}
-	_ = rows.Close() // Close rows immediately so [sql.Rows.Columns] fails.
+	_ = rows.Close() //nolint:sqlclosecheck // Close rows immediately so [sql.Rows.Columns] fails.
 
 	if _, err := processResults(t.Context(), rows, 1); err == nil {
 		t.Error("processResults() error = nil, wantErr = true")
@@ -562,7 +562,7 @@ func TestCollectorClose(t *testing.T) {
 	t.Run("fake_pg_pool", func(t *testing.T) {
 		t.Parallel()
 
-		c := &Collector{pgPool: fakePGPool{}, usingPG: true}
+		c := &Collector{pgPool: new(fakePGPool), usingPG: true}
 		_, c.cancelSched = context.WithCancel(t.Context())
 		c.closed = make(chan struct{})
 		t.Cleanup(c.cancelSched)
@@ -603,7 +603,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 	}{
 		{
 			name:   "with_fake_pg_pool",
-			pgPool: fakePGPool{closeTimeout: true},
+			pgPool: &fakePGPool{closeTimeout: true},
 			want2:  testTimeout,
 		},
 		{
@@ -651,13 +651,13 @@ const (
 )
 
 var registerFakeSQLDriver = sync.OnceFunc(func() {
-	sql.Register(fakeSQLDriverName, fakeSQLDriver{})
+	sql.Register(fakeSQLDriverName, new(fakeSQLDriver))
 })
 
 type fakeSQLDriver struct{}
 
 // Open uses the DSN to set desired failure modes as connection parameters.
-func (fakeSQLDriver) Open(dsn string) (driver.Conn, error) {
+func (*fakeSQLDriver) Open(dsn string) (driver.Conn, error) {
 	c := &fakeSQLConn{}
 	switch {
 	case strings.Contains(dsn, "rowsNextError"):
@@ -691,11 +691,11 @@ func (c *fakeSQLConn) QueryContext(_ context.Context, _ string, _ []driver.Named
 
 type fakeSQLTx struct{}
 
-func (fakeSQLTx) Commit() error {
+func (*fakeSQLTx) Commit() error {
 	return nil
 }
 
-func (fakeSQLTx) Rollback() error {
+func (*fakeSQLTx) Rollback() error {
 	return nil
 }
 
@@ -714,7 +714,7 @@ type fakeSQLRows struct {
 func (r *fakeSQLRows) Columns() []string { return []string{"col"} }
 func (r *fakeSQLRows) Close() error      { return nil }
 
-func (r *fakeSQLRows) Next(dest []driver.Value) error {
+func (r *fakeSQLRows) Next(d []driver.Value) error {
 	if r.read {
 		if r.nextError {
 			return errors.New("fake row iteration error")
@@ -722,7 +722,7 @@ func (r *fakeSQLRows) Next(dest []driver.Value) error {
 		return io.EOF
 	}
 	r.read = true
-	dest[0] = int64(r.set + 1)
+	d[0] = int64(r.set + 1)
 	return nil
 }
 

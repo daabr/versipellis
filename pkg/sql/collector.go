@@ -432,10 +432,11 @@ func (c *Collector) Done() <-chan struct{} {
 	return c.closed
 }
 
-// Close waits (up to [Collector.timeout]) for queries that are in progress to finish, after new ones are no longer being
-// scheduled. It is safe to call multiple times, even if [Collector.Start] wasn't called, but it's meant to be called only
-// at the end of the [Collector.scheduleNext] goroutine. If there are still pending queries after the timeout, the collector
-// will forcefully close their connections. It then signals through the [Collector.Done] channel that it's ready to shut down.
+// Close waits (up to [Collector.timeout]) for queries that are in progress to finish, after new ones
+// are no longer being scheduled. It is safe to call multiple times, even if [Collector.Start] wasn't
+// called, but it's meant to be called only at the end of the [Collector.scheduleNext] goroutine.
+// If there are still pending queries after the timeout, the collector will forcefully close their
+// connections. It then signals through the [Collector.Done] channel that it's ready to shut down.
 func (c *Collector) Close() {
 	if c == nil || c.cancelSched == nil {
 		return

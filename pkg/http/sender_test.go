@@ -283,7 +283,7 @@ func TestSerializeDataHTTPRequest(t *testing.T) {
 			if tt.wantBody != (string(gotBody1) == "test") {
 				t.Errorf("body = %v, want %q", gotBody1, wantBody)
 			}
-			if string(gotBody2) != string(gotBody1) {
+			if !bytes.Equal(gotBody2, gotBody1) {
 				t.Errorf("retry body = %v, want %q", gotBody2, gotBody1)
 			}
 			if tt.req != nil && !reflect.DeepEqual(gotHdr, tt.wantHdr) {
@@ -389,7 +389,7 @@ func TestSerializeDataHTTPResponse(t *testing.T) {
 			if tt.wantBody != (string(gotBody1) == "test") {
 				t.Errorf("body = %v, want %q", gotBody1, wantBody)
 			}
-			if string(gotBody2) != string(gotBody1) {
+			if !bytes.Equal(gotBody2, gotBody1) {
 				t.Errorf("retry body = %v, want %q", gotBody2, gotBody1)
 			}
 			if tt.resp != nil && !reflect.DeepEqual(gotHdr, tt.wantHdr) {

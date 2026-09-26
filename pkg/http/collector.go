@@ -222,7 +222,7 @@ func (c *Collector) requestWithConcurrencyLimit(schedCtx, execCtx context.Contex
 		c.inProgress.Go(func() {
 			defer func() { <-sem }()
 
-			resp := c.requestWithRetries(schedCtx, execCtx) //nolint:bodyclose // See [Collector.requestOnce].
+			resp := c.requestWithRetries(schedCtx, execCtx) //nolint:bodyclose // False positive despite bodyclose:handled.
 			if resp.StatusCode <= MaxSuccessfulStatusCode && !c.aborted.Load() {
 				c.Sender(context.WithoutCancel(execCtx), resp) // Returns quickly (usually asynchronous internally).
 			}
@@ -239,10 +239,11 @@ func (c *Collector) Done() <-chan struct{} {
 	return c.closed
 }
 
-// Close waits (up to [CloseTimeout]) for requests that are in progress to finish, after new ones are no longer being scheduled.
-// It is safe to call this multiple times, even if [Collector.Start] wasn't called. However, it's meant to be called only once,
-// at the end of the [Collector.scheduleNext] goroutine. If there are still pending requests after the timeout, the collector
-// will forcefully close their connections. It then signals through the [Collector.Done] channel that it's ready to shut down.
+// Close waits (up to [CloseTimeout]) for requests that are in progress to finish, after new ones
+// are no longer being scheduled. It is safe to call this multiple times, even if [Collector.Start]
+// wasn't called. However, it's meant to be called only once, at the end of the [Collector.scheduleNext]
+// goroutine. If there are still pending requests after the timeout, the collector will forcefully close
+// their connections. It then signals through the [Collector.Done] channel that it's ready to shut down.
 func (c *Collector) Close() {
 	if c == nil || c.cancelSched == nil {
 		return

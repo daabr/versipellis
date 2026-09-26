@@ -218,6 +218,8 @@ func TestLoadBody(t *testing.T) {
 }
 
 func TestCollectorStartNilGuard(t *testing.T) {
+	t.Parallel()
+
 	var nilCollector *Collector
 	if ok := nilCollector.Start(t.Context()); ok {
 		t.Error("nil Collector.Start() = true, want false")
@@ -225,6 +227,8 @@ func TestCollectorStartNilGuard(t *testing.T) {
 }
 
 func TestCollectorStart(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		proto string
@@ -253,6 +257,8 @@ func TestCollectorStart(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if tt.tls && r.TLS == nil {
 					t.Errorf("expected TLS connection, got nil")
@@ -283,6 +289,7 @@ func TestCollectorStart(t *testing.T) {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
 
+			c.transportID += tt.name
 			fakeClient := server.Client()
 			fakeTransport, _ := fakeClient.Transport.(*http.Transport)
 			transportH2.Set(c.transportID, fakeTransport)

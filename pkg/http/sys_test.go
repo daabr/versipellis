@@ -176,7 +176,7 @@ func TestCollectorReceiverSender(t *testing.T) {
 				getBody := func() (io.ReadCloser, error) {
 					return io.NopCloser(strings.NewReader(body)), nil
 				}
-				_, retry := sender.sendOnce(t.Context(), sender.url, sender.headers, getBody, l) //nolint:bodyclose // sendOnce
+				_, retry := sender.sendOnce(t.Context(), sender.url, sender.headers, getBody, l) //nolint:bodyclose // False pos.
 				if retry {
 					t.Fatalf("client failed to send to receiver")
 				}

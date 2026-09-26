@@ -7,7 +7,7 @@ import (
 	"weak"
 )
 
-func TestRuntimeCleanupOnGC(t *testing.T) {
+func TestRuntimeCleanupOnGC(t *testing.T) { //nolint:paralleltest // [runtime.GC] has process-wide effect.
 	tests := []struct {
 		name  string
 		cache func(...Option) Cache[string, string]
@@ -21,7 +21,7 @@ func TestRuntimeCleanupOnGC(t *testing.T) {
 			cache: NewLeanCache[string, string],
 		},
 	}
-	for _, tt := range tests {
+	for _, tt := range tests { //nolint:paralleltest // [runtime.GC] has process-wide effect.
 		t.Run(tt.name, func(t *testing.T) {
 			var stop <-chan struct{}
 			var gc func() bool
@@ -88,7 +88,7 @@ func newLeanCacheWorker(done chan struct{}) {
 	}()
 }
 
-func TestWeakPointerFallbackOnGC(t *testing.T) {
+func TestWeakPointerFallbackOnGC(t *testing.T) { //nolint:paralleltest // [runtime.GC] has process-wide effect.
 	tests := []struct {
 		name  string
 		start func(done chan struct{})
@@ -102,7 +102,7 @@ func TestWeakPointerFallbackOnGC(t *testing.T) {
 			start: newLeanCacheWorker,
 		},
 	}
-	for _, tt := range tests {
+	for _, tt := range tests { //nolint:paralleltest // [runtime.GC] has process-wide effect.
 		t.Run(tt.name, func(t *testing.T) {
 			done := make(chan struct{})
 			tt.start(done)

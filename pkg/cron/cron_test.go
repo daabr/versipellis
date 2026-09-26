@@ -336,7 +336,7 @@ func TestParseAndNext(t *testing.T) {
 	}
 }
 
-func TestParseAndNextOnSundays(t *testing.T) {
+func TestParseAndNextOnSundays(t *testing.T) { //nolint:paralleltest // [sched.Next] depends on shared state.
 	spec := "0 0 * * 0-7" // Day-of-week "SUN-SUN" is actually the same as "0", not "*".
 	sched, err := cron.Parse(spec, nil)
 	if err != nil {
@@ -349,7 +349,7 @@ func TestParseAndNextOnSundays(t *testing.T) {
 		mustParseTime(t, "2026-01-11 00:00:00", time.UTC),
 		mustParseTime(t, "2026-01-18 00:00:00", time.UTC),
 	}
-	for i, want := range wants {
+	for i, want := range wants { //nolint:paralleltest // [sched.Next] depends on shared state.
 		t.Run(fmt.Sprintf("want_%d", i), func(t *testing.T) {
 			if got := sched.Next(after); !got.Equal(want) {
 				t.Errorf("Next(%v) = %v, want %v", after, got, want)

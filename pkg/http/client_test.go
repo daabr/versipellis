@@ -27,6 +27,8 @@ func TestClientH3WithoutTLSReturnsNil(t *testing.T) {
 }
 
 func TestCollectorRequestWithRetries(t *testing.T) {
+	t.Parallel()
+
 	_ = clientH2(&tls.Config{}, 0, time.Second, "TestCollectorRequestWithRetries")
 
 	tests := []struct {
@@ -46,6 +48,8 @@ func TestCollectorRequestWithRetries(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			var requests atomic.Int32
 			handler := fakeHandler(t, 0, tt.status, "response body")
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -69,6 +73,7 @@ func TestCollectorRequestWithRetries(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
+			c.transportID += tt.name
 
 			if !c.Start(t.Context()) {
 				t.Fatal("Collector.Start() = false, want true")
@@ -87,7 +92,7 @@ func TestCollectorRequestWithRetries(t *testing.T) {
 	}
 }
 
-func TestSenderSendWithRetries(t *testing.T) {
+func TestSenderSendWithRetries(t *testing.T) { //nolint:paralleltest // Don't share transports between tests.
 	tests := []struct {
 		name      string
 		status    int
@@ -103,7 +108,7 @@ func TestSenderSendWithRetries(t *testing.T) {
 		{"501", http.StatusNotImplemented, false},
 		{"503_retryable", http.StatusServiceUnavailable, true},
 	}
-	for _, tt := range tests {
+	for _, tt := range tests { //nolint:paralleltest // Don't share transports between tests.
 		t.Run(tt.name, func(t *testing.T) {
 			var requests atomic.Int32
 			handler := fakeHandler(t, 0, tt.status, "response body")
@@ -136,6 +141,8 @@ func TestSenderSendWithRetries(t *testing.T) {
 }
 
 func TestCollectorRequestOnceEdgeCases(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		methodErr bool
@@ -143,17 +150,19 @@ func TestCollectorRequestOnceEdgeCases(t *testing.T) {
 		body      string
 	}{
 		{
-			name:      "req_construction_error",
+			name:      "coll_req_construction_error",
 			methodErr: true,
 		},
 		{
-			name:    "with_host_header_and_body",
+			name:    "coll_with_host_header_and_body",
 			headers: http.Header{"Host": []string{"example.com"}},
 			body:    "test body",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			server := httptest.NewServer(fakeHandler(t, 0, http.StatusOK, tt.body))
 			t.Cleanup(server.Close)
 
@@ -184,6 +193,8 @@ func TestCollectorRequestOnceEdgeCases(t *testing.T) {
 }
 
 func TestSenderSendOnceEdgeCases(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		methodErr bool
@@ -191,17 +202,19 @@ func TestSenderSendOnceEdgeCases(t *testing.T) {
 		body      []byte
 	}{
 		{
-			name:      "req_construction_error",
+			name:      "send_req_construction_error",
 			methodErr: true,
 		},
 		{
-			name:    "with_host_header_and_body",
+			name:    "send_with_host_header_and_body",
 			headers: http.Header{"Host": []string{"example.com"}},
 			body:    []byte("test body"),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			server := httptest.NewServer(fakeHandler(t, 0, http.StatusOK, string(tt.body)))
 			t.Cleanup(server.Close)
 
@@ -234,6 +247,8 @@ func TestSenderSendOnceEdgeCases(t *testing.T) {
 }
 
 func TestCollectorProcessResponseErrors(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		maxSize    int64
@@ -261,6 +276,8 @@ func TestCollectorProcessResponseErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			body := strings.Repeat("A", tt.bodySize)
 			server := httptest.NewServer(fakeHandler(t, tt.contentLen, http.StatusOK, body))
 			t.Cleanup(server.Close)

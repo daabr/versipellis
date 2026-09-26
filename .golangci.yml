@@ -39,12 +39,15 @@ linters:
     - noctx
     - nolintlint
     - nosprintfhostport
+    - paralleltest
     - perfsprint
     - predeclared
     - protogetter
     - recvcheck
     - revive
+    - rowserrcheck
     - sloglint
+    - sqlclosecheck
     - staticcheck
     - thelper
     - tparallel
@@ -66,9 +69,25 @@ linters:
       check-type-assertions: true
     goconst:
       ignore-tests: true
+    gocritic:
+      enable-all: true
+      disabled-checks:
+        - unnamedResult
+    godoclint:
+      default: all
+      options:
+        max-len:
+          length: 120
+        require-doc:
+          ignore-exported: true
     godot:
       scope: all
       capital: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
     iface:
       enable:
         - identical
@@ -80,8 +99,13 @@ linters:
       allow-unused: false
       require-explanation: true
       require-specific: true
+    paralleltest:
+      check-cleanup: true
     predeclared:
       qualified-name: true
+    rowserrcheck:
+      packages:
+        - github.com/jackc/pgx/v5
     sloglint:
       attr-only: true
       key-naming-case: snake
