@@ -412,18 +412,18 @@ func TestSerializeDataJSON(t *testing.T) {
 			name:     "nil",
 			data:     nil,
 			wantErr:  false,
-			wantBody: "null\n",
+			wantBody: "null",
 		},
 		{
 			name:     "map",
 			data:     map[string]any{"key": "value"},
-			wantBody: `{"key":"value"}` + "\n",
+			wantBody: `{"key":"value"}`,
 			wantErr:  false,
 		},
 		{
 			name:     "json_with_unencoded_html",
 			data:     map[string]any{"html": "& < >"},
-			wantBody: `{"html":"& < >"}` + "\n",
+			wantBody: `{"html":"& < >"}`,
 			wantErr:  false,
 		},
 		{

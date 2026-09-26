@@ -2,7 +2,7 @@ package dest
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -56,7 +56,7 @@ func TestStdout(t *testing.T) {
 			},
 			want: `{"key1":"value1"}` + "\n", // Fail on first error.
 		},
-		// After the "not_json" test case, to ensure it doesn't leave [encoder] in a broken state.
+		// After the "not_[nd]json" test cases, to ensure it doesn't leave [encoder] in a broken state.
 		{
 			name: "string",
 			data: "just a string",
@@ -117,7 +117,7 @@ func TestStdout(t *testing.T) {
 			t.Parallel()
 
 			fakeStdout := new(strings.Builder)
-			s := newStdout(fakeStdout)
+			s := new(stdoutSender{writer: fakeStdout})
 			s.Send(t.Context(), tt.data)
 			s.Close(t.Context())
 
@@ -132,7 +132,7 @@ func TestStdoutConcurrency(t *testing.T) {
 	t.Parallel()
 
 	fakeStdout := new(bytes.Buffer)
-	sender := newStdout(fakeStdout)
+	sender := new(stdoutSender{writer: fakeStdout})
 	t.Cleanup(func() { sender.Close(t.Context()) })
 
 	const concurrencyFactor = 100
@@ -188,7 +188,7 @@ func TestStdoutSendDuringClose(t *testing.T) {
 	t.Parallel()
 
 	fakeStdout := new(strings.Builder)
-	s := newStdout(fakeStdout)
+	s := new(stdoutSender{writer: fakeStdout})
 	s.Close(t.Context())
 
 	s.Send(t.Context(), "should be dropped")
