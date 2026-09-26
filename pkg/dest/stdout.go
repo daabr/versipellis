@@ -69,21 +69,20 @@ func (s *stdoutSender) Send(ctx context.Context, data any) {
 		}
 
 	case []map[string]any:
+		var buf []byte
 		for _, m := range t {
-			err = json.MarshalWrite(s.writer, m, jsonOpts)
+			buf, err = json.Marshal(m, jsonOpts)
 			if err != nil {
 				break
 			}
-			_, err = s.writer.Write([]byte{'\n'})
-			if err != nil {
-				break
-			}
+			_, _ = s.writer.Write(append(buf, '\n'))
 		}
 
 	default:
-		err = json.MarshalWrite(s.writer, data, jsonOpts)
+		var buf []byte
+		buf, err = json.Marshal(data, jsonOpts)
 		if err == nil {
-			_, err = s.writer.Write([]byte{'\n'})
+			_, _ = s.writer.Write(append(buf, '\n'))
 		}
 	}
 

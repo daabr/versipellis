@@ -56,7 +56,7 @@ func TestStdout(t *testing.T) {
 			},
 			want: `{"key1":"value1"}` + "\n", // Fail on first error.
 		},
-		// After the "not_json" test case, to ensure it doesn't leave [encoder] in a broken state.
+		// After the "not_[nd]json" test cases, to ensure it doesn't leave [encoder] in a broken state.
 		{
 			name: "string",
 			data: "just a string",

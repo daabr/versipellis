@@ -161,12 +161,12 @@ func serializeData(data any) []byte {
 	}
 
 	// Fall-back to JSON encoding for other data types.
-	body, err := json.Marshal(data, jsonOpts)
+	buf, err := json.Marshal(data, jsonOpts)
 	if err != nil {
 		slog.Error("failed to serialize JSON into DLQ file", slog.Any("error", err))
 		return nil
 	}
-	return body
+	return buf
 }
 
 func (d *DeadLetterQueue) asyncWriteFile(data []byte, now time.Time, dirPerms, filePerms os.FileMode) bool {
