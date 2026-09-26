@@ -72,17 +72,19 @@ func (s *stdoutSender) Send(ctx context.Context, data any) {
 		var buf []byte
 		for _, m := range t {
 			buf, err = json.Marshal(m, jsonOpts)
+			if err == nil {
+				_, err = s.writer.Write(append(buf, '\n'))
+			}
 			if err != nil {
 				break
 			}
-			_, _ = s.writer.Write(append(buf, '\n'))
 		}
 
 	default:
 		var buf []byte
 		buf, err = json.Marshal(data, jsonOpts)
 		if err == nil {
-			_, _ = s.writer.Write(append(buf, '\n'))
+			_, err = s.writer.Write(append(buf, '\n'))
 		}
 	}
 
