@@ -36,15 +36,15 @@ func TestCollectorRequestWithRetries(t *testing.T) {
 		status    int
 		retryable bool
 	}{
-		{"coll_200", http.StatusOK, false},
-		{"coll_300", http.StatusMultipleChoices, false},
-		{"coll_400", http.StatusBadRequest, false},
-		{"coll_404", http.StatusNotFound, false},
-		{"coll_405", http.StatusMethodNotAllowed, false},
-		{"coll_413", http.StatusRequestEntityTooLarge, false},
-		{"coll_431", http.StatusRequestHeaderFieldsTooLarge, false},
-		{"coll_501", http.StatusNotImplemented, false},
-		{"coll_503_retryable", http.StatusServiceUnavailable, true},
+		{"200", http.StatusOK, false},
+		{"300", http.StatusMultipleChoices, false},
+		{"400", http.StatusBadRequest, false},
+		{"404", http.StatusNotFound, false},
+		{"405", http.StatusMethodNotAllowed, false},
+		{"413", http.StatusRequestEntityTooLarge, false},
+		{"431", http.StatusRequestHeaderFieldsTooLarge, false},
+		{"501", http.StatusNotImplemented, false},
+		{"503_retryable", http.StatusServiceUnavailable, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -92,28 +92,24 @@ func TestCollectorRequestWithRetries(t *testing.T) {
 	}
 }
 
-func TestSenderSendWithRetries(t *testing.T) {
-	t.Parallel()
-
+func TestSenderSendWithRetries(t *testing.T) { //nolint:paralleltest // Don't share transports between tests.
 	tests := []struct {
 		name      string
 		status    int
 		retryable bool
 	}{
-		{"send_200", http.StatusOK, false},
-		{"send_300", http.StatusMultipleChoices, false},
-		{"send_400", http.StatusBadRequest, false},
-		{"send_404", http.StatusNotFound, false},
-		{"send_405", http.StatusMethodNotAllowed, false},
-		{"send_413", http.StatusRequestEntityTooLarge, false},
-		{"send_431", http.StatusRequestHeaderFieldsTooLarge, false},
-		{"send_501", http.StatusNotImplemented, false},
-		{"send_503_retryable", http.StatusServiceUnavailable, true},
+		{"200", http.StatusOK, false},
+		{"300", http.StatusMultipleChoices, false},
+		{"400", http.StatusBadRequest, false},
+		{"404", http.StatusNotFound, false},
+		{"405", http.StatusMethodNotAllowed, false},
+		{"413", http.StatusRequestEntityTooLarge, false},
+		{"431", http.StatusRequestHeaderFieldsTooLarge, false},
+		{"501", http.StatusNotImplemented, false},
+		{"503_retryable", http.StatusServiceUnavailable, true},
 	}
-	for _, tt := range tests {
+	for _, tt := range tests { //nolint:paralleltest // Don't share transports between tests.
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
 			var requests atomic.Int32
 			handler := fakeHandler(t, 0, tt.status, "response body")
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
