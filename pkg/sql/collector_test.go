@@ -436,7 +436,7 @@ func TestCollectorExecuteQuery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("cron.Parse() error: %v", err)
 			}
-			base := &config.BaseCollector{Type: config.CollectorTypeSQL, Schedule: sched, Sender: dest.Discard.Send}
+			base := &config.BaseCollector{Type: config.CollectorTypeSQL, Schedule: sched, Send: dest.Discard.Send}
 			c, err := NewCollector(base, tt.cfg)
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
@@ -780,7 +780,7 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 				unblock := make(chan struct{})
 				var count atomic.Int32
 
-				base.Sender = func(_ context.Context, _ any) {
+				base.Send = func(_ context.Context, _ any) {
 					count.Add(1)
 					select {
 					case started <- struct{}{}:

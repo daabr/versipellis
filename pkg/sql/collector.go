@@ -93,7 +93,7 @@ type Collector struct {
 }
 
 // Base returns a copy of the collector's static and generic configuration details.
-// Specifically, it does not copy references such as the Schedule and Sender fields.
+// Specifically, it does not copy references such as the Schedule and Send fields.
 func (c *Collector) Base() *config.BaseCollector {
 	return &config.BaseCollector{
 		Type:        c.Type,
@@ -343,7 +343,7 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	data, err := processResults(queryCtx, rows, 1)
 	end := time.Now()
 	if len(data) > 0 && !c.aborted.Load() {
-		c.Sender(context.WithoutCancel(ctx), data) // Returns quickly (usually asynchronous internally).
+		c.Send(context.WithoutCancel(ctx), data) // Returns quickly (usually asynchronous internally).
 	}
 
 	ok := err == nil

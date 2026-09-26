@@ -43,7 +43,7 @@ type Collector struct {
 }
 
 // Base returns a copy of the collector's static and generic configuration details.
-// Specifically, it does not copy references such as the Schedule and Sender fields.
+// Specifically, it does not copy references such as the Schedule and Send fields.
 func (c *Collector) Base() *config.BaseCollector {
 	return &config.BaseCollector{
 		Type:        c.Type,
@@ -224,7 +224,7 @@ func (c *Collector) requestWithConcurrencyLimit(schedCtx, execCtx context.Contex
 
 			resp := c.requestWithRetries(schedCtx, execCtx) //nolint:bodyclose // False positive despite bodyclose:handled.
 			if resp.StatusCode <= MaxSuccessfulStatusCode && !c.aborted.Load() {
-				c.Sender(context.WithoutCancel(execCtx), resp) // Returns quickly (usually asynchronous internally).
+				c.Send(context.WithoutCancel(execCtx), resp) // Returns quickly (usually asynchronous internally).
 			}
 		})
 	default:

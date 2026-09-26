@@ -155,7 +155,7 @@ func TestReceiverServeHTTPAndClose(t *testing.T) { //nolint:paralleltest // [par
 	}
 	for _, tt := range tests { //nolint:paralleltest // [parseAddress] requires network access.
 		t.Run(tt.name, func(t *testing.T) {
-			base := &config.BaseReceiver{Type: config.ReceiverTypeHTTP, Name: tt.name, Sender: dest.Discard.Send}
+			base := &config.BaseReceiver{Type: config.ReceiverTypeHTTP, Name: tt.name, Send: dest.Discard.Send}
 			cfg := map[string]any{"address": "127.0.0.1:0", "max_body_size": int64(10), "timeout": "-1s"}
 			rcv, err := NewReceiver(base, cfg)
 			if err != nil {

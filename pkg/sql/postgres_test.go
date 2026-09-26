@@ -156,7 +156,7 @@ func TestCollectorExecutePostgresQueryErrors(t *testing.T) {
 			t.Parallel()
 
 			coll := &Collector{
-				Sender:  dest.Discard.Send,
+				Send:    dest.Discard.Send,
 				driver:  DriverTypePostgres,
 				query:   "SELECT 1",
 				pgPool:  &tt.pool,

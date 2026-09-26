@@ -48,9 +48,9 @@ func BenchmarkCollector(b *testing.B) {
 				// so we have to create a separate collector for each goroutine. Similarly,
 				// each collector has its own read-only [sql.DB] to minimize SQLite locking.
 				c := &Collector{
-					Type:   config.CollectorTypeSQL,
-					Name:   tt.name,
-					Sender: dest.Discard.Send,
+					Type: config.CollectorTypeSQL,
+					Name: tt.name,
+					Send: dest.Discard.Send,
 
 					driver: DriverTypeSQLite,
 					query:  benchQuery,
