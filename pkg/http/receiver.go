@@ -36,7 +36,7 @@ type Receiver struct {
 }
 
 // Base returns a copy of the receiver's static and generic configuration details.
-// Specifically, it does not copy references such as the Sender field.
+// Specifically, it does not copy references such as the Send field.
 func (r *Receiver) Base() *config.BaseReceiver {
 	return &config.BaseReceiver{Type: r.Type, Name: r.Name, Destination: r.Destination}
 }
