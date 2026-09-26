@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,6 +26,8 @@ const (
 	filePermissions = 0o600
 	fileFlags       = os.O_CREATE | os.O_EXCL | os.O_WRONLY
 )
+
+var jsonOpts = json.JoinOptions(json.Deterministic(true), json.OmitZeroStructFields(true))
 
 // DeadLetterQueue is an alternative destination for data that couldn't be delivered
 // successfully by other senders. It behaves similarly to [Stdout], but writes the
@@ -159,16 +161,12 @@ func serializeData(data any) []byte {
 	}
 
 	// Fall-back to JSON encoding for other data types.
-	buf := new(bytes.Buffer)
-	encoder := json.NewEncoder(buf)
-	encoder.SetEscapeHTML(false) // Passing raw data, not rendering it, so don't alter it.
-
-	if err := encoder.Encode(data); err != nil {
+	body, err := json.Marshal(data, jsonOpts)
+	if err != nil {
 		slog.Error("failed to serialize JSON into DLQ file", slog.Any("error", err))
 		return nil
 	}
-
-	return buf.Bytes()
+	return body
 }
 
 func (d *DeadLetterQueue) asyncWriteFile(data []byte, now time.Time, dirPerms, filePerms os.FileMode) bool {

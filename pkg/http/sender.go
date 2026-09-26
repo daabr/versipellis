@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +24,8 @@ import (
 const (
 	contentTypeHeader = "Content-Type"
 )
+
+var jsonOpts = json.JoinOptions(json.Deterministic(true), json.OmitZeroStructFields(true))
 
 // Sender contains all the configuration and state details for sending HTTP requests.
 type Sender struct {
@@ -242,17 +244,13 @@ func serializeData(data any, outURL *url.URL, outHdr http.Header) (getBodyFunc, 
 	}
 
 	// Fall-back to JSON encoding for other data types.
-	buf := new(bytes.Buffer)
-	encoder := json.NewEncoder(buf)
-	encoder.SetEscapeHTML(false) // Passing raw data, not rendering it, so don't alter it.
-
-	if err := encoder.Encode(data); err != nil {
+	body, err := json.Marshal(data, jsonOpts)
+	if err != nil {
 		return nil, 0, fmt.Errorf("failed to serialize JSON: %w", err)
 	}
 	if outHdr.Get(contentTypeHeader) == "" {
 		outHdr.Set(contentTypeHeader, "application/json")
 	}
-	body := buf.Bytes()
 	return func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }, int64(len(body)), nil
 }
 

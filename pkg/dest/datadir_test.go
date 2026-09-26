@@ -1,7 +1,7 @@
 package dest
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"io/fs"
 	"math"
@@ -50,13 +50,13 @@ func TestDeadLetterQueue(t *testing.T) {
 			name:        "json",
 			data:        map[string]any{"key": "value", "number": 42, "list": []any{1, 2, 3}},
 			wantFiles:   1,
-			wantContent: `{"key":"value","list":[1,2,3],"number":42}` + "\n",
+			wantContent: `{"key":"value","list":[1,2,3],"number":42}`,
 		},
 		{
 			name:        "json_with_unencoded_html",
 			data:        map[string]any{"html": "& < >"},
 			wantFiles:   1,
-			wantContent: `{"html":"& < >"}` + "\n",
+			wantContent: `{"html":"& < >"}`,
 		},
 		{
 			name:      "not_json",

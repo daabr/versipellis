@@ -2,8 +2,7 @@ package dest
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,11 +17,10 @@ import (
 // are encoded as JSON, if possible. Some types (e.g., HTTP requests and responses) have specific logic.
 // Because this is intended for demo and testing purposes, it is guaranteed to be concurrency-safe, but
 // not necessarily performant. For the same reason, JSON encoding errors are logged, but not exposed.
-var Stdout = newStdout(os.Stdout)
+var Stdout = new(stdoutSender{writer: os.Stdout})
 
 type stdoutSender struct {
-	w io.Writer
-	e *json.Encoder
+	writer io.Writer
 
 	// Synchronize all Send calls, to prevent concurrent callers from interleaving their output mid-line.
 	// [os.Stdout] is a shared resource, it doesn't have built-in concurrency like other destinations.
@@ -30,12 +28,6 @@ type stdoutSender struct {
 
 	lameDuck  atomic.Bool
 	closeOnce sync.Once
-}
-
-func newStdout(w io.Writer) *stdoutSender {
-	s := &stdoutSender{w: w, e: json.NewEncoder(w)}
-	s.e.SetEscapeHTML(false) // Passing raw data, not rendering it, so don't alter it.
-	return s
 }
 
 func (s *stdoutSender) Send(ctx context.Context, data any) {
@@ -62,7 +54,7 @@ func (s *stdoutSender) Send(ctx context.Context, data any) {
 		if t == nil {
 			return
 		}
-		err = t.Write(s.w)
+		err = t.Write(s.writer)
 		if t.Body != nil {
 			_ = t.Body.Close()
 		}
@@ -71,21 +63,28 @@ func (s *stdoutSender) Send(ctx context.Context, data any) {
 		if t == nil {
 			return
 		}
-		err = t.Write(s.w)
+		err = t.Write(s.writer)
 		if t.Body != nil {
 			_ = t.Body.Close()
 		}
 
 	case []map[string]any:
 		for _, m := range t {
-			err = errors.Join(err, s.e.Encode(m))
+			err = json.MarshalWrite(s.writer, m, jsonOpts)
+			if err != nil {
+				break
+			}
+			_, err = s.writer.Write([]byte{'\n'})
 			if err != nil {
 				break
 			}
 		}
 
 	default:
-		err = s.e.Encode(data)
+		err = json.MarshalWrite(s.writer, data, jsonOpts)
+		if err == nil {
+			_, err = s.writer.Write([]byte{'\n'})
+		}
 	}
 
 	if err != nil {

@@ -2,7 +2,7 @@ package dest
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -117,7 +117,7 @@ func TestStdout(t *testing.T) {
 			t.Parallel()
 
 			fakeStdout := new(strings.Builder)
-			s := newStdout(fakeStdout)
+			s := new(stdoutSender{writer: fakeStdout})
 			s.Send(t.Context(), tt.data)
 			s.Close(t.Context())
 
@@ -132,7 +132,7 @@ func TestStdoutConcurrency(t *testing.T) {
 	t.Parallel()
 
 	fakeStdout := new(bytes.Buffer)
-	sender := newStdout(fakeStdout)
+	sender := new(stdoutSender{writer: fakeStdout})
 	t.Cleanup(func() { sender.Close(t.Context()) })
 
 	const concurrencyFactor = 100
@@ -188,7 +188,7 @@ func TestStdoutSendDuringClose(t *testing.T) {
 	t.Parallel()
 
 	fakeStdout := new(strings.Builder)
-	s := newStdout(fakeStdout)
+	s := new(stdoutSender{writer: fakeStdout})
 	s.Close(t.Context())
 
 	s.Send(t.Context(), "should be dropped")
