@@ -121,6 +121,7 @@ func (d *DeadLetterQueue) Close(ctx context.Context) {
 	})
 }
 
+//bodyclose:handled
 func serializeData(data any) []byte {
 	switch t := data.(type) {
 	case []byte:
