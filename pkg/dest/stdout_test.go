@@ -30,34 +30,6 @@ func TestStdout(t *testing.T) {
 			want: "42\n",
 		},
 		{
-			name: "json",
-			data: map[string]any{"key": "value", "number": 42, "list": []any{1, 2, 3}},
-			want: `{"key":"value","list":[1,2,3],"number":42}` + "\n",
-		},
-		{
-			name: "ndjson",
-			data: []map[string]any{
-				{"key1": "value1"},
-				{"key2": "value2"},
-			},
-			want: `{"key1":"value1"}` + "\n" + `{"key2":"value2"}` + "\n",
-		},
-		{
-			name: "not_json",
-			data: map[string]any{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
-			want: "",                                             // Log this, but don't pollute [os.Stdout] with non-JSON text.
-		},
-		{
-			name: "not_ndjson",
-			data: []map[string]any{
-				{"key1": "value1"},
-				{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
-				{"key1": "value1"},
-			},
-			want: `{"key1":"value1"}` + "\n", // Fail on first error.
-		},
-		// After the "not_[nd]json" test cases, to ensure it doesn't leave [encoder] in a broken state.
-		{
 			name: "string",
 			data: "just a string",
 			want: `"just a string"` + "\n",
@@ -110,6 +82,33 @@ func TestStdout(t *testing.T) {
 			name: "nil_http_response",
 			data: (*http.Response)(nil),
 			want: "",
+		},
+		{
+			name: "json",
+			data: map[string]any{"key": "value", "number": 42, "list": []any{1, 2, 3}},
+			want: `{"key":"value","list":[1,2,3],"number":42}` + "\n",
+		},
+		{
+			name: "ndjson",
+			data: []map[string]any{
+				{"key1": "value1"},
+				{"key2": "value2"},
+			},
+			want: `{"key1":"value1"}` + "\n" + `{"key2":"value2"}` + "\n",
+		},
+		{
+			name: "not_json",
+			data: map[string]any{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
+			want: "",                                             // Log this, but don't pollute [os.Stdout] with non-JSON text.
+		},
+		{
+			name: "not_ndjson",
+			data: []map[string]any{
+				{"key1": "value1"},
+				{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
+				{"key1": "value1"},
+			},
+			want: `{"key1":"value1"}` + "\n", // Fail on first error.
 		},
 	}
 	for _, tt := range tests {
