@@ -150,7 +150,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, inReq *http.Request) {
 		return
 	}
 
-	if r.Sender != nil {
+	if r.Send != nil {
 		// Note that we ignore the incoming request's method and path, to use the sender's preconfigured values.
 		outReq := inReq.Clone(inReq.Context())
 		// Update the "Content-Length" header, if needed.
@@ -164,7 +164,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, inReq *http.Request) {
 			return io.NopCloser(bytes.NewReader(body)), nil
 		}
 
-		r.Sender(context.WithoutCancel(inReq.Context()), outReq) // Returns quickly (usually asynchronous internally).
+		r.Send(context.WithoutCancel(inReq.Context()), outReq) // Returns quickly (usually asynchronous internally).
 	}
 
 	slog.Debug("HTTP request received successfully", slog.String("name", r.Name),

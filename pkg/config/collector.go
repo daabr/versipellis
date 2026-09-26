@@ -49,7 +49,7 @@ func NewBaseCollector(cfg map[string]any, name string, senders map[string]Sender
 	}
 	c.Destination = strings.TrimSpace(Value(cfg, "destination", "")) // Attention: case sensitive!
 	if sender, found := senders[c.Destination]; found {
-		c.Sender = sender.Send
+		c.Send = sender.Send
 	}
 
 	switch {
@@ -57,7 +57,7 @@ func NewBaseCollector(cfg map[string]any, name string, senders map[string]Sender
 		return nil, errors.New("type field required but not found")
 	case !slices.Contains(validCollectorTypes, c.Type):
 		return nil, fmt.Errorf("unrecognized type %q", c.Type)
-	case c.Sender == nil:
+	case c.Send == nil:
 		return nil, fmt.Errorf("unrecognized destination %q", c.Destination)
 	case c.Cronspec != "" && c.Trigger != "":
 		return nil, errors.New("configuration cannot have both a schedule and a trigger")

@@ -343,7 +343,7 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	data, err := processResults(queryCtx, rows, 1)
 	end := time.Now()
 	if len(data) > 0 && !c.aborted.Load() {
-		c.Sender(context.WithoutCancel(ctx), data) // Returns quickly (usually asynchronous internally).
+		c.Send(context.WithoutCancel(ctx), data) // Returns quickly (usually asynchronous internally).
 	}
 
 	ok := err == nil

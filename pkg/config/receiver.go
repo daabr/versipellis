@@ -24,7 +24,7 @@ type BaseReceiver struct {
 	Name string
 
 	Destination string
-	Sender      SendFunc
+	Send        SendFunc
 }
 
 // NewBaseReceiver creates a new [BaseReceiver] from the given configuration,
@@ -34,7 +34,7 @@ func NewBaseReceiver(cfg map[string]any, name string, senders map[string]Sender)
 	r := &BaseReceiver{Type: strings.ToLower(strings.TrimSpace(Value(cfg, "type", ""))), Name: name}
 	r.Destination = strings.TrimSpace(Value(cfg, "destination", "")) // Attention: case sensitive!
 	if sender, found := senders[r.Destination]; found {
-		r.Sender = sender.Send
+		r.Send = sender.Send
 	}
 
 	switch {
@@ -42,7 +42,7 @@ func NewBaseReceiver(cfg map[string]any, name string, senders map[string]Sender)
 		return nil, errors.New("type field required but not found")
 	case !slices.Contains(validReceiverTypes, r.Type):
 		return nil, fmt.Errorf("unrecognized type %q", r.Type)
-	case r.Sender == nil:
+	case r.Send == nil:
 		return nil, fmt.Errorf("unrecognized destination %q", r.Destination)
 	default:
 		return r, nil
