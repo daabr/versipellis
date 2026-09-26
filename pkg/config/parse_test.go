@@ -14,7 +14,7 @@ import (
 	"github.com/daabr/versipellis/pkg/dest"
 )
 
-func TestParseFile(t *testing.T) {
+func TestParseFile(t *testing.T) { //nolint:paralleltest // [os.Chdir] has process-wide effect.
 	dir := t.TempDir()
 
 	empty := filepath.Join(dir, "empty.toml")
@@ -66,7 +66,7 @@ func TestParseFile(t *testing.T) {
 			wantErr: false,
 		},
 	}
-	for _, tt := range tests {
+	for _, tt := range tests { //nolint:paralleltest // [os.Chdir] has process-wide effect.
 		t.Run(tt.name, func(t *testing.T) {
 			got, gotErr := config.ParseFile(tt.path)
 			if (gotErr != nil) != tt.wantErr {

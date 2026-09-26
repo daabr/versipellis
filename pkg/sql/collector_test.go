@@ -477,7 +477,7 @@ func TestProcessResults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.QueryContext() error: %v", err)
 	}
-	_ = rows.Close() // Close rows immediately so [sql.Rows.Columns] fails.
+	_ = rows.Close() //nolint:sqlclosecheck // Close rows immediately so [sql.Rows.Columns] fails.
 
 	if _, err := processResults(t.Context(), rows, 1); err == nil {
 		t.Error("processResults() error = nil, wantErr = true")

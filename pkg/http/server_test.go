@@ -94,6 +94,8 @@ func TestReceiverClose(t *testing.T) {
 }
 
 func TestIsAnyError(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		err     error
@@ -121,6 +123,8 @@ func TestIsAnyError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := isAnyError(tt.err, tt.targets...); got != tt.want {
 				t.Errorf("isAnyError() = %v, want %v", got, tt.want)
 			}
