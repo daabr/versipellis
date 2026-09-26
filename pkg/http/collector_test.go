@@ -289,6 +289,7 @@ func TestCollectorStart(t *testing.T) {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
 
+			c.transportID += tt.name
 			fakeClient := server.Client()
 			fakeTransport, _ := fakeClient.Transport.(*http.Transport)
 			transportH2.Set(c.transportID, fakeTransport)
