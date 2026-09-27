@@ -143,7 +143,7 @@ Lifecycle and concurrency:
 
 - Senders are initialized first, then collectors are started concurrently (capped at `GOMAXPROCS`), then receivers are started (sequentially, sorted by name, so port conflicts produce the same errors on every run).
 
-- Init never fails fast: every section is validated and all errors are logged, then the process exits if any failed.
+- Init never fails fast: every stage is validated and all errors are logged, then the process exits if anything failed within each stage.
 
 - **Collectors** use two contexts: `schedCtx` (cancelled when initiating shutdown) stops scheduling and retries, `execCtx` is derived from `context.WithoutCancel` and has its own cancel function, so in-flight data retrieval gets a grace period. It is cancelled only if `Close()` times out. A `closed` channel (exposed via `Done()`) signals completion back to `main()`, and an `aborted` flag suppresses sending results from workers that were forcibly stopped.
 
@@ -165,7 +165,7 @@ Shutting down:
 
 - **Graceful rejection**: payloads rejected during or after shutdown are routed to `dest.Discard` to safely release their resources (closes HTTP request and response bodies).
 
-- `Close` methods of all entities are idempotent (`sync.Once`), safe to call on components that were never started, and wait at most the component's configured `timeout`, with a non-configurable upper bound (`CloseTimeout` = 5s).
+- `Close` methods of all entities are idempotent (`sync.Once`), safe to call on components that were never started, and wait at most the component's configured `timeout`, with a non-configurable upper bound (`CloseTimeout` + `abortTimeout` = 5s + 1s).
 
 Configuration:
 
