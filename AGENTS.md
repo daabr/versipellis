@@ -51,7 +51,7 @@ Common examples:
 
 - `for range` over integers and iterators, `new(expr)`.
 - Promoted fields from embedded structs in struct literals.
-- `http.Response.Body.Close()` auto-drains (up to 256 KiB or 50 ms).
+- `http.Response.Body.Close()` auto-drains HTTP/1 response bodies (up to 256 KiB or 50 ms).
 - Prefer `time.After()` over `time.NewTimer()`, unless you specifically need `Stop()` or `Reset()`.
 - New APIs in existing packages: `errors.AsType`, `os.Root`, `sync.WaitGroup.Go`.
 - New standard library packages: `encoding/json/v2`, `testing/synctest`.
