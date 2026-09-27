@@ -143,7 +143,7 @@ Lifecycle and concurrency:
 
 - Senders are initialized first, then collectors are started concurrently (capped at `GOMAXPROCS`), then receivers are started (sequentially, sorted by name, so port conflicts produce the same errors on every run).
 
-- Init never fails fast: every stage is validated and all errors are logged, then the process exits if anything failed within each stage.
+- Each initialization stage does not fail fast internally: it validates every component in that stage and logs all of its errors, but the process exits before entering the next stage if the current stage failed.
 
 - **Collectors** use two contexts: `schedCtx` (cancelled when initiating shutdown) stops scheduling and retries, `execCtx` is derived from `context.WithoutCancel` and has its own cancel function, so in-flight data retrieval gets a grace period. It is cancelled only if `Close()` times out. A `closed` channel (exposed via `Done()`) signals completion back to `main()`, and an `aborted` flag suppresses sending results from workers that were forcibly stopped.
 
