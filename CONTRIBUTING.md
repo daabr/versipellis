@@ -165,7 +165,7 @@ golangci-lint fmt && golangci-lint run
 Also, run the tests with the data race detector and coverage profile ([matches CI](./.github/workflows/ci.yml#L28)):
 
 ```shell
-go test -race -covermode=atomic -coverprofile=coverage.out ./pkg/...
+go test -race -coverprofile=coverage.out ./pkg/...
 ```
 
 Finally, identify and address test coverage regressions:

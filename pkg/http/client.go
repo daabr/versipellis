@@ -157,7 +157,7 @@ func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.
 // It runs asynchronously in a separate goroutine and does not return any error to the caller. The
 // request parameters were either cloned or constructed by the caller in order to prevent data races.
 func (s *Sender) sendWithRetries(ctx context.Context, u *url.URL, h http.Header, getBody getBodyFunc, size int64) {
-	resp := newErrorResponse(http.StatusServiceUnavailable) //nolint:bodyclose // False positive despite bodyclose:handled.
+	resp := newErrorResponse(http.StatusServiceUnavailable)
 	start := time.Now()
 
 	for i := range s.retries.MaxAttempts {
@@ -166,7 +166,7 @@ func (s *Sender) sendWithRetries(ctx context.Context, u *url.URL, h http.Header,
 		}
 
 		var retry bool
-		resp, retry = s.sendOnce(ctx, u, h, getBody, size) //nolint:bodyclose // False positive despite bodyclose:handled.
+		resp, retry = s.sendOnce(ctx, u, h, getBody, size)
 		if resp != nil && resp.StatusCode <= MaxSuccessfulStatusCode {
 			slog.Debug("HTTP request completed successfully",
 				slog.String("name", s.Name), slog.Int("attempt", i+1), slog.String("status", resp.Status),

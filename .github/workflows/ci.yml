@@ -25,7 +25,7 @@ jobs:
       - name: Test
         run: |
           go install gotest.tools/gotestsum@c4a0df2e75a225d979a444342dd3db752b53619f # v1.13.0
-          gotestsum -f github-actions -- -race -covermode=atomic -coverprofile=coverage.out ./pkg/...
+          gotestsum -f github-actions -- -race -coverprofile=coverage.out ./pkg/...
 
       - name: Lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
