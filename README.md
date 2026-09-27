@@ -12,9 +12,9 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/daabr/versipellis/badge)](https://scorecard.dev/viewer/?uri=github.com/daabr/versipellis)
 [![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
 
-Versipellis is a versatile, scalable tool for transferring and transforming data reliably across diverse protocols and formats, without altering the data itself.
+Versipellis (`versi`) is a versatile, scalable tool for transferring and transforming data reliably across diverse protocols and formats, without altering the data itself.
 
-It is not a data pipeline, but rather a powerful yet easy-to-use adapter and conduit for pipeline inputs and outputs.
+It is not a data processing pipeline, but rather a powerful yet easy-to-use adapter and conduit for pipelines, sources, and sinks.
 
 The primary design principles of this project are: ease of use, efficiency at scale, security, low footprint, and maintainability.
 
