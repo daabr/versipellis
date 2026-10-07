@@ -34,15 +34,15 @@ const (
 )
 
 type (
-	// Used when sending received requests. See [serializeData] and [Sender.sendWithRetries].
+	// Used when sending received requests, see [Sender.sendWithRetries].
 	getBodyFunc func() (io.ReadCloser, error)
 
-	// Used when sending collected responses. See [serializeData] and [Collector.processResponse].
+	// Used when sending collected responses, see [Collector.processResponse].
 	bodyProvider interface {
 		GetBody() (io.ReadCloser, error)
 	}
 
-	// Used when sending collected responses. See [Collector.processResponse] and [serializeData].
+	// Used when sending collected responses. See [Collector.processResponse] and [encode].
 	// This is a memory optimization, to avoid duplicate allocations for response bodies during retries,
 	// working around the fact that [http.Response] doesn't have a GetBody() method, unlike [http.Request].
 	reusableBody struct {
@@ -178,7 +178,6 @@ func (s *Sender) sendWithRetries(ctx context.Context, u *url.URL, h http.Header,
 			break
 		}
 
-		// Interrupted by [Sender.closing] when [Sender.Close] is called.
 		s.retries.waitBeforeRetry(ctx, ctx, s.closing, i)
 	}
 
@@ -261,7 +260,7 @@ func (s *Sender) sendOnce(ctx context.Context, u *url.URL, h http.Header, fn get
 		}
 	}()
 
-	body, err := fn() // The function is guaranteed to be non-nil by [serializeData].
+	body, err := fn() // The function is guaranteed to be non-nil.
 	if err != nil {
 		slog.Error("cannot get reusable HTTP request body", slog.Any("error", err), slog.String("name", s.Name))
 		return newErrorResponse(http.StatusInternalServerError), false

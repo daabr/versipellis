@@ -11,10 +11,10 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 // Collector contains all the configuration and state details for sending HTTP requests.
@@ -39,7 +39,6 @@ type Collector struct {
 	inProgress  sync.WaitGroup
 	closeOnce   sync.Once
 	closed      chan struct{}
-	aborted     atomic.Bool
 }
 
 // Base returns a copy of the collector's static and generic configuration details.
@@ -133,10 +132,10 @@ func loadBody(cfg map[string]any, method string) ([]byte, error) {
 	return body, nil // Not trimming leading/trailing whitespaces because this payload may be binary.
 }
 
-// Start connects to the configured HTTP server and starts sending requests to it. This function
-// returns immediately, and the collector runs asynchronously in the background. This function is
-// idempotent: only the first call will actually start a goroutine. However, it is not meant to be
-// safe for concurrency, initialize collectors only in the main goroutine. Lastly, the collector
+// Start connects to the configured HTTP server and starts sending requests to it. This method
+// returns immediately, and the collector runs asynchronously in the background. This method is
+// idempotent: only the first call will actually start a goroutine. However, it is not meant to
+// be safe for concurrency, initialize collectors only in the main goroutine. Lastly, the collector
 // obeys the cancellation of the provided context, but with a grace period of [Collector.timeout].
 func (c *Collector) Start(ctx context.Context) bool {
 	if c == nil {
@@ -207,24 +206,25 @@ func (c *Collector) scheduleNext(schedCtx, execCtx context.Context, prev time.Ti
 		case <-schedCtx.Done():
 			return
 		case <-time.After(time.Until(nextStart)):
-			c.requestWithConcurrencyLimit(schedCtx, execCtx, sem, nextStart)
+			c.requestWithConcurrency(schedCtx, execCtx, sem, nextStart)
 			prev = nextStart
 		}
 	}
 }
 
-func (c *Collector) requestWithConcurrencyLimit(schedCtx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
+func (c *Collector) requestWithConcurrency(schedCtx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
 	if schedCtx.Err() != nil { // Instead of schedCtx.Done() in the select block below - to check ctx before sem.
 		return
 	}
+
 	select {
 	case sem <- struct{}{}:
 		c.inProgress.Go(func() {
 			defer func() { <-sem }()
 
 			resp := c.requestWithRetries(schedCtx, execCtx) //nolint:bodyclose // False positive despite bodyclose:handled.
-			if resp.StatusCode <= MaxSuccessfulStatusCode && !c.aborted.Load() {
-				c.Send(context.WithoutCancel(execCtx), resp) // Returns quickly (usually asynchronous internally).
+			if resp.StatusCode <= MaxSuccessfulStatusCode {
+				c.Send(execCtx, flow.HTTPResponses{resp}) // I/O is asynchronous.
 			}
 		})
 	default:
@@ -255,6 +255,7 @@ func (c *Collector) Close() {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
+
 			c.inProgress.Wait()
 		}()
 
@@ -282,7 +283,6 @@ func (c *Collector) Close() {
 			// So no need to nest this select block inside the previous one.
 		case <-time.After(abortTimeout):
 			slog.Error("aborted HTTP collector didn't stop immediately", slog.String("name", c.Name))
-			c.aborted.Store(true)
 		}
 
 		if c.closed != nil {

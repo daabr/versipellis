@@ -65,24 +65,22 @@ func (c *Collector) executePostgresQuery(execCtx, queryCtx context.Context) bool
 		return false
 	}
 
-	data, err := processPostgresResults(queryCtx, rows)
+	count, err := c.processPostgresResults(queryCtx, rows)
 	end := time.Now()
-	if len(data) > 0 && !c.aborted.Load() {
-		c.Send(context.WithoutCancel(execCtx), data) // Returns quickly (usually asynchronous internally).
-	}
+	c.batch.Flush(execCtx)
 
 	ok := err == nil
 	if !ok {
 		slog.Warn("error while processing SQL query results", slog.Any("error", err), slog.String("driver", c.driver),
-			slog.String("name", c.Name), slog.Int("successfully_processed_rows", len(data)),
+			slog.String("name", c.Name), slog.Int("successfully_processed_rows", count),
 		)
 	} else {
 		slog.Debug("SQL query completed successfully", slog.String("driver", c.driver), slog.String("name", c.Name),
-			slog.Int("rows", len(data)), slog.Time("start_time", start), slog.Duration("duration", end.Sub(start)),
+			slog.Int("rows", count), slog.Time("start_time", start), slog.Duration("duration", end.Sub(start)),
 		)
 	}
 
-	if ok || len(data) > 0 {
+	if ok || count > 0 {
 		c.checkpointMu.Lock()
 		if start.UTC().After(c.prevStart) {
 			c.prevStart = start.UTC()
@@ -94,9 +92,9 @@ func (c *Collector) executePostgresQuery(execCtx, queryCtx context.Context) bool
 	return ok
 }
 
-// PostgreSQL-specific variant of [processResults]. Using [pgx]
+// PostgreSQL-specific variant of [Collector.processResults]. Using [pgx]
 // instead of [sql] for better performance and PostgreSQL feature support.
-func processPostgresResults(ctx context.Context, rows pgx.Rows) ([]map[string]any, error) {
+func (c *Collector) processPostgresResults(ctx context.Context, rows pgx.Rows) (int, error) {
 	cols := rows.FieldDescriptions()
 	size := len(cols)
 	vals := make([]any, size)
@@ -105,7 +103,7 @@ func processPostgresResults(ctx context.Context, rows pgx.Rows) ([]map[string]an
 		ptrs[i] = &vals[i]
 	}
 
-	scanned := make([]map[string]any, 0)
+	var scanned int
 	_, err := pgx.ForEachRow(rows, ptrs, func() error { // [pgx.ForEachRow] closes [pgx.Rows] automatically.
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("query result processing canceled: %w", err)
@@ -114,7 +112,8 @@ func processPostgresResults(ctx context.Context, rows pgx.Rows) ([]map[string]an
 		for i, col := range cols {
 			row[col.Name] = vals[i]
 		}
-		scanned = append(scanned, row)
+		c.batch.Add(ctx, row) // Async I/O, but it doesn't matter which ctx we use (detached by batcher anyway).
+		scanned++
 		return nil
 	})
 	if err != nil {

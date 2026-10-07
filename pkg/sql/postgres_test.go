@@ -3,7 +3,6 @@ package sql
 import (
 	"context"
 	"errors"
-	"reflect"
 	"testing"
 	"testing/synctest"
 
@@ -161,6 +160,7 @@ func TestCollectorExecutePostgresQueryErrors(t *testing.T) {
 				query:   "SELECT 1",
 				pgPool:  &tt.pool,
 				usingPG: true,
+				batch:   newTestBatcher(t, dest.Discard.Send),
 			}
 			if ok := coll.executeQuery(t.Context()); ok != tt.wantOK {
 				t.Errorf("Collector.executeQuery() = %v, want %v", ok, tt.wantOK)
@@ -172,27 +172,23 @@ func TestCollectorExecutePostgresQueryErrors(t *testing.T) {
 	}
 }
 
-func TestProcessPostgresResults(t *testing.T) {
+func TestCollectorProcessPostgresResults(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name     string
 		noRows   bool
-		wantRows []map[string]any
+		wantRows int
 	}{
 		{
 			name:     "no_rows",
 			noRows:   true,
-			wantRows: []map[string]any{},
+			wantRows: 0,
 		},
 		{
-			name:   "with_rows_and_sender",
-			noRows: false,
-			wantRows: []map[string]any{
-				{"id": 1, "name": "Alice"},
-				{"id": 2, "name": "Bob"},
-				{"id": 3, "name": "Carol"},
-			},
+			name:     "with_rows_and_sender",
+			noRows:   false,
+			wantRows: 3,
 		},
 	}
 	for _, tt := range tests {
@@ -208,26 +204,32 @@ func TestProcessPostgresResults(t *testing.T) {
 				}
 			}
 
-			gotRows, err := processPostgresResults(t.Context(), rows)
+			coll := &Collector{batch: newTestBatcher(t, dest.Discard.Send)}
+			gotRows, err := coll.processPostgresResults(t.Context(), rows)
 			if err != nil {
-				t.Errorf("processPostgresResults() error = %v", err)
+				t.Errorf("Collector.processPostgresResults() error = %v", err)
 			}
-			if !reflect.DeepEqual(gotRows, tt.wantRows) {
-				t.Errorf("processPostgresResults() = %+v, want %+v", gotRows, tt.wantRows)
+			if gotRows != tt.wantRows {
+				t.Errorf("Collector.processPostgresResults() row count = %d, want %d", gotRows, tt.wantRows)
 			}
 		})
 	}
 }
 
-func TestProcessPostgresResultsErrors(t *testing.T) {
+func TestCollectorProcessPostgresResultsErrors(t *testing.T) {
 	t.Parallel()
+
+	doaCtx, cancel := context.WithCancel(t.Context())
+	cancel()
 
 	tests := []struct {
 		name string
+		ctx  context.Context //nolint:containedctx // For unit test case.
 		rows *fakePGRows
 	}{
 		{
 			name: "scan_error",
+			ctx:  t.Context(),
 			rows: &fakePGRows{
 				cols:    []string{"col"},
 				rows:    [][]any{{1}},
@@ -237,6 +239,7 @@ func TestProcessPostgresResultsErrors(t *testing.T) {
 		},
 		{
 			name: "final_error",
+			ctx:  t.Context(),
 			rows: &fakePGRows{
 				cols:     []string{"col"},
 				rows:     [][]any{{1}},
@@ -244,13 +247,23 @@ func TestProcessPostgresResultsErrors(t *testing.T) {
 				finalErr: errors.New("final error"),
 			},
 		},
+		{
+			name: "context_canceled",
+			ctx:  doaCtx,
+			rows: &fakePGRows{
+				cols:  []string{"col"},
+				rows:  [][]any{{1}},
+				index: -1,
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := processPostgresResults(t.Context(), tt.rows); err == nil {
-				t.Errorf("processPostgresResults() error = nil, wantErr = true")
+			coll := &Collector{batch: newTestBatcher(t, dest.Discard.Send)}
+			if _, err := coll.processPostgresResults(tt.ctx, tt.rows); err == nil {
+				t.Errorf("Collector.processPostgresResults() error = nil, wantErr = true")
 			}
 		})
 	}

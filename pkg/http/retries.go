@@ -28,6 +28,9 @@ const (
 	defaultMaxAttempts   int64 = 3
 	defaultRetryInterval       = "1s"
 	defaultMaxInterval         = "20s"
+
+	minAttempts = 1
+	maxAttempts = 10
 )
 
 var validRetryTypes = []string{
@@ -69,7 +72,7 @@ func parseRetries(rawCfg any, method, name string) (*retries, error) {
 
 	r := &retries{Coefficient: retryCoeffBackoff}
 	n := config.Value(cfg, "max_attempts", defaultMaxAttempts)
-	r.MaxAttempts = config.BoundedInt(n, 1, 10, name, "maximum retry attempts")
+	r.MaxAttempts = config.BoundedInt(n, minAttempts, maxAttempts, name, "maximum retry attempts")
 	if r.MaxAttempts == 1 {
 		r.Coefficient = retryCoeffDisabled
 		return r, nil

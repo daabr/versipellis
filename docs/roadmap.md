@@ -19,11 +19,9 @@ This is the high-level plan for features that are expected to be released within
 
 2. Respect rate-limiting responses from HTTP servers
 
-3. Stream DB rows instead of current buffering, and batch at the HTTP sender side
+3. Data collection from MongoDB (+ general support for BSON)
 
-4. Data collection from MongoDB (+ general support for BSON)
-
-5. Configurable usage of the DLQ sender as a fallback after sender failures
+4. Configurable usage of the DLQ sender as a fallback after sender failures
 
 ## 3-6 Months
 

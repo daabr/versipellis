@@ -95,7 +95,7 @@
   header2 = "value2"
   ```
 
-`timeout` - maximum duration of time for each HTTP client request to complete
+`timeout` - maximum amount of time for each HTTP client request to complete
 
 - Optional
 - Default: `"5s"` (5 seconds)
@@ -111,3 +111,9 @@
 
 - Optional
 - [See this page](../retries.md)
+
+## `[sender.http.batch]` Sub-Section
+
+- Optional
+- Default: disabled, immediate dispatch without size limits
+- [See this page](../batch.md)

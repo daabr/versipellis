@@ -16,6 +16,7 @@ import (
 	"github.com/quic-go/quic-go/http3"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 // Receiver contains all the configuration and state details for receiving HTTP requests. It's a
@@ -96,7 +97,7 @@ func parseAddress(addr, protoVer string) (string, error) {
 }
 
 // Start listens for incoming HTTP/1.1, HTTP/2, and HTTP/3 requests on the configured local TCP or UDP
-// address. This function returns immediately, and the server runs asynchronously in the background.
+// address. This method returns immediately, and the server runs asynchronously in the background.
 // The input context is used only for starting them, not to control their entire lifecycle.
 func (r *Receiver) Start(ctx context.Context) bool {
 	handler := http.Handler(r)
@@ -164,7 +165,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, inReq *http.Request) {
 			return io.NopCloser(bytes.NewReader(body)), nil
 		}
 
-		r.Send(context.WithoutCancel(inReq.Context()), outReq) // Returns quickly (usually asynchronous internally).
+		r.Send(inReq.Context(), flow.HTTPRequests{outReq}) // I/O is asynchronous.
 	}
 
 	slog.Debug("HTTP request received successfully", slog.String("name", r.Name),

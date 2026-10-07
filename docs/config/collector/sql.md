@@ -29,9 +29,15 @@
   - Inline (e.g., `"SELECT * FROM table"`) - usually when the query is short and simple
   - Relative or absolute path to a file containing the query (e.g., `"config/query.sql"` or `"/path/query.sql"`) - when it's long, complex, or sensitive
 
-`timeout` - maximum duration of time for each SQL client query to complete
+`timeout` - maximum amount of time for each SQL client query to complete
 
 - Optional
 - Default: `"1m"` (1 minute)
 - Format: string containing decimal numbers, each with a unit suffix, e.g., `h` (hours), `m` (minutes), and `s` (seconds)
 - Special case: `"0"` and negative values (e.g., `"-1s"`) = no client-side timeout
+
+## `[collector.sql.batch]` Sub-Section
+
+- Optional
+- Default: up to 500 rows within a 1-second window
+- [See this page](../batch.md)

@@ -4,7 +4,7 @@ The default configuration file path is `config/versi.toml`.
 
 You may use the `--config` (or `-c`) CLI flag to specify a different file path.
 
-For information about the TOML configuration language, refer to: https://toml.io/
+For information about the TOML configuration language, refer to: <https://toml.io/>
 
 Versipellis recognizes the following section **types**. They are all optional, and each one is described in a dedicated page:
 

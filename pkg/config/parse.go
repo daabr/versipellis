@@ -8,8 +8,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 // DefaultFilePath is the default path to the TOML configuration file.
@@ -42,8 +45,8 @@ func ParseFile(path string) (map[string]any, error) {
 	return cfg, nil
 }
 
-// ExtractSubmaps extracts all the sub-maps with the given key from the given configuration map.
-// The returned map has the full path to the sub-map as the key and the sub-map itself as
+// ExtractSubmaps extracts all the sub-maps with the given key from the given TOML-based configuration
+// map. The returned map has the full path to the sub-map as the key and the sub-map itself as
 // the value. Note that this function does not recurse within already-matched sub-maps.
 func ExtractSubmaps(cfg map[string]any, key string) map[string]map[string]any {
 	submaps := make(map[string]map[string]any)
@@ -163,4 +166,36 @@ const (
 func concurrencyLimit(cfg map[string]any, name string) int {
 	n := Value(cfg, "concurrency_limit", defaultConcurrencyLimit)
 	return BoundedInt(n, noConcurrency, maxConcurrency, name, "collector concurrency limit")
+}
+
+const (
+	noBatching = 0
+
+	maxBatchItems = 1_000_000
+	maxBatchBytes = 1 << 30 // 1 GiB.
+)
+
+// BatchLimits parses the batch configuration within the given TOML-based configuration map of a single
+// collector or sender, merged with its provided defaults, and returns the corresponding [flow.Limits].
+func BatchLimits(rawCfg any, name string, defaults flow.Limits) (flow.Limits, error) {
+	if rawCfg == nil {
+		return defaults, nil
+	}
+	cfg, ok := rawCfg.(map[string]any)
+	if !ok {
+		return flow.Limits{}, fmt.Errorf("%q must be a table of key-value pairs, got %T", "batch", rawCfg)
+	}
+
+	n := Value(cfg, "max_items", int64(defaults.MaxItems))
+	b := Value(cfg, "max_bytes", int64(defaults.MaxBytes))
+	d, err := time.ParseDuration(Value(cfg, "time_window", defaults.Window.String()))
+	if err != nil {
+		return flow.Limits{}, fmt.Errorf("invalid time window duration: %w", err)
+	}
+
+	return flow.Limits{
+		MaxItems: BoundedInt(n, noBatching, maxBatchItems, name, "maximum batch items"),
+		MaxBytes: BoundedInt(b, noBatching, maxBatchBytes, name, "maximum batch byte size"),
+		Window:   max(d, noBatching),
+	}, nil
 }

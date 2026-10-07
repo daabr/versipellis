@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -19,13 +17,14 @@ import (
 
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/dest"
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 const (
 	contentTypeHeader = "Content-Type"
 )
 
-var jsonOpts = json.JoinOptions(json.Deterministic(true), json.OmitZeroStructFields(true))
+var defaultBatchLimits = flow.Limits{}
 
 // Sender contains all the configuration and state details for sending HTTP requests.
 type Sender struct {
@@ -41,14 +40,14 @@ type Sender struct {
 
 	transportID string
 	client      *http.Client
-	batch       atomic.Bool
+	batch       *flow.Batcher[map[string]any]
 
 	inProgress sync.WaitGroup
 	lameDuck   atomic.Bool
 	closeMu    sync.RWMutex
 	closeOnce  sync.Once
-	closing    chan struct{}
-	stop       chan struct{}
+	closing    chan struct{} // Removes delays between retries.
+	stop       chan struct{} // Stops requests forcefully.
 }
 
 // NewSender creates a new [config.Sender] with the provided configuration, which was read
@@ -105,36 +104,38 @@ func NewSender(cfg map[string]any, name, baseType string) (*Sender, error) {
 		return nil, fmt.Errorf("unexpected sender type %q", s.Type)
 	}
 
+	var limits flow.Limits
+	if limits, err = config.BatchLimits(cfg["batch"], s.Name, defaultBatchLimits); err != nil {
+		return nil, fmt.Errorf("HTTP batching limits: %w", err)
+	}
+	opts := new(flow.Options[map[string]any]{Guard: s.guard})
+	if s.batch, err = flow.NewBatcher(limits, s.sendStructured, opts); err != nil {
+		return nil, fmt.Errorf("HTTP batching: %w", err)
+	}
+
 	return s, nil
 }
 
-// Send sends any data as an HTTP request to the configured [Sender], retrying on transient errors
-// based on [Sender.retries]. Byte buffers are sent as raw payloads, received [http.Request]s and
-// [http.Response]s are proxied with their headers and body preserved. Other data types are encoded
-// as JSON, if possible. Nil data is treated as a sentinel marking the beginning and the end of batches.
-func (s *Sender) Send(ctx context.Context, data any) {
-	// Don't send nil data, it is used as a sentinel for batches.
-	// Reminder: not fully implemented yet (batch size & batching duration limits).
-	if data == nil {
-		b := s.batch.Load()
-		s.batch.CompareAndSwap(b, !b) // Reminder: consider concurrency (how to handle overlapping batches).
+// guard synchronizes dispatches of delayed batches (see [flow.Options.Guard]) with [Sender.Close].
+func (s *Sender) guard(flush func()) {
+	s.closeMu.RLock()
+	defer s.closeMu.RUnlock()
 
-		return
+	if !s.lameDuck.Load() {
+		flush() // Otherwise, Close has already taken the pending batch.
 	}
+}
 
-	if s.lameDuck.Load() {
-		slog.Warn("cannot send HTTP request: shutdown in progress", slog.String("name", s.Name))
-		dest.Discard.Send(ctx, data)
-		return
-	}
-
-	outURL := s.url.Clone()
-	outHdr := s.headers.Clone()
-	getBody, contentLength, err := serializeData(data, outURL, outHdr)
-	if err != nil {
-		slog.Error("failed to serialize payload for HTTP request", slog.Any("error", err),
-			slog.String("name", s.Name), slog.String("url", outURL.Redacted()),
-		)
+// Send any data as an HTTP request to the configured [Sender], retrying on transient errors
+// based on [Sender.retries]. Byte blobs are sent as raw payloads, full [http.Request]s and
+// [http.Response]s are proxied with their headers and body preserved. Other data types are
+// encoded, if possible. This method supports batching based on user-configured [flow.Limits].
+//
+// Concurrency & lifecycle: the entire chunk is either accepted or rejected, because this method holds a read lock
+// of [Sender.closeMu] while it checks [Sender.lameDuck] and registers work in [Sender.inProgress], so [Sender.Close]
+// can't start waiting in the middle. Therefore, nothing under this lock may block, and the actual I/O is asynchronous.
+func (s *Sender) Send(ctx context.Context, data flow.Chunk) {
+	if flow.IsEmpty(data) {
 		return
 	}
 
@@ -142,14 +143,34 @@ func (s *Sender) Send(ctx context.Context, data any) {
 	defer s.closeMu.RUnlock()
 
 	if s.lameDuck.Load() {
-		slog.Warn("cannot send HTTP request: shutdown in progress", slog.String("name", s.Name))
+		slog.Warn("cannot send HTTP request: shutdown in progress",
+			slog.String("name", s.Name), slog.Int("batch_size", data.Len()),
+		)
 		dest.Discard.Send(ctx, data)
 		return
 	}
 
-	s.inProgress.Go(func() {
-		s.sendWithRetries(ctx, outURL, outHdr, getBody, contentLength)
-	})
+	ctx = context.WithoutCancel(ctx)
+	switch chunk := data.(type) {
+	case flow.Structured:
+		s.batch.Add(ctx, chunk...) // May dispatch a full batch synchronously, still under the read lock.
+
+	case flow.Blobs:
+		for _, blob := range chunk {
+			s.sendBlob(ctx, blob)
+		}
+	case flow.HTTPRequests:
+		for _, req := range chunk {
+			s.sendHTTPRequest(ctx, req)
+		}
+	case flow.HTTPResponses:
+		for _, resp := range chunk {
+			s.sendHTTPResponse(ctx, resp)
+		}
+	default:
+		slog.Error("unhandled data type in HTTP sender", slog.String("name", s.Name),
+			slog.String("data_type", fmt.Sprintf("%T", chunk)))
+	}
 }
 
 // Close waits (up to [CloseTimeout] or a context deadline) for requests that are in progress to finish, and
@@ -158,20 +179,21 @@ func (s *Sender) Close(ctx context.Context) {
 	s.closeOnce.Do(func() {
 		s.closeMu.Lock()
 		s.lameDuck.Store(true)
-		close(s.closing)
 		s.closeMu.Unlock()
 
 		timeout := s.timeout
 		if timeout <= 0 || timeout > CloseTimeout {
 			timeout = CloseTimeout // Ensure the timeout is within acceptable bounds.
 		}
-
 		shutdownCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
 		done := make(chan struct{})
 		go func() {
+			close(s.closing)
 			defer close(done)
+
+			s.batch.Flush(ctx) // Forceful shutdowns abort its requests too, via [Sender.stop].
 			s.inProgress.Wait()
 		}()
 
@@ -190,68 +212,123 @@ func (s *Sender) Close(ctx context.Context) {
 	})
 }
 
-func serializeData(data any, outURL *url.URL, outHdr http.Header) (getBodyFunc, int64, error) {
-	switch t := data.(type) {
-	case []byte:
-		if len(t) == 0 {
-			return nil, 0, errors.New("no payload to send")
-		}
-		if outHdr.Get(contentTypeHeader) == "" {
-			outHdr.Set(contentTypeHeader, http.DetectContentType(t))
-		}
-		// Mutation of the original byte slice is not a concern because it's already abandoned by the data
-		// source. On the other hand, GC pressure due to duplicating huge blobs is something we need to avoid.
-		return func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(t)), nil }, int64(len(t)), nil
-
-	case *http.Request:
-		if t == nil {
-			return nil, 0, errors.New("cannot forward nil HTTP request")
-		}
-		copyHeaders(t.Header, outHdr, true)
-		copyQuery(t.URL, outURL)
-		if t.Body == nil && t.GetBody == nil {
-			return func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(nil)), nil }, 0, nil
-		}
-		if t.GetBody != nil { // Optimization to avoid duplicate memory allocations for the request body.
-			return t.GetBody, t.ContentLength, nil
-		}
-		defer t.Body.Close() // Redundant but harmless (see [http.Request.Body] for server requests).
-		b, err := io.ReadAll(t.Body)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to read HTTP request body: %w", err)
-		}
-		return func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(b)), nil }, int64(len(b)), nil
-
-	case *http.Response:
-		if t == nil {
-			return nil, 0, errors.New("cannot relay nil HTTP response")
-		}
-		copyHeaders(t.Header, outHdr, false)
-		if t.Body == nil {
-			return func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(nil)), nil }, 0, nil
-		}
-		if b, ok := t.Body.(bodyProvider); ok {
-			// Memory optimization, due to the same reason as above (to avoid duplicate allocations for response
-			// bodies during retries), working around the fact that [http.Response] doesn't have a GetBody() method.
-			return b.GetBody, t.ContentLength, nil
-		}
-		defer t.Body.Close() // It's important to call this before [io.ReadAll], but only here, not above.
-		b, err := io.ReadAll(t.Body)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to read HTTP response body: %w", err)
-		}
-		return func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(b)), nil }, int64(len(b)), nil
+func (s *Sender) sendBlob(ctx context.Context, body []byte) {
+	if len(body) == 0 {
+		slog.Error("cannot send HTTP request with no payload",
+			slog.String("name", s.Name), slog.String("format", "raw_bytes"),
+		)
+		return
 	}
 
-	// Fall-back to JSON encoding for other data types.
-	body, err := json.Marshal(data, jsonOpts)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to serialize JSON: %w", err)
-	}
+	outHdr := s.headers.Clone()
 	if outHdr.Get(contentTypeHeader) == "" {
-		outHdr.Set(contentTypeHeader, "application/json")
+		outHdr.Set(contentTypeHeader, http.DetectContentType(body))
 	}
-	return func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }, int64(len(body)), nil
+
+	s.inProgress.Go(func() {
+		s.sendWithRetries(ctx, s.url.Clone(), outHdr, retryableBody(body), int64(len(body)))
+	})
+}
+
+// sendStructured is called only via [Sender.batch]: from [Sender.Send] and [Sender.guard], which hold a read lock
+// of [Sender.closeMu] after checking [Sender.lameDuck], and from [Sender.Close] before it waits for requests that are
+// in progress. Either way, it may register new work without checking [Sender.lameDuck] again, and it must not acquire
+// a recursive read lock, which may deadlock with Close. Encoding happens asynchronously, so it doesn't hold the lock.
+func (s *Sender) sendStructured(ctx context.Context, data []map[string]any) {
+	s.inProgress.Go(func() {
+		body, err := flow.FormatNDJSON.Encode(data)
+		if err != nil {
+			slog.Error("failed to encode HTTP request payload", slog.Any("error", err),
+				slog.String("name", s.Name), slog.Int("batch_size", len(data)), slog.String("format", "ndjson"),
+			)
+			return
+		}
+
+		outHdr := s.headers.Clone()
+		if outHdr.Get(contentTypeHeader) == "" {
+			outHdr.Set(contentTypeHeader, flow.FormatNDJSON.ContentType())
+		}
+
+		s.sendWithRetries(ctx, s.url.Clone(), outHdr, retryableBody(body), int64(len(body)))
+	})
+}
+
+func (s *Sender) sendHTTPRequest(ctx context.Context, req *http.Request) {
+	if req == nil {
+		slog.Error("cannot send empty HTTP request", slog.String("name", s.Name))
+		return
+	}
+
+	outURL := s.url.Clone()
+	copyQuery(req.URL, outURL)
+
+	outHdr := s.headers.Clone()
+	copyHeaders(req.Header, outHdr, true)
+
+	if req.Body == nil && req.GetBody == nil {
+		s.inProgress.Go(func() {
+			s.sendWithRetries(ctx, outURL, outHdr, retryableBody(nil), 0)
+		})
+		return
+	}
+	if req.GetBody != nil { // Optimization to avoid duplicate memory allocations for the request body.
+		s.inProgress.Go(func() {
+			s.sendWithRetries(ctx, outURL, outHdr, req.GetBody, req.ContentLength)
+		})
+		return
+	}
+	// Requests from receivers always have a GetBody function, so this is only a fallback. Either way, bodies are
+	// buffered in memory before they're passed to [Sender.Send], so reading them under its read lock doesn't block.
+	defer req.Body.Close() // Redundant but harmless (see [http.Request.Body] for server requests).
+	b, err := io.ReadAll(req.Body)
+	if err != nil {
+		slog.Error("failed to read HTTP request body", slog.Any("error", err), slog.String("name", s.Name))
+		return
+	}
+
+	s.inProgress.Go(func() {
+		s.sendWithRetries(ctx, outURL, outHdr, retryableBody(b), int64(len(b)))
+	})
+}
+
+func (s *Sender) sendHTTPResponse(ctx context.Context, resp *http.Response) {
+	if resp == nil {
+		slog.Error("cannot send empty HTTP response", slog.String("name", s.Name))
+		return
+	}
+
+	outHdr := s.headers.Clone()
+	copyHeaders(resp.Header, outHdr, false)
+
+	if resp.Body == nil {
+		return // Nothing to do, but not an error that needs to be reported.
+	}
+	if b, ok := resp.Body.(bodyProvider); ok {
+		// Memory optimization, due to the same reason as in [Sender.sendHTTPRequest],
+		// working around the fact that [http.Response] doesn't have a GetBody() method.
+		s.inProgress.Go(func() {
+			s.sendWithRetries(ctx, s.url.Clone(), outHdr, b.GetBody, resp.ContentLength)
+		})
+		return
+	}
+	// Responses from collectors always have a reusable body, so this is only a fallback. Either way, bodies are
+	// buffered in memory before they're passed to [Sender.Send], so reading them under its read lock doesn't block.
+	defer resp.Body.Close() // It's important to call this before [io.ReadAll], but only in this method.
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		slog.Error("failed to read HTTP response body", slog.Any("error", err), slog.String("name", s.Name))
+		return
+	}
+
+	s.inProgress.Go(func() {
+		s.sendWithRetries(ctx, s.url.Clone(), outHdr, retryableBody(b), int64(len(b)))
+	})
+}
+
+func retryableBody(b []byte) getBodyFunc {
+	return func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(b)), nil
+	}
 }
 
 // copyQuery copies query parameters from the source URL to

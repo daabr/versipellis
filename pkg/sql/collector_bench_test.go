@@ -39,6 +39,7 @@ func BenchmarkCollector(b *testing.B) {
 				b.Cleanup(func() { _ = readers[i].Close() })
 			}
 			cores := atomic.Int32{}
+			batcher := newTestBatcher(b, dest.Discard.Send)
 			ctx := b.Context()
 
 			b.ResetTimer()
@@ -55,6 +56,8 @@ func BenchmarkCollector(b *testing.B) {
 					driver: DriverTypeSQLite,
 					query:  benchQuery,
 					db:     readers[i],
+
+					batch: batcher,
 				}
 
 				for pb.Next() {

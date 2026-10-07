@@ -2,22 +2,27 @@ package dest
 
 import (
 	"context"
-	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
-// Stdout prints any input data to [os.Stdout]. Simple data types are printed as-is, complex structures
-// are encoded as JSON, if possible. Some types (e.g., HTTP requests and responses) have specific logic.
-// Because this is intended for demo and testing purposes, it is guaranteed to be concurrency-safe, but
-// not necessarily performant. For the same reason, JSON encoding errors are logged, but not exposed.
-var Stdout = new(stdoutSender{writer: os.Stdout})
+var (
+	// Stdout prints any input data to [os.Stdout]. Simple data types are printed as-is, complex structures
+	// are encoded as JSON, if possible. Some types (e.g., HTTP requests and responses) have specific logic.
+	// Because this is intended for demo and testing purposes, it is guaranteed to be concurrency-safe, but
+	// not necessarily performant. For the same reason, JSON encoding errors are logged, but not exposed.
+	Stdout = new(stdoutSender{writer: os.Stdout})
+
+	newline = []byte{'\n'}
+)
 
 type stdoutSender struct {
 	writer io.Writer
@@ -30,9 +35,9 @@ type stdoutSender struct {
 	closeOnce sync.Once
 }
 
-func (s *stdoutSender) Send(ctx context.Context, data any) {
-	if data == nil {
-		return // Don't log nil data, other senders use it as a sentinel for batches.
+func (s *stdoutSender) Send(ctx context.Context, data flow.Chunk) {
+	if flow.IsEmpty(data) {
+		return
 	}
 
 	if s.lameDuck.Load() {
@@ -49,47 +54,48 @@ func (s *stdoutSender) Send(ctx context.Context, data any) {
 	}
 
 	var err error
-	switch t := data.(type) {
-	case *http.Request:
-		if t == nil {
-			return
-		}
-		err = t.Write(s.writer)
-		if t.Body != nil {
-			_ = t.Body.Close()
-		}
-
-	case *http.Response:
-		if t == nil {
-			return
-		}
-		err = t.Write(s.writer)
-		if t.Body != nil {
-			_ = t.Body.Close()
-		}
-
-	case []map[string]any:
-		var buf []byte
-		for _, m := range t {
-			buf, err = json.Marshal(m, jsonOpts)
-			if err == nil {
-				_, err = s.writer.Write(append(buf, '\n'))
-			}
-			if err != nil {
-				break
+	switch chunk := data.(type) {
+	case flow.Blobs:
+		for _, b := range chunk {
+			if len(b) > 0 {
+				_, werr := s.writer.Write(b)
+				if werr == nil {
+					_, werr = s.writer.Write(newline)
+				}
+				err = errors.Join(err, werr)
 			}
 		}
+	case flow.Structured:
+		err = flow.FormatNDJSON.Print(s.writer, chunk) // More readable than [flow.Format.Encode].
 
+	case flow.HTTPRequests:
+		for _, req := range chunk {
+			if req == nil {
+				continue
+			}
+			err = errors.Join(err, req.Write(s.writer))
+			if req.Body != nil {
+				_ = req.Body.Close()
+			}
+		}
+	case flow.HTTPResponses:
+		for _, resp := range chunk {
+			if resp == nil {
+				continue
+			}
+			err = errors.Join(err, resp.Write(s.writer))
+			if resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+		}
 	default:
-		var buf []byte
-		buf, err = json.Marshal(data, jsonOpts)
-		if err == nil {
-			_, err = s.writer.Write(append(buf, '\n'))
-		}
+		err = errors.New("unhandled data type")
 	}
 
 	if err != nil {
-		slog.Error("cannot encode or print data", slog.Any("error", err), slog.String("data_type", fmt.Sprintf("%T", data)))
+		slog.Error("cannot encode or print data", slog.Any("error", err),
+			slog.String("data_type", fmt.Sprintf("%T", data)),
+		)
 	}
 }
 

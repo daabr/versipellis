@@ -2,11 +2,12 @@ package dest
 
 import (
 	"context"
-	"net/http"
+
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
-// Discard is a trivial sender that doesn't output anything, but it does
-// close any resources associated with known data types, unlike a nil sender.
+// Discard is a trivial sender that doesn't output anything, but it does release
+// all the resources associated with known data types, unlike a nil sender.
 var Discard = newDiscard()
 
 type discardSender struct{}
@@ -16,15 +17,23 @@ func newDiscard() discardSender {
 }
 
 //bodyclose:handled
-func (discardSender) Send(_ context.Context, data any) {
-	switch t := data.(type) {
-	case *http.Request:
-		if t != nil && t.Body != nil {
-			_ = t.Body.Close()
+func (discardSender) Send(_ context.Context, data flow.Chunk) {
+	if flow.IsEmpty(data) {
+		return
+	}
+
+	switch chunk := data.(type) {
+	case flow.HTTPRequests:
+		for _, req := range chunk {
+			if req != nil && req.Body != nil {
+				_ = req.Body.Close()
+			}
 		}
-	case *http.Response:
-		if t != nil && t.Body != nil {
-			_ = t.Body.Close()
+	case flow.HTTPResponses:
+		for _, resp := range chunk {
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
 		}
 	}
 }

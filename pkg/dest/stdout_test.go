@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 func TestStdout(t *testing.T) {
@@ -16,49 +18,89 @@ func TestStdout(t *testing.T) {
 
 	tests := []struct {
 		name string
-		data any
+		data flow.Chunk
 		want string
 	}{
 		{
-			name: "nil",
+			name: "nothing",
 			data: nil,
 			want: "",
 		},
 		{
 			name: "int",
-			data: 42,
-			want: "42\n",
+			data: flow.Structured([]map[string]any{{"int": 42}}),
+			want: `{"int":42}` + "\n",
 		},
 		{
 			name: "string",
-			data: "just a string",
-			want: `"just a string"` + "\n",
+			data: flow.Structured([]map[string]any{{"string": "just a string"}}),
+			want: `{"string":"just a string"}` + "\n",
 		},
 		{
 			name: "unencoded_html",
-			data: "& < >",
-			want: `"& < >"` + "\n",
+			data: flow.Structured([]map[string]any{{"html": "& < >"}}),
+			want: `{"html":"& < >"}` + "\n",
+		},
+		{
+			name: "empty_byte_slice_1",
+			data: flow.Blobs([][]byte{}),
+			want: "",
+		},
+		{
+			name: "empty_byte_slice_2",
+			data: flow.Blobs([][]byte{[]byte("")}),
+			want: "",
+		},
+		{
+			name: "nil_byte_slice",
+			data: flow.Blobs([][]byte{nil}),
+			want: "",
+		},
+		{
+			name: "printable_ascii_byte_slice",
+			data: flow.Blobs([][]byte{[]byte("payload")}),
+			want: "payload\n",
+		},
+		{
+			name: "printable_unicode_byte_slice",
+			data: flow.Blobs([][]byte{[]byte("πayload")}),
+			want: "πayload\n",
+		},
+		{
+			name: "non_printable_unicode_byte_slice",
+			data: flow.Blobs([][]byte{[]byte("\x00\x01\x02")}),
+			want: "\x00\x01\x02\n",
+		},
+		{
+			name: "multiple_byte_slices",
+			data: flow.Blobs([][]byte{[]byte("first"), []byte("second")}),
+			want: "first\nsecond\n",
+		},
+		{
+			name: "printable_and_non_printable_side_by_side",
+			data: flow.Structured([]map[string]any{{"text": []byte("a\vb"), "base64": []byte{0xff, 0x00}}}),
+			want: `{"base64":"/wA=","text":"a\u000bb"}` + "\n", // "\v" is U+000B.
 		},
 		{
 			name: "http_request_with_body",
-			data: func() *http.Request {
+			data: flow.HTTPRequests([]*http.Request{func() *http.Request {
 				body := strings.NewReader("body")
 				req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.com", body)
 				return req
-			}(),
+			}()}),
 			want: "POST / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Go-http-client/1.1\r\nContent-Length: 4\r\n\r\nbody",
 		},
 		{
 			name: "http_request_without_body",
-			data: func() *http.Request {
+			data: flow.HTTPRequests([]*http.Request{func() *http.Request {
 				req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.com", http.NoBody)
 				return req
-			}(),
+			}()}),
 			want: "POST / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Go-http-client/1.1\r\nContent-Length: 0\r\n\r\n",
 		},
 		{
 			name: "http_response",
-			data: func() *http.Response {
+			data: flow.HTTPResponses([]*http.Response{func() *http.Response {
 				body := strings.NewReader("body")
 				req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/path", body)
 				return &http.Response{
@@ -70,45 +112,45 @@ func TestStdout(t *testing.T) {
 					ProtoMinor: 1,
 					Body:       io.NopCloser(body),
 				}
-			}(), //nolint:bodyclose // Closed by [stdoutSender.Send] in unit test.
+			}()}), //nolint:bodyclose // Closed by [stdoutSender.Send] in unit test.
 			want: "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nbody",
 		},
 		{
 			name: "nil_http_request",
-			data: (*http.Request)(nil),
+			data: flow.HTTPRequests([]*http.Request{nil}),
 			want: "",
 		},
 		{
 			name: "nil_http_response",
-			data: (*http.Response)(nil),
+			data: flow.HTTPResponses([]*http.Response{nil}),
 			want: "",
 		},
 		{
-			name: "json",
-			data: map[string]any{"key": "value", "number": 42, "list": []any{1, 2, 3}},
+			name: "json_object",
+			data: flow.Structured([]map[string]any{{"key": "value", "number": 42, "list": []any{1, 2, 3}}}),
 			want: `{"key":"value","list":[1,2,3],"number":42}` + "\n",
 		},
 		{
 			name: "ndjson",
-			data: []map[string]any{
+			data: flow.Structured([]map[string]any{
 				{"key1": "value1"},
 				{"key2": "value2"},
-			},
+			}),
 			want: `{"key1":"value1"}` + "\n" + `{"key2":"value2"}` + "\n",
 		},
 		{
-			name: "not_json",
-			data: map[string]any{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
-			want: "",                                             // Log this, but don't pollute [os.Stdout] with non-JSON text.
-		},
-		{
-			name: "not_ndjson",
-			data: []map[string]any{
+			name: "ndjson_error",
+			data: flow.Structured([]map[string]any{
 				{"key1": "value1"},
 				{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
-				{"key1": "value1"},
-			},
-			want: `{"key1":"value1"}` + "\n", // Fail on first error.
+				{"key2": "value2"},
+			}),
+			want: `{"key1":"value1"}` + "\n" + `{"key2":"value2"}` + "\n",
+		},
+		{
+			name: "unhandled_data_type",
+			data: flow.FakeDataType{},
+			want: "",
 		},
 	}
 	for _, tt := range tests {
@@ -121,7 +163,7 @@ func TestStdout(t *testing.T) {
 			s.Close(t.Context())
 
 			if got := fakeStdout.String(); got != tt.want {
-				t.Errorf("Stdout(%s) stdout = %q, want %q", tt.name, got, tt.want)
+				t.Errorf("stdoutSender.Send(%s) = %q, want %q", tt.name, got, tt.want)
 			}
 		})
 	}
@@ -140,7 +182,7 @@ func TestStdoutConcurrency(t *testing.T) {
 	for goroutine := range concurrencyFactor {
 		wg.Go(func() {
 			for call := range concurrencyFactor {
-				sender.Send(t.Context(), map[string]any{"goroutine": goroutine, "call": call})
+				sender.Send(t.Context(), flow.Structured([]map[string]any{{"goroutine": goroutine, "call": call}}))
 			}
 		})
 	}
@@ -190,8 +232,8 @@ func TestStdoutSendDuringClose(t *testing.T) {
 	s := new(stdoutSender{writer: fakeStdout})
 	s.Close(t.Context())
 
-	s.Send(t.Context(), "should be dropped")
+	s.Send(t.Context(), flow.Blobs([][]byte{[]byte("should be dropped")}))
 	if got := fakeStdout.String(); got != "" {
-		t.Errorf("Send() after Close() wrote %q, want empty", got)
+		t.Errorf("stdoutSender.Send() after stdoutSender.Close() wrote %q, want empty", got)
 	}
 }

@@ -3,19 +3,22 @@ package http
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"testing/synctest"
 	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 func TestNewSender(t *testing.T) {
@@ -100,6 +103,18 @@ func TestNewSender(t *testing.T) {
 			wantErr:  true,
 		},
 		{
+			name:     "invalid_batch",
+			cfg:      map[string]any{"url": "https://example.com", "batch": "invalid"},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
+		},
+		{
+			name:     "unsupported_batch_byte_limit", // No item size function, because byte size batching is out of scope.
+			cfg:      map[string]any{"url": "https://example.com", "batch": map[string]any{"max_bytes": int64(1024)}},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
+		},
+		{
 			name:     "valid_minimal_config",
 			cfg:      map[string]any{"url": "https://example.com/path"},
 			baseType: config.SenderTypeHTTP,
@@ -118,6 +133,10 @@ func TestNewSender(t *testing.T) {
 					"type":         retryTypeStatic,
 					"max_attempts": int64(2),
 					"interval":     "100ms",
+				},
+				"batch": map[string]any{
+					"max_items":   int64(100),
+					"time_window": "500ms",
 				},
 			},
 			baseType: config.SenderTypeHTTP,
@@ -147,319 +166,314 @@ func TestNewSenderHTTP3(t *testing.T) {
 	}
 }
 
-func TestSenderSendBatch(t *testing.T) {
-	t.Parallel()
+// sentRequest is an outgoing HTTP request, captured by the transport of [newRecordingSender].
+type sentRequest struct {
+	body   string
+	header http.Header
+	query  string
+}
 
-	var counter atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		body, err := io.ReadAll(r.Body)
-		switch {
-		case err != nil:
-			t.Errorf("failed to read request body: %v", err)
-		case len(body) == 0:
-			t.Errorf("received empty request body")
-		default:
-			counter.Add(1)
-		}
-	}))
-	t.Cleanup(server.Close)
+// newRecordingSender creates an HTTP [Sender] whose transport doesn't send anything over the network, but records
+// all the outgoing requests instead. It also verifies that their bodies are reusable for retries and redirects.
+func newRecordingSender(t *testing.T, cfg map[string]any) (*Sender, func() []sentRequest) {
+	t.Helper()
 
-	sender, err := NewSender(
-		map[string]any{"url": server.URL, "timeout": "0"},
-		"TestSenderSendBatch", config.SenderTypeHTTP,
-	)
-	if sender == nil {
+	s, err := NewSender(cfg, t.Name(), config.SenderTypeHTTP)
+	if err != nil {
 		t.Fatalf("NewSender() error = %v", err)
 	}
 
-	// Aside: cover the logic for not sending an empty byte slice.
-	sender.Send(t.Context(), []byte{})
+	var mu sync.Mutex
+	var sent []sentRequest
+	s.client.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("failed to read request body: %v", err)
+		}
+		if r.GetBody == nil {
+			t.Error("request body is not reusable: GetBody = nil")
+		} else if rc, err := r.GetBody(); err != nil {
+			t.Errorf("GetBody() error = %v", err)
+		} else if retry, err := io.ReadAll(rc); err != nil || !bytes.Equal(retry, body) {
+			t.Errorf("retry body = %q, error = %v, want %q", retry, err, body)
+		}
 
-	// Step 1: start batch.
-	sender.Send(t.Context(), nil)
+		mu.Lock()
+		sent = append(sent, sentRequest{body: string(body), header: r.Header, query: r.URL.RawQuery})
+		mu.Unlock()
 
-	// Reminder: join multiple parts into a single batch.
-	sender.Send(t.Context(), []byte("part1"))
-	sender.Send(t.Context(), []byte("part2"))
-	sender.Send(t.Context(), []byte("part3"))
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: http.NoBody, Header: make(http.Header)}, nil
+	})
 
-	// Step 3: finalize & send batch.
-	sender.Send(t.Context(), nil)
+	return s, func() []sentRequest {
+		mu.Lock()
+		defer mu.Unlock()
 
-	sender.Close(t.Context())
-
-	want := int64(3) // Reminder: change to 1 when batches are implemented.
-	if got := counter.Load(); got != want {
-		t.Errorf("counter = %d, want %d", got, want)
+		// The order of concurrent requests is non-deterministic.
+		got := slices.Clone(sent)
+		slices.SortFunc(got, func(a, b sentRequest) int { return strings.Compare(a.body, b.body) })
+		return got
 	}
 }
 
-func TestSerializeDataHTTPRequest(t *testing.T) {
+func TestSenderSend(t *testing.T) {
 	t.Parallel()
 
-	u, _ := url.Parse("http://example.com/?p1=good")
+	textType := http.Header{contentTypeHeader: {"text/plain; charset=utf-8"}}
+	ndjsonType := http.Header{contentTypeHeader: {flow.FormatNDJSON.ContentType()}}
 
 	tests := []struct {
-		name      string
-		req       *http.Request
-		hdr       http.Header
-		wantBody  bool
-		wantErr   bool
-		wantHdr   http.Header
-		wantQuery string
+		name    string
+		headers map[string]any
+		chunk   flow.Chunk
+		want    []sentRequest
 	}{
 		{
-			name:     "nil",
-			req:      nil,
-			hdr:      http.Header{},
-			wantBody: false,
-			wantErr:  true,
+			name:  "nil_chunk",
+			chunk: nil,
 		},
 		{
-			name: "modify_some_headers_and_params",
-			req: &http.Request{
+			name:  "empty_chunk",
+			chunk: flow.Blobs{},
+		},
+		{
+			name:  "unhandled_chunk_type",
+			chunk: flow.FakeDataType{},
+		},
+		{
+			name:  "blobs",
+			chunk: flow.Blobs{[]byte("pay"), []byte("load")},
+			want: []sentRequest{
+				{body: "load", header: textType, query: "p1=good"},
+				{body: "pay", header: textType, query: "p1=good"},
+			},
+		},
+		{
+			name:  "empty_blob",
+			chunk: flow.Blobs{[]byte{}, []byte("x")},
+			want:  []sentRequest{{body: "x", header: textType, query: "p1=good"}},
+		},
+		{
+			name:    "blob_with_configured_content_type",
+			headers: map[string]any{contentTypeHeader: "application/octet-stream"},
+			chunk:   flow.Blobs{[]byte("x")},
+			want: []sentRequest{
+				{body: "x", header: http.Header{contentTypeHeader: {"application/octet-stream"}}, query: "p1=good"},
+			},
+		},
+		{
+			name:  "structured",
+			chunk: flow.Structured{{"key1": "value1"}, {"key2": int64(2)}},
+			want: []sentRequest{
+				{body: `{"key1":"value1"}` + "\n" + `{"key2":2}` + "\n", header: ndjsonType, query: "p1=good"},
+			},
+		},
+		{
+			name:  "structured_with_unencoded_html",
+			chunk: flow.Structured{{"html": "& < >"}},
+			want:  []sentRequest{{body: `{"html":"& < >"}` + "\n", header: ndjsonType, query: "p1=good"}},
+		},
+		{
+			name:    "structured_with_configured_content_type",
+			headers: map[string]any{contentTypeHeader: "application/json"},
+			chunk:   flow.Structured{{"key": "value"}},
+			want: []sentRequest{
+				{body: `{"key":"value"}` + "\n", header: http.Header{contentTypeHeader: {"application/json"}}, query: "p1=good"},
+			},
+		},
+		{
+			name:  "structured_encoding_error",
+			chunk: flow.Structured{{"key1": "value1"}, {"key2": make(chan struct{})}}, // Channels cannot be encoded.
+		},
+		{
+			name:  "nil_http_request",
+			chunk: flow.HTTPRequests{nil},
+		},
+		{
+			name:    "http_request_without_body",
+			headers: map[string]any{"H1": "good"},
+			chunk: flow.HTTPRequests{{
 				Header: http.Header{"H1": {"bad"}, "H2": {"good"}},
 				URL:    &url.URL{RawQuery: "p1=bad&p2=good"},
+			}},
+			want: []sentRequest{
+				{body: "", header: http.Header{"H1": {"good"}, "H2": {"good"}}, query: "p1=good&p2=good"},
 			},
-			hdr:       http.Header{"H1": {"good"}},
-			wantBody:  false,
-			wantErr:   false,
-			wantHdr:   http.Header{"H1": {"good"}, "H2": {"good"}},
-			wantQuery: "p1=good&p2=good",
 		},
 		{
-			name:      "req_with_body",
-			req:       &http.Request{URL: &url.URL{}},
-			hdr:       http.Header{},
-			wantBody:  true,
-			wantErr:   false,
-			wantHdr:   http.Header{},
-			wantQuery: "p1=good",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			gotURL := u.Clone()
-			gotHdr := tt.hdr.Clone()
-			if tt.wantBody {
-				tt.req.Body = io.NopCloser(strings.NewReader("test"))
-			}
-
-			getBodyFn, _, gotErr := serializeData(tt.req, gotURL, gotHdr)
-			if (gotErr != nil) != tt.wantErr {
-				t.Fatalf("serializeData() error = %v, wantErr %v", gotErr, tt.wantErr)
-			}
-
-			var gotBody1, gotBody2 []byte
-			if getBodyFn != nil {
-				r, err := getBodyFn()
-				if err != nil {
-					t.Fatalf("getBodyFunc(1) error = %v", err)
-				}
-				gotBody1, err = io.ReadAll(r)
-				if err != nil {
-					t.Fatalf("io.ReadAll(1) error = %v", err)
-				}
-
-				r, err = getBodyFn()
-				if err != nil {
-					t.Fatalf("getBodyFunc(2) error = %v", err)
-				}
-				gotBody2, err = io.ReadAll(r)
-				if err != nil {
-					t.Fatalf("io.ReadAll(2) error = %v", err)
-				}
-			}
-
-			gotQuery := gotURL.Query()
-
-			wantBody := ""
-			if tt.wantBody {
-				wantBody = "test"
-			}
-			if tt.wantBody != (string(gotBody1) == "test") {
-				t.Errorf("body = %v, want %q", gotBody1, wantBody)
-			}
-			if !bytes.Equal(gotBody2, gotBody1) {
-				t.Errorf("retry body = %v, want %q", gotBody2, gotBody1)
-			}
-			if tt.req != nil && !reflect.DeepEqual(gotHdr, tt.wantHdr) {
-				t.Errorf("hdr = %+v, want %+v", gotHdr, tt.wantHdr)
-			}
-			if tt.req != nil && gotQuery.Encode() != tt.wantQuery {
-				t.Errorf("query = %+v, want %q", gotQuery, tt.wantQuery)
-			}
-		})
-	}
-}
-
-func TestSerializeDataHTTPResponse(t *testing.T) {
-	t.Parallel()
-
-	u, _ := url.Parse("http://example.com/")
-
-	tests := []struct {
-		name     string
-		resp     *http.Response
-		hdr      http.Header
-		wantBody bool
-		wantErr  bool
-		wantHdr  http.Header
-	}{
-		{
-			name:     "nil",
-			resp:     nil,
-			hdr:      http.Header{},
-			wantBody: false,
-			wantErr:  true,
+			name:  "http_request_with_body",
+			chunk: flow.HTTPRequests{{URL: &url.URL{}, Body: io.NopCloser(strings.NewReader("test"))}},
+			want:  []sentRequest{{body: "test", header: http.Header{}, query: "p1=good"}},
 		},
 		{
-			name: "modify_some_headers",
-			resp: &http.Response{
+			name: "http_request_with_reusable_body",
+			chunk: flow.HTTPRequests{{
+				URL:     &url.URL{},
+				GetBody: func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("test")), nil },
+			}},
+			want: []sentRequest{{body: "test", header: http.Header{}, query: "p1=good"}},
+		},
+		{
+			name:  "http_request_body_read_error",
+			chunk: flow.HTTPRequests{{URL: &url.URL{}, Body: io.NopCloser(iotest.ErrReader(errors.New("read error")))}},
+		},
+		{
+			name:  "nil_http_response",
+			chunk: flow.HTTPResponses{nil},
+		},
+		{
+			name:  "http_response_body_read_error",
+			chunk: flow.HTTPResponses{{Body: io.NopCloser(iotest.ErrReader(errors.New("read error")))}},
+		},
+		{
+			name:  "http_response_without_body",
+			chunk: flow.HTTPResponses{{Header: http.Header{"H1": {"good"}}}},
+		},
+		{
+			name:    "http_response_with_body",
+			headers: map[string]any{"H1": "good"},
+			chunk: flow.HTTPResponses{{
 				Header: http.Header{"H1": {"bad"}, "H2": {"good"}},
+				Body:   io.NopCloser(strings.NewReader("test")),
+			}},
+			want: []sentRequest{
+				{body: "test", header: http.Header{"H1": {"good"}, "H2": {"good"}}, query: "p1=good"},
 			},
-			hdr:      http.Header{"H1": {"good"}},
-			wantBody: false,
-			wantErr:  false,
-			wantHdr:  http.Header{"H1": {"good"}, "H2": {"good"}},
 		},
 		{
-			name:     "resp_with_body",
-			resp:     &http.Response{},
-			hdr:      http.Header{},
-			wantBody: true,
-			wantErr:  false,
-			wantHdr:  http.Header{},
-		},
-		{
-			name: "resp_with_reusable_body",
-			resp: &http.Response{
+			name: "http_response_with_reusable_body",
+			chunk: flow.HTTPResponses{{
 				Header: http.Header{"H1": {"good"}},
 				Body:   &reusableBody{Reader: bytes.NewReader([]byte("test")), raw: []byte("test")},
-			},
-			hdr:      http.Header{"H1": {"good"}},
-			wantBody: true,
-			wantErr:  false,
-			wantHdr:  http.Header{"H1": {"good"}},
+			}},
+			want: []sentRequest{{body: "test", header: http.Header{"H1": {"good"}}, query: "p1=good"}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			gotURL := u.Clone()
-			gotHdr := tt.hdr.Clone()
-			if tt.wantBody {
-				tt.resp.Body = io.NopCloser(strings.NewReader("test"))
+			cfg := map[string]any{"url": "http://example.com/?p1=good", "headers": tt.headers}
+			if tt.headers == nil {
+				delete(cfg, "headers")
 			}
+			s, sent := newRecordingSender(t, cfg)
 
-			getBodyFn, _, gotErr := serializeData(tt.resp, gotURL, gotHdr)
-			if (gotErr != nil) != tt.wantErr {
-				t.Fatalf("serializeData() error = %v, wantErr %v", gotErr, tt.wantErr)
-			}
+			s.Send(t.Context(), tt.chunk)
+			s.Close(t.Context())
 
-			var gotBody1, gotBody2 []byte
-			if getBodyFn != nil {
-				r, err := getBodyFn()
-				if err != nil {
-					t.Fatalf("getBodyFunc(1) error = %v", err)
-				}
-				gotBody1, err = io.ReadAll(r)
-				if err != nil {
-					t.Fatalf("io.ReadAll(1) error = %v", err)
-				}
-
-				r, err = getBodyFn()
-				if err != nil {
-					t.Fatalf("getBodyFunc(2) error = %v", err)
-				}
-				gotBody2, err = io.ReadAll(r)
-				if err != nil {
-					t.Fatalf("io.ReadAll(2) error = %v", err)
-				}
+			got := sent()
+			if len(got) != len(tt.want) {
+				t.Fatalf("sent requests = %+v, want %+v", got, tt.want)
 			}
-
-			wantBody := ""
-			if tt.wantBody {
-				wantBody = "test"
-			}
-			if tt.wantBody != (string(gotBody1) == "test") {
-				t.Errorf("body = %v, want %q", gotBody1, wantBody)
-			}
-			if !bytes.Equal(gotBody2, gotBody1) {
-				t.Errorf("retry body = %v, want %q", gotBody2, gotBody1)
-			}
-			if tt.resp != nil && !reflect.DeepEqual(gotHdr, tt.wantHdr) {
-				t.Errorf("headers = %+v, want %+v", gotHdr, tt.wantHdr)
+			for i := range got {
+				if !reflect.DeepEqual(got[i], tt.want[i]) {
+					t.Errorf("sent request %d = %+v, want %+v", i, got[i], tt.want[i])
+				}
 			}
 		})
 	}
 }
 
-func TestSerializeDataJSON(t *testing.T) {
+func TestSenderSendBatch(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name     string
-		data     any
-		wantBody string
-		wantErr  bool
+		maxItems int64
+		window   time.Duration // Waited before closing the sender, if positive.
+		want     []string      // Request bodies, sorted.
 	}{
 		{
-			name:     "nil",
-			data:     nil,
-			wantErr:  false,
-			wantBody: "null",
+			name: "batching_disabled", // Each chunk is sent as-is.
+			want: []string{"1\n2\n3\n", "4\n"},
 		},
 		{
-			name:     "map",
-			data:     map[string]any{"key": "value"},
-			wantBody: `{"key":"value"}`,
-			wantErr:  false,
+			name:     "full_batches",
+			maxItems: 2,
+			want:     []string{"1\n2\n", "3\n4\n"},
 		},
 		{
-			name:     "json_with_unencoded_html",
-			data:     map[string]any{"html": "& < >"},
-			wantBody: `{"html":"& < >"}`,
-			wantErr:  false,
+			name:     "full_and_partial_batches",
+			maxItems: 3,
+			want:     []string{"1\n2\n3\n", "4\n"},
 		},
 		{
-			name:    "json_error",
-			data:    map[string]any{"channel": make(chan struct{})}, // Go channels cannot be encoded as JSON.
-			wantErr: true,
+			name:     "dispatched_on_close",
+			maxItems: 10,
+			want:     []string{"1\n2\n3\n4\n"},
+		},
+		{
+			name:     "dispatched_after_window",
+			maxItems: 10,
+			window:   time.Second,
+			want:     []string{"1\n2\n3\n4\n"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			hdr := http.Header{}
-			getBodyFn, _, gotErr := serializeData(tt.data, nil, hdr)
-			if (gotErr != nil) != tt.wantErr {
-				t.Fatalf("serializeData() error = %v, wantErr %v", gotErr, tt.wantErr)
-			}
-			if tt.wantErr {
-				return
-			}
+			synctest.Test(t, func(t *testing.T) {
+				cfg := map[string]any{"url": "http://example.com", "timeout": "0"}
+				if tt.maxItems > 0 {
+					cfg["batch"] = map[string]any{"max_items": tt.maxItems, "time_window": tt.window.String()}
+				}
+				s, sent := newRecordingSender(t, cfg)
 
-			r, _ := getBodyFn()
-			got, err := io.ReadAll(r)
-			if err != nil {
-				t.Fatalf("io.ReadAll() error = %v", err)
-			}
+				s.Send(t.Context(), flow.Structured{{"n": int64(1)}, {"n": int64(2)}, {"n": int64(3)}})
+				s.Send(t.Context(), flow.Structured{{"n": int64(4)}})
+				if tt.window > 0 {
+					time.Sleep(2 * tt.window)
+					synctest.Wait()
+					if got := len(sent()); got != len(tt.want) {
+						t.Errorf("sent batches before Close = %d, want %d", got, len(tt.want))
+					}
+				}
+				s.Close(t.Context())
 
-			if gotBody := string(got); gotBody != tt.wantBody {
-				t.Errorf("serializeData() body = %q, want %q", gotBody, tt.wantBody)
-			}
-			wantHdr := http.Header{"Content-Type": {"application/json"}}
-			if !reflect.DeepEqual(hdr, wantHdr) {
-				t.Errorf("headers = %+v, want %+v", hdr, wantHdr)
-			}
+				var got []string
+				for _, req := range sent() {
+					got = append(got, strings.NewReplacer(`{"n":`, "", "}", "").Replace(req.body))
+				}
+				if !slices.Equal(got, tt.want) {
+					t.Errorf("sent batches = %q, want %q", got, tt.want)
+				}
+			})
 		})
 	}
+}
+
+func TestSenderSendDiscard(t *testing.T) {
+	t.Parallel()
+
+	s, sent := newRecordingSender(t, map[string]any{"url": "http://example.com"})
+	s.Close(t.Context())
+
+	// Rejected data must be discarded, and its resources released.
+	body := &closeTracker{Reader: strings.NewReader("test")}
+	s.Send(t.Context(), flow.HTTPRequests{{URL: &url.URL{}, Body: body}})
+	if !body.closed.Load() {
+		t.Error("rejected HTTP request body was not closed")
+	}
+
+	s.Send(t.Context(), flow.Structured{{"key": "value"}})
+
+	if got := sent(); len(got) > 0 {
+		t.Errorf("sent requests after Close = %+v, want none", got)
+	}
+}
+
+// closeTracker is an [io.ReadCloser] which records whether it was closed.
+type closeTracker struct {
+	io.Reader
+
+	closed atomic.Bool
+}
+
+func (c *closeTracker) Close() error {
+	c.closed.Store(true)
+	return nil
 }
 
 func TestCopyQueryNilGuard(t *testing.T) {
@@ -568,7 +582,7 @@ func TestSenderClose(t *testing.T) {
 		}, nil
 	})
 
-	s.Send(t.Context(), []byte("payload"))
+	s.Send(t.Context(), flow.Blobs{[]byte("payload")})
 	s.Close(t.Context())
 
 	if got := counter.Load(); got != 1 {
@@ -576,7 +590,7 @@ func TestSenderClose(t *testing.T) {
 	}
 
 	// Calling Send after Close should be rejected.
-	s.Send(t.Context(), []byte("another payload"))
+	s.Send(t.Context(), flow.Blobs{[]byte("another payload")})
 	s.Close(t.Context()) // Idempotent.
 
 	if got := counter.Load(); got != 1 {
@@ -602,7 +616,7 @@ func TestSenderCloseTimeout(t *testing.T) {
 			return nil, req.Context().Err()
 		})
 
-		s.Send(t.Context(), []byte("payload"))
+		s.Send(t.Context(), flow.Blobs{[]byte("payload")})
 
 		want := 50 * time.Millisecond
 		ctx, cancel := context.WithTimeout(t.Context(), want)
@@ -641,7 +655,7 @@ func TestSenderCloseDuringRetryDelay(t *testing.T) {
 			}, nil
 		})
 
-		s.Send(t.Context(), []byte("payload"))
+		s.Send(t.Context(), flow.Blobs{[]byte("payload")})
 
 		// Allow attempt 0 to fail and enter the 1-minute retry wait.
 		time.Sleep(10 * time.Millisecond)

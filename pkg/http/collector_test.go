@@ -112,7 +112,7 @@ func TestNewCollector(t *testing.T) {
 			}
 
 			if b := c.Base(); !reflect.DeepEqual(b, tt.base) {
-				t.Errorf("Collector.Base() = %v, want %v", b, tt.base)
+				t.Errorf("Collector.Base() = %+v, want %+v", b, tt.base)
 			}
 			if got := c.url.String(); got != tt.wantURL {
 				t.Errorf("Collector.url = %q, want %q", got, tt.wantURL)
@@ -121,7 +121,7 @@ func TestNewCollector(t *testing.T) {
 				t.Errorf("Collector.method = %q, want %q", c.method, tt.wantMethod)
 			}
 			if !reflect.DeepEqual(c.headers, tt.wantHeaders) {
-				t.Errorf("Collector.headers = %#v, want %#v", c.headers, tt.wantHeaders)
+				t.Errorf("Collector.headers = %+v, want %+v", c.headers, tt.wantHeaders)
 			}
 			if c.timeout != tt.wantTimeout {
 				t.Errorf("Collector.timeout = %v, want %v", c.timeout, tt.wantTimeout)
@@ -546,7 +546,7 @@ func TestCollectorCheckConcurrencyCanceled(t *testing.T) {
 	ch := make(chan struct{}, 1)
 	ch <- struct{}{}
 
-	c.requestWithConcurrencyLimit(ctx, t.Context(), ch, time.Now())
+	c.requestWithConcurrency(ctx, t.Context(), ch, time.Now())
 
 	if len(ch) != 1 {
 		t.Errorf("len(ch) = %d, want 1", len(ch))

@@ -75,7 +75,7 @@ func TestNewReceiver(t *testing.T) { //nolint:paralleltest // [parseAddress] req
 			}
 
 			if b := r.Base(); !reflect.DeepEqual(b, tt.base) {
-				t.Errorf("Receiver.Base() = %v, want %v", b, tt.base)
+				t.Errorf("Receiver.Base() = %+v, want %+v", b, tt.base)
 			}
 		})
 	}

@@ -4,19 +4,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 	"math/big"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 const (
@@ -26,8 +26,6 @@ const (
 	filePermissions = 0o600
 	fileFlags       = os.O_CREATE | os.O_EXCL | os.O_WRONLY
 )
-
-var jsonOpts = json.JoinOptions(json.Deterministic(true), json.OmitZeroStructFields(true))
 
 // DeadLetterQueue is an alternative destination for data that couldn't be delivered
 // successfully by other senders. It behaves similarly to [Stdout], but writes the
@@ -58,11 +56,11 @@ func InitDeadLetterQueue(rootDir string) *DeadLetterQueue {
 	return &DeadLetterQueue{root: r}
 }
 
-// Send serializes and writes any data into a file with a k-sortable name
+// Send encodes and writes any data into a file with a k-sortable name
 // within the "data" directory in the process's current working directory.
-func (d *DeadLetterQueue) Send(ctx context.Context, data any) {
-	if data == nil {
-		return // Don't log nil data, other senders use it as a sentinel for batches.
+func (d *DeadLetterQueue) Send(ctx context.Context, data flow.Chunk) {
+	if flow.IsEmpty(data) {
+		return
 	}
 
 	if d.lameDuck.Load() {
@@ -70,13 +68,8 @@ func (d *DeadLetterQueue) Send(ctx context.Context, data any) {
 		return
 	}
 
-	now := time.Now().UTC()
-	payload := serializeData(data)
-	if len(payload) == 0 {
-		return
-	}
-
 	d.closeMu.RLock()
+	now := time.Now().UTC()
 	defer d.closeMu.RUnlock()
 
 	if d.lameDuck.Load() {
@@ -84,13 +77,17 @@ func (d *DeadLetterQueue) Send(ctx context.Context, data any) {
 		return
 	}
 
-	d.inProgress.Go(func() {
-		for range attempts {
-			if d.asyncWriteFile(payload, now, dirPermissions, filePermissions) {
-				return
-			}
+	for _, file := range encode(data) {
+		if len(file) > 0 {
+			d.inProgress.Go(func() {
+				for range attempts {
+					if d.asyncWriteFile(file, now, dirPermissions, filePermissions) {
+						return
+					}
+				}
+			})
 		}
-	})
+	}
 }
 
 // Close waits (up to 1 second) for disk writes which are currently in progress to complete,
@@ -124,49 +121,56 @@ func (d *DeadLetterQueue) Close(ctx context.Context) {
 }
 
 //bodyclose:handled
-func serializeData(data any) []byte {
-	switch t := data.(type) {
-	case []byte:
-		// Mutation of the original byte slice is not a concern because it's already abandoned by the data
-		// source. On the other hand, GC pressure due to duplicating huge blobs is something we need to avoid.
-		return t
+func encode(data flow.Chunk) [][]byte {
+	var files [][]byte
+	switch chunk := data.(type) {
+	case flow.Blobs:
+		for _, b := range chunk {
+			files = append(files, b)
+		}
+	case flow.Structured:
+		file, err := flow.FormatJSON.Encode(chunk)
+		if err != nil {
+			slog.Error("failed to write structured data as JSON into DLQ file", slog.Any("error", err))
+			return nil
+		}
+		files = [][]byte{file}
 
-	case *http.Request:
-		if t == nil {
-			return nil
+	case flow.HTTPRequests:
+		for _, req := range chunk {
+			if req == nil {
+				continue
+			}
+			buf := new(bytes.Buffer)
+			if err := req.Write(buf); err != nil {
+				slog.Error("failed to write HTTP request into DLQ file", slog.Any("error", err))
+				continue
+			}
+			files = append(files, buf.Bytes())
+			if req.Body != nil {
+				_ = req.Body.Close()
+			}
 		}
-		if t.Body != nil {
-			defer t.Body.Close()
+	case flow.HTTPResponses:
+		for _, resp := range chunk {
+			if resp == nil {
+				continue
+			}
+			buf := new(bytes.Buffer)
+			if err := resp.Write(buf); err != nil {
+				slog.Error("failed to write HTTP response into DLQ file", slog.Any("error", err))
+				continue
+			}
+			files = append(files, buf.Bytes())
+			if resp.Body != nil {
+				_ = resp.Body.Close()
+			}
 		}
-		buf := new(bytes.Buffer)
-		if err := t.Write(buf); err != nil {
-			slog.Error("failed to serialize HTTP request into DLQ file", slog.Any("error", err))
-			return nil
-		}
-		return buf.Bytes()
-
-	case *http.Response:
-		if t == nil {
-			return nil
-		}
-		if t.Body != nil {
-			defer t.Body.Close()
-		}
-		buf := new(bytes.Buffer)
-		if err := t.Write(buf); err != nil {
-			slog.Error("failed to serialize HTTP response into DLQ file", slog.Any("error", err))
-			return nil
-		}
-		return buf.Bytes()
+	default:
+		slog.Error("unhandled data type in DLQ", slog.String("data_type", fmt.Sprintf("%T", chunk)))
 	}
 
-	// Fall-back to JSON encoding for other data types.
-	buf, err := json.Marshal(data, jsonOpts)
-	if err != nil {
-		slog.Error("failed to serialize JSON into DLQ file", slog.Any("error", err))
-		return nil
-	}
-	return buf
+	return files
 }
 
 func (d *DeadLetterQueue) asyncWriteFile(data []byte, now time.Time, dirPerms, filePerms os.FileMode) bool {
