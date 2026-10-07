@@ -1,8 +1,9 @@
-// Versipellis ("versi") is a versatile, scalable tool for transferring and transforming
-// data reliably across diverse protocols and formats, without altering the data itself.
+// Versipellis ("versi") is a versatile, scalable tool for transferring and transforming data
+// reliably across geographies, services, protocols and formats, without altering the data itself.
 //
-// It is not a data processing pipeline, but rather a powerful yet easy-to-use adapter
-// and conduit for pipelines, sources, and sinks.
+// In other words, if you want to move your data from "here" to "there", and change its
+// format/encoding/auth from "this" to "that", without a learning curve and without having to worry
+// about data corruption/loss, or latency and crashes under heavy load - `versi` is the tool for you!
 package main
 
 import (
