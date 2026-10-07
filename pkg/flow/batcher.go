@@ -80,7 +80,7 @@ func (b *Batcher[T]) Add(ctx context.Context, items ...T) {
 		return
 	}
 
-	if b.limits.MaxItems+b.limits.MaxBytes <= 0 { // Batching is disabled.
+	if b.limits.MaxItems <= 0 && b.limits.MaxBytes <= 0 { // Batching is disabled.
 		// Shallow-copying the slice (i.e. not the items) keeps it from escaping to the heap, so callers
 		// don't pay for an allocation per call when batching is enabled, which is the common case.
 		b.dispatch(context.WithoutCancel(ctx), slices.Clone(items))
