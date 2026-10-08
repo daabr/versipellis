@@ -231,9 +231,22 @@ func (s *Sender) Close(ctx context.Context) {
 // sendWithConcurrencyLimit registers a new outgoing request as a goroutine in [Sender.inProgress], to be sent
 // if/when a slot is available in [Sender.slots], so the number of concurrent active requests (including preparation
 // and retries) is bounded, but the caller never blocks: it may be holding a read lock of [Sender.closeMu]. Waiting
-// goroutines are cheap, and their payloads were already in memory anyway. If [Sender.Close] stops requests
-// forcefully, waiting goroutines abort without sending anything, just like requests that are in progress.
+// goroutines are cheap, and their payloads were already in memory anyway.
+//
+// If a slot is available immediately, it's acquired synchronously, so the request is sent even if [Sender.Close]
+// begins before its goroutine starts (e.g., batches that Close flushes). Only requests that are blocked by the
+// limit wait for a slot, and if [Sender.Close] begins first, they're dropped instead of delaying the shutdown.
 func (s *Sender) sendWithConcurrencyLimit(fn func()) {
+	select {
+	case s.slots <- struct{}{}: // Non-blocking, so it's safe under the read lock.
+		s.inProgress.Go(func() {
+			defer func() { <-s.slots }()
+			fn()
+		})
+		return
+	default:
+	}
+
 	s.inProgress.Go(func() {
 		select {
 		case s.slots <- struct{}{}:
@@ -244,7 +257,7 @@ func (s *Sender) sendWithConcurrencyLimit(fn func()) {
 		// Check again, because if a slot was released during [Sender.Close], the choice above was random.
 		select {
 		case <-s.closing:
-			slog.Warn("HTTP request aborted while waiting for a concurrency slot", slog.String("name", s.Name))
+			slog.Warn("HTTP request dropped while waiting for concurrency slot", slog.String("name", s.Name))
 		default:
 			fn()
 		}

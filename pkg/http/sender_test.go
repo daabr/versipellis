@@ -793,6 +793,7 @@ func TestSenderConcurrencyLimit(t *testing.T) {
 				mu.Unlock()
 
 				close(release)
+				synctest.Wait() // All the waiting requests acquire slots before Close, which would drop them.
 				s.Close(t.Context())
 				mu.Lock()
 				defer mu.Unlock()
@@ -807,35 +808,61 @@ func TestSenderConcurrencyLimit(t *testing.T) {
 	}
 }
 
-func TestSenderCloseAbortsWaitingRequests(t *testing.T) {
+func TestSenderCloseDropsWaitingRequests(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
 		s, err := NewSender(map[string]any{"url": "http://example.com", "concurrency_limit": int64(1)},
-			"TestSenderCloseAbortsWaitingRequests", config.SenderTypeHTTP,
+			"TestSenderCloseDropsWaitingRequests", config.SenderTypeHTTP,
 		)
 		if err != nil {
 			t.Fatalf("NewSender() error: %v", err)
 		}
 
+		release := make(chan struct{})
 		var started atomic.Int64
-		s.client.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		s.client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			started.Add(1)
-			<-req.Context().Done() // Until Close times out and stops requests forcefully.
-			return nil, req.Context().Err()
+			<-release
+			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
 		})
 
 		s.Send(t.Context(), flow.Blobs{[]byte("1"), []byte("2"), []byte("3")})
+		synctest.Wait() // The first request holds the only slot, the others are waiting for it.
 
-		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-		t.Cleanup(cancel)
-		s.Close(ctx)
-		synctest.Wait() // Waiting requests abort without sending anything.
+		closed := make(chan struct{})
+		go func() {
+			defer close(closed)
+			s.Close(t.Context())
+		}()
+		synctest.Wait() // Close began: waiting requests are dropped, and Close waits only for the active one.
 
+		close(release)
+		<-closed
 		if got := started.Load(); got != 1 {
 			t.Errorf("requests started = %d, want 1", got)
 		}
 	})
+}
+
+func TestSenderCloseSendsWithAvailableSlots(t *testing.T) {
+	t.Parallel()
+
+	// Requests that aren't blocked by the concurrency limit are sent, even if Close begins before their
+	// goroutines start (no [synctest.Wait] before Close). This includes the pending batch that Close flushes.
+	s, sent := newRecordingSender(t, map[string]any{
+		"url":               "http://example.com",
+		"concurrency_limit": int64(3),
+		"batch":             map[string]any{"max_items": int64(10), "time_window": "1h"},
+	})
+
+	s.Send(t.Context(), flow.Blobs{[]byte("a"), []byte("b")})
+	s.Send(t.Context(), flow.Structured{{"n": int64(1)}})
+	s.Close(t.Context())
+
+	if got := len(sent()); got != 3 {
+		t.Errorf("sent requests = %d, want 3", got)
+	}
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
