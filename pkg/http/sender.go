@@ -26,6 +26,11 @@ const (
 
 var defaultBatchLimits = flow.Limits{}
 
+const (
+	defaultConcurrencyLimit int64 = 100
+	maxConcurrencyLimit     int64 = 200
+)
+
 // Sender contains all the configuration and state details for sending HTTP requests.
 type Sender struct {
 	Name string
@@ -42,6 +47,7 @@ type Sender struct {
 	client      *http.Client
 	batch       *flow.Batcher[map[string]any]
 
+	slots      chan struct{} // See [Sender.sendWithConcurrencyLimit].
 	inProgress sync.WaitGroup
 	lameDuck   atomic.Bool
 	closeMu    sync.RWMutex
@@ -103,6 +109,16 @@ func NewSender(cfg map[string]any, name, baseType string) (*Sender, error) {
 	default:
 		return nil, fmt.Errorf("unexpected sender type %q", s.Type)
 	}
+
+	concurrency := config.Value(cfg, "concurrency_limit", defaultConcurrencyLimit)
+	if concurrency < 1 {
+		concurrency = maxConcurrencyLimit
+		slog.Warn("normalizing sender concurrency limit", slog.String("name", s.Name),
+			slog.Int64("below_min", concurrency), slog.Int64("new_max_value", maxConcurrencyLimit),
+		)
+	}
+	concurrencyLimit := config.BoundedInt(concurrency, 1, maxConcurrencyLimit, s.Name, "sender concurrency limit")
+	s.slots = make(chan struct{}, concurrencyLimit)
 
 	var limits flow.Limits
 	if limits, err = config.BatchLimits(cfg["batch"], s.Name, defaultBatchLimits); err != nil {
@@ -212,6 +228,29 @@ func (s *Sender) Close(ctx context.Context) {
 	})
 }
 
+// sendWithConcurrencyLimit registers a new outgoing request as a goroutine in [Sender.inProgress], to be sent
+// if/when a slot is available in [Sender.slots], so the number of concurrent active requests (including preparation
+// and retries) is bounded, but the caller never blocks: it may be holding a read lock of [Sender.closeMu]. Waiting
+// goroutines are cheap, and their payloads were already in memory anyway. If [Sender.Close] stops requests
+// forcefully, waiting goroutines abort without sending anything, just like requests that are in progress.
+func (s *Sender) sendWithConcurrencyLimit(fn func()) {
+	s.inProgress.Go(func() {
+		select {
+		case s.slots <- struct{}{}:
+			defer func() { <-s.slots }()
+		case <-s.closing:
+		}
+
+		// Check again, because if a slot was released during [Sender.Close], the choice above was random.
+		select {
+		case <-s.closing:
+			slog.Warn("HTTP request aborted while waiting for a concurrency slot", slog.String("name", s.Name))
+		default:
+			fn()
+		}
+	})
+}
+
 func (s *Sender) sendBlob(ctx context.Context, body []byte) {
 	if len(body) == 0 {
 		slog.Error("cannot send HTTP request with no payload",
@@ -225,7 +264,7 @@ func (s *Sender) sendBlob(ctx context.Context, body []byte) {
 		outHdr.Set(contentTypeHeader, http.DetectContentType(body))
 	}
 
-	s.inProgress.Go(func() {
+	s.sendWithConcurrencyLimit(func() {
 		s.sendWithRetries(ctx, s.url.Clone(), outHdr, retryableBody(body), int64(len(body)))
 	})
 }
@@ -233,9 +272,10 @@ func (s *Sender) sendBlob(ctx context.Context, body []byte) {
 // sendStructured is called only via [Sender.batch]: from [Sender.Send] and [Sender.guard], which hold a read lock
 // of [Sender.closeMu] after checking [Sender.lameDuck], and from [Sender.Close] before it waits for requests that are
 // in progress. Either way, it may register new work without checking [Sender.lameDuck] again, and it must not acquire
-// a recursive read lock, which may deadlock with Close. Encoding happens asynchronously, so it doesn't hold the lock.
+// a recursive read lock, which may deadlock with Close. Encoding happens asynchronously, so it doesn't hold the lock,
+// and only after acquiring a concurrency slot, so the number of encoded payloads in memory is bounded too.
 func (s *Sender) sendStructured(ctx context.Context, data []map[string]any) {
-	s.inProgress.Go(func() {
+	s.sendWithConcurrencyLimit(func() {
 		body, err := flow.FormatNDJSON.Encode(data)
 		if err != nil {
 			slog.Error("failed to encode HTTP request payload", slog.Any("error", err),
@@ -266,7 +306,7 @@ func (s *Sender) sendHTTPRequest(ctx context.Context, req *http.Request) {
 	copyHeaders(req.Header, outHdr, true)
 
 	if req.Body == nil && req.GetBody == nil {
-		s.inProgress.Go(func() {
+		s.sendWithConcurrencyLimit(func() {
 			s.sendWithRetries(ctx, outURL, outHdr, retryableBody(nil), 0)
 		})
 		return
@@ -275,7 +315,7 @@ func (s *Sender) sendHTTPRequest(ctx context.Context, req *http.Request) {
 		if req.Body != nil {
 			_ = req.Body.Close()
 		}
-		s.inProgress.Go(func() {
+		s.sendWithConcurrencyLimit(func() {
 			s.sendWithRetries(ctx, outURL, outHdr, req.GetBody, req.ContentLength)
 		})
 		return
@@ -289,7 +329,7 @@ func (s *Sender) sendHTTPRequest(ctx context.Context, req *http.Request) {
 		return
 	}
 
-	s.inProgress.Go(func() {
+	s.sendWithConcurrencyLimit(func() {
 		s.sendWithRetries(ctx, outURL, outHdr, retryableBody(b), int64(len(b)))
 	})
 }
@@ -312,7 +352,7 @@ func (s *Sender) sendHTTPResponse(ctx context.Context, resp *http.Response) {
 	if b, ok := resp.Body.(bodyProvider); ok {
 		// Memory optimization, due to the same reason as in [Sender.sendHTTPRequest],
 		// working around the fact that [http.Response] doesn't have a GetBody() method.
-		s.inProgress.Go(func() {
+		s.sendWithConcurrencyLimit(func() {
 			s.sendWithRetries(ctx, s.url.Clone(), outHdr, b.GetBody, resp.ContentLength)
 		})
 		return
@@ -326,7 +366,7 @@ func (s *Sender) sendHTTPResponse(ctx context.Context, resp *http.Response) {
 		return
 	}
 
-	s.inProgress.Go(func() {
+	s.sendWithConcurrencyLimit(func() {
 		s.sendWithRetries(ctx, s.url.Clone(), outHdr, retryableBody(b), int64(len(b)))
 	})
 }

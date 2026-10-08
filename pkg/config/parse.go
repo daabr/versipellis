@@ -159,13 +159,12 @@ func BoundedInt(value, minValue, maxValue int64, name, description string) int {
 const (
 	defaultConcurrencyLimit int64 = 1
 
-	noConcurrency  = 0
 	maxConcurrency = 100
 )
 
 func concurrencyLimit(cfg map[string]any, name string) int {
 	n := Value(cfg, "concurrency_limit", defaultConcurrencyLimit)
-	return BoundedInt(n, noConcurrency, maxConcurrency, name, "collector concurrency limit")
+	return BoundedInt(n, defaultConcurrencyLimit, maxConcurrency, name, "collector concurrency limit")
 }
 
 const (

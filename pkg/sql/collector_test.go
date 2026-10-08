@@ -1098,7 +1098,7 @@ func TestCollectorExecuteWithConcurrencyCanceled(t *testing.T) {
 	ch := make(chan struct{}, 1)
 	ch <- struct{}{}
 
-	c.executeWithConcurrency(ctx, t.Context(), ch, time.Now())
+	c.executeWithConcurrencyLimit(ctx, t.Context(), ch, time.Now())
 
 	if len(ch) != 1 {
 		t.Errorf("len(ch) = %d, want 1", len(ch))

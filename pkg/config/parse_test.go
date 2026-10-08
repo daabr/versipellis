@@ -461,14 +461,14 @@ func TestConcurrencyLimit(t *testing.T) {
 			want: 1,
 		},
 		{
-			name: "explicit_zero",
-			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(0)},
-			want: 0,
+			name: "explicit_one",
+			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(1)},
+			want: 1,
 		},
 		{
 			name: "negative_to_min",
 			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(-1)},
-			want: 0,
+			want: 1,
 		},
 		{
 			name: "positive_in_range",

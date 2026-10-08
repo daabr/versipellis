@@ -51,4 +51,4 @@ This is the high-level plan for features that are expected to be released within
    - Tier 1: Apache Parquet, Protocol Buffers, Apache Avro
    - Tier 2: Apache ORC, MessagePack, CBOR (RFC 8949)
 
-3. Configurable tuning of connection pools
+3. Configurable tuning of connection pools, fairness between sources per sender, and backpressure from saturated senders

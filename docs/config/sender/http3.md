@@ -103,6 +103,21 @@
 - Format: string containing decimal numbers, each with a unit suffix, e.g., `m` (minutes), and `s` (seconds)
 - Special case: `"0"` and negative values (e.g., `"-1s"`) = no client-side timeout
 
+`concurrency_limit` - how many requests are allowed to be in progress at any time
+
+- Optional
+- Default: `100`
+- Valid range: any positive integer between `1` (no concurrency) and `200`
+- Integer values out of bounds in either direction are normalized to the maximum
+- If the sender is at its concurrency limit when a new request needs to start,\
+  the request is **delayed until a slot is available, not rejected/dropped**
+- Each request keeps its slot until it completes, including its retries
+
+> [!WARNING]
+>
+> - Concurrency limit (at any time, unrelated to duration or retries) ≠ requests per second
+> - Data that is still blocked when a shutdown times out is dropped, just like requests that are aborted while in progress
+
 ## `[sender.http3.tls]` Sub-Section
 
 - Required

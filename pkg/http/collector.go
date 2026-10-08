@@ -206,13 +206,13 @@ func (c *Collector) scheduleNext(schedCtx, execCtx context.Context, prev time.Ti
 		case <-schedCtx.Done():
 			return
 		case <-time.After(time.Until(nextStart)):
-			c.requestWithConcurrency(schedCtx, execCtx, sem, nextStart)
+			c.requestWithConcurrencyLimit(schedCtx, execCtx, sem, nextStart)
 			prev = nextStart
 		}
 	}
 }
 
-func (c *Collector) requestWithConcurrency(schedCtx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
+func (c *Collector) requestWithConcurrencyLimit(schedCtx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
 	if schedCtx.Err() != nil { // Instead of schedCtx.Done() in the select block below - to check ctx before sem.
 		return
 	}

@@ -138,6 +138,7 @@ func TestNewSender(t *testing.T) {
 					"max_items":   int64(100),
 					"time_window": "500ms",
 				},
+				"concurrency_limit": int64(8),
 			},
 			baseType: config.SenderTypeHTTP,
 			wantErr:  false,
@@ -150,6 +151,69 @@ func TestNewSender(t *testing.T) {
 			_, gotErr := NewSender(tt.cfg, tt.name, tt.baseType)
 			if (gotErr != nil) != tt.wantErr {
 				t.Errorf("NewSender() error = %v, wantErr %v", gotErr, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNewSenderConcurrencyLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		limit any
+		want  int
+	}{
+		{
+			name:  "default",
+			limit: nil,
+			want:  int(defaultConcurrencyLimit),
+		},
+		{
+			name:  "custom",
+			limit: int64(5),
+			want:  5,
+		},
+		{
+			name:  "one",
+			limit: int64(1),
+			want:  1,
+		},
+		{
+			name:  "zero",
+			limit: int64(0),
+			want:  int(maxConcurrencyLimit),
+		},
+		{
+			name:  "negative",
+			limit: int64(-3),
+			want:  int(maxConcurrencyLimit),
+		},
+		{
+			name:  "above_max",
+			limit: int64(1000),
+			want:  int(maxConcurrencyLimit),
+		},
+		{
+			name:  "wrong_type",
+			limit: "8",
+			want:  int(defaultConcurrencyLimit),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := map[string]any{"url": "https://example.com"}
+			if tt.limit != nil {
+				cfg["concurrency_limit"] = tt.limit
+			}
+			s, err := NewSender(cfg, tt.name, config.SenderTypeHTTP)
+			if err != nil {
+				t.Fatalf("NewSender() error: %v", err)
+			}
+			if got := cap(s.slots); got != tt.want {
+				t.Errorf("NewSender() concurrency limit = %d, want %d", got, tt.want)
 			}
 		})
 	}
@@ -666,6 +730,110 @@ func TestSenderCloseDuringRetryDelay(t *testing.T) {
 		// Close should return immediately without waiting for CloseTimeout (5s) or retry interval (1m).
 		if elapsed := time.Since(start); elapsed == CloseTimeout {
 			t.Errorf("Sender.Close() took %v, want graceful close well under %v", elapsed, CloseTimeout)
+		}
+	})
+}
+
+func TestSenderConcurrencyLimit(t *testing.T) {
+	t.Parallel()
+
+	const limit, total = 2, 5
+
+	tests := []struct {
+		name string
+		data flow.Chunk
+	}{
+		{
+			name: "blobs",
+			data: flow.Blobs{[]byte("1"), []byte("2"), []byte("3"), []byte("4"), []byte("5")},
+		},
+		{
+			name: "structured_batches", // Encoding happens only after acquiring a slot.
+			data: flow.Structured{{"x": int64(1)}, {"x": int64(2)}, {"x": int64(3)}, {"x": int64(4)}, {"x": int64(5)}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				s, err := NewSender(map[string]any{
+					"url":               "http://example.com",
+					"concurrency_limit": int64(limit),
+					"batch":             map[string]any{"max_items": int64(1)},
+				}, tt.name, config.SenderTypeHTTP)
+				if err != nil {
+					t.Fatalf("NewSender() error: %v", err)
+				}
+
+				release := make(chan struct{})
+				var mu sync.Mutex
+				var active, maxActive, started int
+				s.client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
+					mu.Lock()
+					started++
+					active++
+					maxActive = max(maxActive, active)
+					mu.Unlock()
+
+					<-release
+
+					mu.Lock()
+					active--
+					mu.Unlock()
+					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
+				})
+
+				s.Send(t.Context(), tt.data) // Must not block, even though there are more payloads than slots.
+				synctest.Wait()
+				mu.Lock()
+				if started != limit {
+					t.Errorf("requests started before any finished = %d, want %d", started, limit)
+				}
+				mu.Unlock()
+
+				close(release)
+				s.Close(t.Context())
+				mu.Lock()
+				defer mu.Unlock()
+				if started != total {
+					t.Errorf("requests started = %d, want %d", started, total)
+				}
+				if maxActive != limit {
+					t.Errorf("max concurrent requests = %d, want %d", maxActive, limit)
+				}
+			})
+		})
+	}
+}
+
+func TestSenderCloseAbortsWaitingRequests(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		s, err := NewSender(map[string]any{"url": "http://example.com", "concurrency_limit": int64(1)},
+			"TestSenderCloseAbortsWaitingRequests", config.SenderTypeHTTP,
+		)
+		if err != nil {
+			t.Fatalf("NewSender() error: %v", err)
+		}
+
+		var started atomic.Int64
+		s.client.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			started.Add(1)
+			<-req.Context().Done() // Until Close times out and stops requests forcefully.
+			return nil, req.Context().Err()
+		})
+
+		s.Send(t.Context(), flow.Blobs{[]byte("1"), []byte("2"), []byte("3")})
+
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		t.Cleanup(cancel)
+		s.Close(ctx)
+		synctest.Wait() // Waiting requests abort without sending anything.
+
+		if got := started.Load(); got != 1 {
+			t.Errorf("requests started = %d, want 1", got)
 		}
 	})
 }
