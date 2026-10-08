@@ -112,10 +112,10 @@ func NewSender(cfg map[string]any, name, baseType string) (*Sender, error) {
 
 	concurrency := config.Value(cfg, "concurrency_limit", defaultConcurrencyLimit)
 	if concurrency < 1 {
-		concurrency = maxConcurrencyLimit
 		slog.Warn("normalizing sender concurrency limit", slog.String("name", s.Name),
 			slog.Int64("below_min", concurrency), slog.Int64("new_max_value", maxConcurrencyLimit),
 		)
+		concurrency = maxConcurrencyLimit
 	}
 	concurrencyLimit := config.BoundedInt(concurrency, 1, maxConcurrencyLimit, s.Name, "sender concurrency limit")
 	s.slots = make(chan struct{}, concurrencyLimit)
