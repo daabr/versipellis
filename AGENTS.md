@@ -2,7 +2,7 @@
 
 ## Overview
 
-Versipellis (`versi`) transfers and transforms data across services, protocols, formats, and geographies, without altering the data itself.
+Versipellis (`versi`) transfers and transforms data across services, networks, protocols and formats, without altering the data itself.
 
 Design priorities: ease of use, efficiency at scale, security, low footprint, and maintainability.
 

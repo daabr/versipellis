@@ -12,7 +12,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/daabr/versipellis/badge)](https://scorecard.dev/viewer/?uri=github.com/daabr/versipellis)
 [![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
 
-Versipellis (`versi`) is a versatile, scalable tool for transferring and transforming data reliably across services, protocols, formats, and geographies, without altering the data itself.
+Versipellis (`versi`) is a versatile, scalable tool for transferring and transforming data reliably across services, networks, protocols and formats, without altering the data itself.
 
 It is an easy-to-use adapter and conduit around data pipelines, sources, and sinks. It can move and restructure data of any shape or size, with adjustable security in transit and at rest - while maintaining strong safeguards against corruption and loss, or latency and crashes under heavy load.
 

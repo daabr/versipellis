@@ -1,5 +1,5 @@
 // Versipellis ("versi") is a versatile, scalable tool for transferring and transforming data
-// reliably across services, protocols, formats, and geographies, without altering the data itself.
+// reliably across services, networks, protocols and formats, without altering the data itself.
 //
 // It is an easy-to-use adapter and conduit around data pipelines, sources, and sinks. It can move
 // and restructure data of any shape or size, with adjustable security in transit and at rest - while
