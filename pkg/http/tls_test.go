@@ -258,7 +258,6 @@ func TestLoadClientTLSConfig(t *testing.T) {
 			wantErr: true,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -470,7 +469,6 @@ func TestLoadServerTLSConfig(t *testing.T) {
 			wantErr: true,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -572,7 +570,6 @@ func TestParseTLSMinVersion(t *testing.T) {
 			wantErr: true,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -616,7 +613,6 @@ func TestParseTLSDontVerifyForClients(t *testing.T) {
 			want: true,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -674,7 +670,6 @@ func TestParseTLSDontVerifyForServers(t *testing.T) {
 			want:         tls.RequireAnyClientCert,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -779,7 +774,6 @@ func TestLoadPEM(t *testing.T) {
 			wantErr:     true,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -860,7 +854,6 @@ func TestLoadCertPool(t *testing.T) {
 			wantErr:     true,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -1027,7 +1020,6 @@ func TestLoadKeyPair(t *testing.T) {
 			wantErr:     true,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

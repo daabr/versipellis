@@ -212,4 +212,3 @@ FYI - for educational purposes only, just in case you're interested:
 ## Attribution
 
 This guide is based on the [contributing.md](https://contributing.md/generator)!
-
