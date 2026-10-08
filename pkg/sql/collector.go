@@ -93,7 +93,7 @@ type Collector struct {
 	inProgress  sync.WaitGroup
 	closeOnce   sync.Once
 	closingMu   sync.RWMutex // Synchronizes delayed batch dispatches with [Collector.Close].
-	closing     bool         // Guarded by closeMu.
+	closing     bool         // Guarded by closingMu.
 	closed      chan struct{}
 }
 
