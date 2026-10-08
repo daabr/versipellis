@@ -92,6 +92,8 @@ type Collector struct {
 	cancelExec  context.CancelFunc
 	inProgress  sync.WaitGroup
 	closeOnce   sync.Once
+	closingMu   sync.RWMutex // Synchronizes delayed batch dispatches with [Collector.Close].
+	closing     bool         // Guarded by closeMu.
 	closed      chan struct{}
 }
 
@@ -140,7 +142,8 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	if c.Destination == config.SenderTypeDiscard || c.Destination == config.SenderTypeNone {
 		limits = flow.Limits{} // No point in enabling batching if all the data will be discarded anyway.
 	}
-	if c.batch, err = flow.NewBatcher(limits, c.sendRows, nil); err != nil {
+	opts := new(flow.Options[map[string]any]{Guard: c.guard})
+	if c.batch, err = flow.NewBatcher(limits, c.sendRows, opts); err != nil {
 		return nil, fmt.Errorf("SQL row batching: %w", err)
 	}
 
@@ -180,6 +183,18 @@ func checkQuery(query string, err error) (string, error) {
 	return query, nil
 }
 
+// guard synchronizes dispatches of delayed batches (see [flow.Options.Guard]) with [Collector.Close], so a timed
+// dispatch that has already taken a batch finishes passing it to the sender before Close flushes the batcher and
+// signals [Collector.Done]. Otherwise, the batch could reach the sender after it was closed, and be discarded.
+func (c *Collector) guard(flush func()) {
+	c.closingMu.RLock()
+	defer c.closingMu.RUnlock()
+
+	if !c.closing {
+		flush() // Otherwise, the batch remains pending, and [Collector.Close] flushes it.
+	}
+}
+
 // sendRows reads [Collector.Send] when it's called, not at construction time, so tests may replace it.
 func (c *Collector) sendRows(ctx context.Context, rows []map[string]any) {
 	c.Send(ctx, flow.Structured(rows)) // Free conversion: the sender takes ownership of the chunk.
@@ -187,8 +202,8 @@ func (c *Collector) sendRows(ctx context.Context, rows []map[string]any) {
 
 // Start connects to the configured SQL-based database and starts sending queries to it. This
 // method returns immediately, and the collector runs asynchronously in the background. This method
-// idempotent: only the first call will actually start a goroutine. However, it is not meant to be
-// safe for concurrency, initialize collectors only in the main goroutine. Lastly, the collector
+// is idempotent: only the first call will actually start a goroutine. However, it is not meant to
+// be safe for concurrency, initialize collectors only in the main goroutine. Lastly, the collector
 // obeys the cancellation of the provided context, but with a grace period of [Collector.timeout].
 func (c *Collector) Start(ctx context.Context) bool {
 	if c == nil {
@@ -473,6 +488,13 @@ func (c *Collector) Close(ctx context.Context) {
 			defer close(done)
 
 			c.inProgress.Wait()
+
+			// Wait for any timed dispatch that may be in progress,
+			// but prevent new ones from starting in [Collector.guard].
+			c.closingMu.Lock()
+			c.closing = true
+			c.closingMu.Unlock()
+
 			c.batch.Flush(ctx)
 
 			if c.db != nil {

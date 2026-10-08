@@ -518,26 +518,34 @@ func TestCollectorProcessResultsWithFakeDriver(t *testing.T) {
 	tests := []struct {
 		name     string
 		dsn      string
-		wantRows int
+		wantRows []map[string]any
 		wantErr  bool
 	}{
 		{
-			name:     "multiple_result_sets",
-			dsn:      "noErrors",
-			wantRows: 3,
-			wantErr:  false,
+			name: "multiple_result_sets",
+			dsn:  "noErrors",
+			wantRows: []map[string]any{
+				{"col": int64(1)},
+				{"col": int64(2)},
+				{"col": int64(3)},
+			},
+			wantErr: false,
 		},
 		{
-			name:     "row_iteration_error",
-			dsn:      "rowsNextError",
-			wantRows: 1,
-			wantErr:  true,
+			name: "row_iteration_error",
+			dsn:  "rowsNextError",
+			wantRows: []map[string]any{
+				{"col": int64(1)},
+			},
+			wantErr: true,
 		},
 		{
-			name:     "row_set_iteration_error",
-			dsn:      "rowsNextResultSetError",
-			wantRows: 1,
-			wantErr:  true,
+			name: "row_set_iteration_error",
+			dsn:  "rowsNextResultSetError",
+			wantRows: []map[string]any{
+				{"col": int64(1)},
+			},
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
@@ -545,7 +553,8 @@ func TestCollectorProcessResultsWithFakeDriver(t *testing.T) {
 			t.Parallel()
 
 			var err error
-			coll := &Collector{batch: newTestBatcher(t, dest.Discard.Send)}
+			batch, sent := newRecordingBatcher(t)
+			coll := &Collector{batch: batch}
 			coll.db, err = sql.Open(fakeSQLDriverName, tt.dsn)
 			if err != nil {
 				t.Fatalf("sql.Open() error: %v", err)
@@ -562,8 +571,11 @@ func TestCollectorProcessResultsWithFakeDriver(t *testing.T) {
 			if (gotErr != nil) != tt.wantErr {
 				t.Fatalf("Collector.processResults() error = %v, wantErr = %v", gotErr, tt.wantErr)
 			}
-			if gotRows != tt.wantRows {
-				t.Errorf("Collector.processResults() row count = %d, want %d", gotRows, tt.wantRows)
+			if gotRows != len(tt.wantRows) {
+				t.Errorf("Collector.processResults() row count = %d, want %d", gotRows, len(tt.wantRows))
+			}
+			if !reflect.DeepEqual(*sent, tt.wantRows) {
+				t.Errorf("Collector.processResults() sent rows = %+v, want %+v", *sent, tt.wantRows)
 			}
 		})
 	}
@@ -755,6 +767,49 @@ func TestCollectorClose(t *testing.T) {
 	})
 }
 
+// TestCollectorCloseWaitsForTimedDispatch checks that [Collector.Close] doesn't signal [Collector.Done] while a timed
+// batch dispatch is still passing rows to the sender, because the sender may shut down and discard them right after.
+// It doesn't use [synctest], because a goroutine waiting for a [sync.RWMutex] isn't durably blocked, so the fake clock
+// wouldn't advance. The real-time wait below can only cause false negatives (if the bug is present), not flakiness.
+func TestCollectorCloseWaitsForTimedDispatch(t *testing.T) {
+	t.Parallel()
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	var sent atomic.Int64
+	c := &Collector{
+		Send: func(_ context.Context, chunk flow.Chunk) {
+			close(entered)
+			<-release
+			sent.Add(int64(chunk.Len()))
+		},
+		closed: make(chan struct{}),
+	}
+	_, c.cancelSched = context.WithCancel(t.Context())
+	t.Cleanup(c.cancelSched)
+
+	var err error
+	opts := new(flow.Options[map[string]any]{Guard: c.guard})
+	if c.batch, err = flow.NewBatcher(flow.Limits{MaxItems: 10, Window: time.Millisecond}, c.sendRows, opts); err != nil {
+		t.Fatalf("flow.NewBatcher() error: %v", err)
+	}
+
+	c.batch.AddItem(t.Context(), map[string]any{"x": int64(1)})
+	<-entered // The timed dispatch took the batch from the buffer, and is now blocked in the sender.
+
+	go c.Close(t.Context())
+	select {
+	case <-c.Done():
+		t.Fatal("Collector.Done() closed while a timed batch dispatch was still in progress")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	<-c.Done()
+	if got := sent.Load(); got != 1 {
+		t.Errorf("sent rows = %d, want 1", got)
+	}
+}
+
 func TestCollectorCloseTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -827,6 +882,21 @@ func newTestBatcher(tb testing.TB, send config.SendFunc) *flow.Batcher[map[strin
 		tb.Fatalf("flow.NewBatcher() error: %v", err)
 	}
 	return b
+}
+
+// newRecordingBatcher returns a row batcher for unit tests, with batching disabled: each call to
+// [flow.Batcher.AddItem] appends its row to the returned slice immediately and synchronously.
+func newRecordingBatcher(tb testing.TB) (*flow.Batcher[map[string]any], *[]map[string]any) {
+	tb.Helper()
+
+	got := new([]map[string]any)
+	b, err := flow.NewBatcher(flow.Limits{}, func(_ context.Context, rows []map[string]any) {
+		*got = append(*got, rows...)
+	}, nil)
+	if err != nil {
+		tb.Fatalf("flow.NewBatcher() error: %v", err)
+	}
+	return b, got
 }
 
 var registerFakeSQLDriver = sync.OnceFunc(func() {

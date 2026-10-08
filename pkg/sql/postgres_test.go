@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"testing/synctest"
 
@@ -178,17 +179,21 @@ func TestCollectorProcessPostgresResults(t *testing.T) {
 	tests := []struct {
 		name     string
 		noRows   bool
-		wantRows int
+		wantRows []map[string]any
 	}{
 		{
 			name:     "no_rows",
 			noRows:   true,
-			wantRows: 0,
+			wantRows: nil,
 		},
 		{
-			name:     "with_rows_and_sender",
-			noRows:   false,
-			wantRows: 3,
+			name:   "with_rows_and_sender",
+			noRows: false,
+			wantRows: []map[string]any{
+				{"id": 1, "name": "Alice"},
+				{"id": 2, "name": "Bob"},
+				{"id": 3, "name": "Carol"},
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -204,13 +209,17 @@ func TestCollectorProcessPostgresResults(t *testing.T) {
 				}
 			}
 
-			coll := &Collector{batch: newTestBatcher(t, dest.Discard.Send)}
+			batch, sent := newRecordingBatcher(t)
+			coll := &Collector{batch: batch}
 			gotRows, err := coll.processPostgresResults(t.Context(), rows)
 			if err != nil {
 				t.Errorf("Collector.processPostgresResults() error = %v", err)
 			}
-			if gotRows != tt.wantRows {
-				t.Errorf("Collector.processPostgresResults() row count = %d, want %d", gotRows, tt.wantRows)
+			if gotRows != len(tt.wantRows) {
+				t.Errorf("Collector.processPostgresResults() row count = %d, want %d", gotRows, len(tt.wantRows))
+			}
+			if !reflect.DeepEqual(*sent, tt.wantRows) {
+				t.Errorf("Collector.processPostgresResults() sent rows = %+v, want %+v", *sent, tt.wantRows)
 			}
 		})
 	}
