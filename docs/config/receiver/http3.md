@@ -26,7 +26,7 @@
 - `0` and negative integers are normalized to the default
 - Integers greater than the maximum are normalized to the maximum
 
-`timeout` - maximum duration of time for each incoming HTTP client request to complete
+`timeout` - maximum amount of time for each incoming HTTP client request to complete
 
 - Optional
 - Default: `"5s"` (5 seconds)

@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	// Import drivers for runtime registration in [sql].
@@ -21,6 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 // DriverType* constants represent all the available SQL database drivers for configurations in the TOML file.
@@ -65,6 +65,8 @@ const (
 	defaultQueryTimeout = time.Minute
 )
 
+var defaultBatchLimits = flow.Limits{MaxItems: 500, Window: time.Second}
+
 // Collector contains all the configuration and state details for querying SQL-based databases.
 type Collector struct {
 	config.BaseCollector
@@ -79,6 +81,8 @@ type Collector struct {
 	pgPool  pgPool
 	usingPG bool
 
+	batch *flow.Batcher[map[string]any]
+
 	// For checkpointing: timestamps of the last (at least partially) successful query.
 	checkpointMu sync.Mutex
 	prevStart    time.Time
@@ -88,8 +92,9 @@ type Collector struct {
 	cancelExec  context.CancelFunc
 	inProgress  sync.WaitGroup
 	closeOnce   sync.Once
+	closingMu   sync.RWMutex // Synchronizes delayed batch dispatches with [Collector.Close].
+	closing     bool         // Guarded by closingMu.
 	closed      chan struct{}
-	aborted     atomic.Bool
 }
 
 // Base returns a copy of the collector's static and generic configuration details.
@@ -116,24 +121,33 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 		conn:          config.Value(cfg, "connection", ""),
 	}
 
-	var err error
-	c.query, err = checkQuery(loadQuery(cfg))
-	if err != nil {
-		return nil, err
-	}
-	c.timeout, err = time.ParseDuration(config.Value(cfg, "timeout", defaultQueryTimeout.String()))
-	if err != nil {
-		return nil, fmt.Errorf("invalid query timeout duration: %w", err)
-	}
-
 	switch {
 	case !slices.Contains(validDriverTypes, c.driver):
 		return nil, fmt.Errorf("unrecognized SQL driver type %q", c.driver)
 	case c.conn == "":
 		return nil, errors.New("connection field required but not found")
-	default:
-		return c, nil
 	}
+
+	var err error
+	var limits flow.Limits
+	if c.query, err = checkQuery(loadQuery(cfg)); err != nil {
+		return nil, err
+	}
+	if c.timeout, err = time.ParseDuration(config.Value(cfg, "timeout", defaultQueryTimeout.String())); err != nil {
+		return nil, fmt.Errorf("invalid query timeout duration: %w", err)
+	}
+	if limits, err = config.BatchLimits(cfg["batch"], c.Name, defaultBatchLimits); err != nil {
+		return nil, fmt.Errorf("SQL row batching limits: %w", err)
+	}
+	if c.Destination == config.SenderTypeDiscard || c.Destination == config.SenderTypeNone {
+		limits = flow.Limits{} // No point in enabling batching if all the data will be discarded anyway.
+	}
+	opts := new(flow.Options[map[string]any]{Guard: c.guard})
+	if c.batch, err = flow.NewBatcher(limits, c.sendRows, opts); err != nil {
+		return nil, fmt.Errorf("SQL row batching: %w", err)
+	}
+
+	return c, nil
 }
 
 func loadQuery(cfg map[string]any) (string, error) {
@@ -169,10 +183,27 @@ func checkQuery(query string, err error) (string, error) {
 	return query, nil
 }
 
-// Start connects to the configured SQL-based database and starts sending queries to it. This function
-// returns immediately, and the collector runs asynchronously in the background. This function is
-// idempotent: only the first call will actually start a goroutine. However, it is not meant to be
-// safe for concurrency, initialize collectors only in the main goroutine. Lastly, the collector
+// guard synchronizes dispatches of delayed batches (see [flow.Options.Guard]) with [Collector.Close], so a timed
+// dispatch that has already taken a batch finishes passing it to the sender before Close flushes the batcher and
+// signals [Collector.Done]. Otherwise, the batch could reach the sender after it was closed, and be discarded.
+func (c *Collector) guard(flush func()) {
+	c.closingMu.RLock()
+	defer c.closingMu.RUnlock()
+
+	if !c.closing {
+		flush() // Otherwise, the batch remains pending, and [Collector.Close] flushes it.
+	}
+}
+
+// sendRows reads [Collector.Send] when it's called, not at construction time, so tests may replace it.
+func (c *Collector) sendRows(ctx context.Context, rows []map[string]any) {
+	c.Send(ctx, flow.Structured(rows)) // Free conversion: the sender takes ownership of the chunk.
+}
+
+// Start connects to the configured SQL-based database and starts sending queries to it. This
+// method returns immediately, and the collector runs asynchronously in the background. This method
+// is idempotent: only the first call will actually start a goroutine. However, it is not meant to
+// be safe for concurrency, initialize collectors only in the main goroutine. Lastly, the collector
 // obeys the cancellation of the provided context, but with a grace period of [Collector.timeout].
 func (c *Collector) Start(ctx context.Context) bool {
 	if c == nil {
@@ -241,7 +272,7 @@ func openDB(ctx context.Context, driver, conn string) (*sql.DB, error) {
 
 func (c *Collector) scheduleNext(schedCtx, execCtx context.Context, prev time.Time) {
 	sem := make(chan struct{}, max(c.Concurrency, 1))
-	defer c.Close()
+	defer c.Close(execCtx)
 
 	for {
 		nextStart := c.Schedule.Next(prev)
@@ -278,16 +309,17 @@ func (c *Collector) scheduleNext(schedCtx, execCtx context.Context, prev time.Ti
 		case <-schedCtx.Done():
 			return
 		case <-time.After(time.Until(nextStart)):
-			c.checkConcurrency(schedCtx, execCtx, sem, nextStart)
+			c.executeWithConcurrencyLimit(schedCtx, execCtx, sem, nextStart)
 			prev = nextStart
 		}
 	}
 }
 
-func (c *Collector) checkConcurrency(schedCtx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
+func (c *Collector) executeWithConcurrencyLimit(schedCtx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
 	if schedCtx.Err() != nil { // Instead of schedCtx.Done() in the select block below - to check ctx before sem.
 		return
 	}
+
 	select {
 	case sem <- struct{}{}:
 		c.inProgress.Go(func() {
@@ -303,8 +335,8 @@ func (c *Collector) checkConcurrency(schedCtx, execCtx context.Context, sem chan
 
 // executeQuery shouldn't be called directly, only through [Collector.scheduleNext]. Therefore, it's safe to assume
 // that either [Collector.db] or [Collector.pgPool] are non-nil, given that [Collector.Start] had to succeed first.
-// The provided ctx is an execution context (execCtx) detached from parent cancellation, allowing in-flight queries
-// to finish within [Collector.timeout] during graceful shutdown before being forcefully canceled.
+// The provided context is an execution context (execCtx) detached from scheduler cancellation, allowing in-flight
+// queries to finish within [Collector.timeout] during graceful shutdown before being forcefully canceled.
 func (c *Collector) executeQuery(ctx context.Context) bool {
 	queryCtx := ctx
 	var cancel context.CancelFunc
@@ -340,26 +372,24 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	}
 	defer rows.Close()
 
-	data, err := processResults(queryCtx, rows, 1)
+	count, err := c.processResults(queryCtx, rows)
 	end := time.Now()
-	if len(data) > 0 && !c.aborted.Load() {
-		c.Send(context.WithoutCancel(ctx), data) // Returns quickly (usually asynchronous internally).
-	}
+	c.batch.Flush(ctx)
 
 	ok := err == nil
 	if !ok {
 		slog.Warn("error while processing SQL query results", slog.Any("error", err), slog.String("driver", c.driver),
-			slog.String("name", c.Name), slog.Int("successfully_processed_rows", len(data)),
+			slog.String("name", c.Name), slog.Int("successfully_processed_rows", count),
 		)
 	} else {
 		stats := c.db.Stats()
 		slog.Debug("SQL query execution completed successfully", slog.String("driver", c.driver), slog.String("name", c.Name),
-			slog.Int("rows", len(data)), slog.Time("start_time", start), slog.Duration("duration", end.Sub(start)),
+			slog.Int("rows", count), slog.Time("start_time", start), slog.Duration("duration", end.Sub(start)),
 			slog.Int("in_use_conns", stats.InUse), slog.Int("idle_conns", stats.Idle),
 		)
 	}
 
-	if ok || len(data) > 0 {
+	if ok || count > 0 {
 		c.checkpointMu.Lock()
 		if start.UTC().After(c.prevStart) {
 			c.prevStart = start.UTC()
@@ -367,44 +397,52 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 		}
 		c.checkpointMu.Unlock()
 	}
+
 	return ok
 }
 
-// processResults returns partial results even when an error interrupts processing, to prevent data loss.
-func processResults(ctx context.Context, rows *sql.Rows, resultSet int) ([]map[string]any, error) {
-	cols, err := rows.Columns()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read SQL column names in result-set %d: %w", resultSet, err)
+// processResults batches and dispatches partial results even when an error interrupts processing,
+// to prevent data loss. It supports multiple result-sets for multiple statements. The provided context
+// is tied to the query's lifecycle (because we read its results), not the collector's entire execution.
+// Either way it has a limited grace period to complete before being forcefully canceled.
+func (c *Collector) processResults(ctx context.Context, rows *sql.Rows) (int, error) {
+	totalScanned := 0
+	for resultSet := 1; ctx.Err() == nil; resultSet++ {
+		cols, err := rows.Columns()
+		if err != nil {
+			return totalScanned, fmt.Errorf("failed to read SQL column names in result-set %d: %w", resultSet, err)
+		}
+
+		rsScanned := 0
+		for rows.Next() {
+			if err := ctx.Err(); err != nil {
+				return totalScanned, fmt.Errorf("query result processing canceled: %w", err)
+			}
+			row, err := scanRow(rows, cols)
+			if err != nil {
+				return totalScanned, fmt.Errorf("failed to scan row %d in result-set %d: %w", rsScanned+1, resultSet, err)
+			}
+			c.batch.AddItem(ctx, row) // Async I/O, but it doesn't matter which ctx we use (detached by batcher anyway).
+			totalScanned++
+			rsScanned++
+		}
+		if err := rows.Err(); err != nil {
+			return totalScanned, fmt.Errorf("row iteration error: %w", err)
+		}
+
+		if !rows.NextResultSet() {
+			break
+		}
 	}
 
-	scanned := make([]map[string]any, 0)
-	for rows.Next() {
-		if err := ctx.Err(); err != nil {
-			return scanned, fmt.Errorf("query result processing canceled: %w", err)
-		}
-		row, err := scanRow(rows, cols)
-		if err != nil {
-			return scanned, fmt.Errorf("failed to scan row %d in result-set %d: %w", len(scanned)+1, resultSet, err)
-		}
-		scanned = append(scanned, row)
+	if err := ctx.Err(); err != nil {
+		return totalScanned, fmt.Errorf("query result processing canceled: %w", err)
 	}
 	if err := rows.Err(); err != nil {
-		return scanned, fmt.Errorf("row iteration error: %w", err)
+		return totalScanned, fmt.Errorf("row-set iteration error: %w", err)
 	}
 
-	// Support multiple result-sets for multiple statements, using recursion.
-	if rows.NextResultSet() {
-		next, err := processResults(ctx, rows, resultSet+1)
-		scanned = append(scanned, next...)
-		if err != nil {
-			return scanned, err
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return scanned, fmt.Errorf("row-set iteration error: %w", err)
-	}
-
-	return scanned, nil
+	return totalScanned, nil
 }
 
 func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
@@ -437,7 +475,7 @@ func (c *Collector) Done() <-chan struct{} {
 // called, but it's meant to be called only at the end of the [Collector.scheduleNext] goroutine.
 // If there are still pending queries after the timeout, the collector will forcefully close their
 // connections. It then signals through the [Collector.Done] channel that it's ready to shut down.
-func (c *Collector) Close() {
+func (c *Collector) Close(ctx context.Context) {
 	if c == nil || c.cancelSched == nil {
 		return
 	}
@@ -450,6 +488,14 @@ func (c *Collector) Close() {
 			defer close(done)
 
 			c.inProgress.Wait()
+
+			// Wait for any timed dispatch that may be in progress,
+			// but prevent new ones from starting in [Collector.guard].
+			c.closingMu.Lock()
+			c.closing = true
+			c.closingMu.Unlock()
+
+			c.batch.Flush(ctx)
 
 			if c.db != nil {
 				_ = c.db.Close()
@@ -485,7 +531,6 @@ func (c *Collector) Close() {
 			slog.Error("aborted SQL collector didn't stop immediately",
 				slog.String("driver", c.driver), slog.String("name", c.Name),
 			)
-			c.aborted.Store(true)
 		}
 
 		if c.closed != nil {

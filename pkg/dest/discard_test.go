@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 func TestDiscard(t *testing.T) {
@@ -12,39 +14,35 @@ func TestDiscard(t *testing.T) {
 
 	tests := []struct {
 		name string
-		data any
+		data flow.Chunk
 	}{
 		{
-			name: "nil",
+			name: "nil_chunk",
 			data: nil,
 		},
 		{
-			name: "string",
-			data: "test",
-		},
-		{
 			name: "nil_http_request",
-			data: (*http.Request)(nil),
+			data: flow.HTTPRequests([]*http.Request{nil}),
 		},
 		{
 			name: "http_request_without_body",
-			data: &http.Request{},
+			data: flow.HTTPRequests([]*http.Request{{}}),
 		},
 		{
 			name: "http_request_with_body",
-			data: &http.Request{Body: io.NopCloser(strings.NewReader("test"))},
+			data: flow.HTTPRequests([]*http.Request{{Body: io.NopCloser(strings.NewReader("test"))}}),
 		},
 		{
 			name: "nil_http_response",
-			data: (*http.Response)(nil),
+			data: flow.HTTPResponses([]*http.Response{nil}),
 		},
 		{
 			name: "http_response_without_body",
-			data: &http.Response{},
+			data: flow.HTTPResponses([]*http.Response{{}}),
 		},
 		{
 			name: "http_response_with_body",
-			data: &http.Response{Body: io.NopCloser(strings.NewReader("test"))},
+			data: flow.HTTPResponses([]*http.Response{{Body: io.NopCloser(strings.NewReader("test"))}}),
 		},
 	}
 	for _, tt := range tests {

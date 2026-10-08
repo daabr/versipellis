@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/dest"
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 func TestClientH3WithoutTLSReturnsNil(t *testing.T) {
@@ -126,7 +128,7 @@ func TestSenderSendWithRetries(t *testing.T) { //nolint:paralleltest // Don't sh
 				t.Fatalf("NewSender() error: %v", err)
 			}
 
-			sender.Send(t.Context(), []byte("payload"))
+			sender.Send(t.Context(), flow.Blobs{[]byte("payload")})
 			sender.inProgress.Wait()
 
 			wantRequests := 1
@@ -200,6 +202,7 @@ func TestSenderSendOnceEdgeCases(t *testing.T) {
 		methodErr bool
 		headers   http.Header
 		body      []byte
+		badBody   bool
 	}{
 		{
 			name:      "send_req_construction_error",
@@ -209,6 +212,11 @@ func TestSenderSendOnceEdgeCases(t *testing.T) {
 			name:    "send_with_host_header_and_body",
 			headers: http.Header{"Host": []string{"example.com"}},
 			body:    []byte("test body"),
+		},
+		{
+			name:    "send_with_bad_body",
+			headers: http.Header{"Host": []string{"example.com"}},
+			badBody: true,
 		},
 	}
 	for _, tt := range tests {
@@ -226,6 +234,7 @@ func TestSenderSendOnceEdgeCases(t *testing.T) {
 				t.Fatalf("NewSender() error: %v", err)
 			}
 
+			sender.timeout = 0
 			sender.client = clientH2(&tls.Config{}, 0, 0, tt.name)
 			if tt.methodErr {
 				sender.method = "???"
@@ -235,6 +244,11 @@ func TestSenderSendOnceEdgeCases(t *testing.T) {
 			}
 			getBody := func() (io.ReadCloser, error) {
 				return io.NopCloser(bytes.NewReader(tt.body)), nil
+			}
+			if tt.badBody {
+				getBody = func() (io.ReadCloser, error) {
+					return nil, errors.New("bad body")
+				}
 			}
 
 			gotResp, gotRetry := sender.sendOnce(t.Context(), sender.url, sender.headers, getBody, int64(len(tt.body)))

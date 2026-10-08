@@ -32,7 +32,7 @@ It is entirely optional, but some fields may be required in some use-cases.
 - `1` means a single attempt without retries, effectively the same as `type = "disabled"`
 - `n` (where `n > 1`) means 1 initial attempt followed by up to `n-1` retries
 
-`interval` - initial wait period between attempts 
+`interval` - initial wait period between attempts
 
 - Optional, effective only when `type ≠ "disabled"`
 - Default: `"1s"` (1 second)
@@ -45,6 +45,6 @@ It is entirely optional, but some fields may be required in some use-cases.
 
 - Optional, effective only when `type = "backoff"`
 - Default: `"20s"`
-- Range: between whatever the `interval` value is and `"5m"`
+- Valid range: between whatever the `interval` value is and `"5m"`
 - Format: string containing decimal numbers, each with a unit suffix, e.g., `s` (seconds), and `ms` (milliseconds)
 - If `max_interval ≤ interval` then `max_interval` is normalized to `interval`, which effectively forces `type = "static"`

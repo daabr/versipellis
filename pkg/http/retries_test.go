@@ -108,7 +108,7 @@ func TestParseRetries(t *testing.T) {
 			name:   "max_attempts_above_max",
 			rawCfg: map[string]any{"max_attempts": int64(1000)},
 			want: &retries{
-				MaxAttempts: 10,
+				MaxAttempts: maxAttempts,
 				Coefficient: retryCoeffBackoff,
 				Interval:    time.Second,
 				MaxInterval: 20 * time.Second,
@@ -245,7 +245,7 @@ func TestRetriesExponentialBackoffInterval(t *testing.T) {
 			t.Parallel()
 
 			r := &retries{
-				MaxAttempts: 10,
+				MaxAttempts: maxAttempts,
 				Coefficient: retryCoeffBackoff,
 				Interval:    time.Second,
 				MaxInterval: 20 * time.Second,

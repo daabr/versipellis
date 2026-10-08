@@ -96,12 +96,28 @@
   header2 = "value2"
   ```
 
-`timeout` - maximum duration of time for each HTTP client request to complete
+`timeout` - maximum amount of time for each HTTP client request to complete
 
 - Optional
 - Default: `"5s"` (5 seconds)
 - Format: string containing decimal numbers, each with a unit suffix, e.g., `m` (minutes), and `s` (seconds)
 - Special case: `"0"` and negative values (e.g., `"-1s"`) = no client-side timeout
+
+`concurrency_limit` - how many requests are allowed to be in progress at any time
+
+- Optional
+- Default: `100`
+- Valid range: any positive integer between `1` (no concurrency) and `200`
+- Integer values out of bounds in either direction are normalized to the maximum
+- If the sender is at its concurrency limit when a new request needs to start,\
+  the request is **delayed until a slot is available, not rejected/dropped**
+- Each request keeps its slot until it completes, including its retries
+
+> [!WARNING]
+>
+> - Concurrency limit (at any time, unrelated to duration or retries) ≠ requests per second
+> - Data that is still blocked when a shutdown begins is dropped, instead of delaying the shutdown\
+>   (data that doesn't exceed the concurrency limit, including the last pending batch, is still sent)
 
 ## `[sender.http3.tls]` Sub-Section
 
@@ -112,3 +128,9 @@
 
 - Optional
 - [See this page](../retries.md)
+
+## `[sender.http3.batch]` Sub-Section
+
+- Optional
+- Default: disabled, immediate dispatch without size limits
+- [See this page](../batch.md)

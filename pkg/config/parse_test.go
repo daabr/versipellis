@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/dest"
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 func TestParseFile(t *testing.T) { //nolint:paralleltest // [os.Chdir] has process-wide effect.
@@ -74,7 +76,7 @@ func TestParseFile(t *testing.T) { //nolint:paralleltest // [os.Chdir] has proce
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ParseFile() = %v, want %v", got, tt.want)
+				t.Errorf("ParseFile() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
@@ -294,7 +296,7 @@ func TestExtractSubmaps(t *testing.T) {
 
 			got := config.ExtractSubmaps(tt.cfg, tt.key)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ExtractSubmaps() = %v, want %v", got, tt.want)
+				t.Errorf("ExtractSubmaps() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
@@ -459,14 +461,14 @@ func TestConcurrencyLimit(t *testing.T) {
 			want: 1,
 		},
 		{
-			name: "explicit_zero",
-			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(0)},
-			want: 0,
+			name: "explicit_one",
+			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(1)},
+			want: 1,
 		},
 		{
 			name: "negative_to_min",
 			cfg:  map[string]any{"type": "http", "trigger": "none", "concurrency_limit": int64(-1)},
-			want: 0,
+			want: 1,
 		},
 		{
 			name: "positive_in_range",
@@ -494,6 +496,56 @@ func TestConcurrencyLimit(t *testing.T) {
 			}
 			if base.Concurrency != tt.want {
 				t.Errorf("concurrencyLimit = %d, want %d", base.Concurrency, tt.want)
+			}
+		})
+	}
+}
+
+func TestBatchLimits(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		rawCfg   any
+		defaults flow.Limits
+		want     flow.Limits
+		wantErr  bool
+	}{
+		{
+			name:     "nil_config",
+			rawCfg:   nil,
+			defaults: flow.Limits{MaxItems: 10, MaxBytes: 1024, Window: time.Second},
+			want:     flow.Limits{MaxItems: 10, MaxBytes: 1024, Window: time.Second},
+		},
+		{
+			name:     "invalid_config",
+			rawCfg:   "not_a_map",
+			defaults: flow.Limits{MaxItems: 10, MaxBytes: 1024, Window: time.Second},
+			wantErr:  true,
+		},
+		{
+			name:     "invalid_duration",
+			rawCfg:   map[string]any{"max_items": int64(5), "max_bytes": int64(2048), "time_window": "not_a_duration"},
+			defaults: flow.Limits{MaxItems: 10, MaxBytes: 1024, Window: time.Second},
+			wantErr:  true,
+		},
+		{
+			name:     "valid_config",
+			rawCfg:   map[string]any{"max_items": int64(500), "max_bytes": int64(2048), "time_window": "-2s"},
+			defaults: flow.Limits{MaxItems: 10, MaxBytes: 1024, Window: time.Second},
+			want:     flow.Limits{MaxItems: 500, MaxBytes: 2048, Window: 0},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := config.BatchLimits(tt.rawCfg, "batch", tt.defaults)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("BatchLimits() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("BatchLimits() = %+v, want = %+v", got, tt.want)
 			}
 		})
 	}

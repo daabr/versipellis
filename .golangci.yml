@@ -105,7 +105,6 @@ linters:
     iface:
       enable:
         - identical
-        - unused
         - unexported
     misspell:
       locale: US

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/cron"
 	"github.com/daabr/versipellis/pkg/dest"
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 func TestNewCollector(t *testing.T) {
@@ -90,6 +92,28 @@ func TestNewCollector(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "invalid_batch",
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			cfg: map[string]any{
+				"type":       DriverTypeSQLite,
+				"connection": "connection",
+				"query":      "SELECT 1",
+				"batch":      "invalid",
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid_batch_time_window",
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			cfg: map[string]any{
+				"type":       DriverTypeSQLite,
+				"connection": "connection",
+				"query":      "SELECT 1",
+				"batch":      map[string]any{"time_window": "invalid"},
+			},
+			wantErr: true,
+		},
+		{
 			name: "happy_path",
 			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
 			cfg: map[string]any{
@@ -110,7 +134,7 @@ func TestNewCollector(t *testing.T) {
 			}
 			if c != nil {
 				if b := c.Base(); !reflect.DeepEqual(b, tt.base) {
-					t.Errorf("Collector.Base() = %v, want %v", b, tt.base)
+					t.Errorf("Collector.Base() = %+v, want %+v", b, tt.base)
 				}
 			}
 		})
@@ -437,54 +461,56 @@ func TestCollectorExecuteQuery(t *testing.T) {
 				t.Fatalf("cron.Parse() error: %v", err)
 			}
 			base := &config.BaseCollector{Type: config.CollectorTypeSQL, Schedule: sched, Send: dest.Discard.Send}
-			c, err := NewCollector(base, tt.cfg)
+			coll, err := NewCollector(base, tt.cfg)
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
-			c.db, err = sql.Open(c.driver, c.conn)
+			coll.db, err = sql.Open(coll.driver, coll.conn)
 			if err != nil {
 				t.Fatalf("sql.Open() error: %v", err)
 			}
 
 			if tt.closeDB {
-				if err := c.db.Close(); err != nil {
+				if err := coll.db.Close(); err != nil {
 					t.Fatalf("sql.DB.Close() error: %v", err)
 				}
 			} else {
-				t.Cleanup(func() { _ = c.db.Close() })
+				t.Cleanup(func() { _ = coll.db.Close() })
 			}
 
-			if gotOK := c.executeQuery(t.Context()); gotOK != tt.wantOK {
+			if gotOK := coll.executeQuery(t.Context()); gotOK != tt.wantOK {
 				t.Errorf("Collector.executeQuery() = %v, want %v", gotOK, tt.wantOK)
 			}
-			if timestampUpdated := !c.prevStart.IsZero(); timestampUpdated != tt.wantOK {
+			if timestampUpdated := !coll.prevStart.IsZero(); timestampUpdated != tt.wantOK {
 				t.Errorf("Collector.prevXXXX checkpoint updated = %v, want %v", timestampUpdated, tt.wantOK)
 			}
 		})
 	}
 }
 
-func TestProcessResults(t *testing.T) {
+func TestCollectorProcessResults(t *testing.T) {
 	t.Parallel()
 
-	db, err := sql.Open(DriverTypeSQLite, ":memory:")
+	var err error
+	coll := &Collector{batch: newTestBatcher(t, dest.Discard.Send)}
+	coll.db, err = sql.Open(DriverTypeSQLite, ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open() error: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	t.Cleanup(func() { _ = coll.db.Close() })
 
-	rows, err := db.QueryContext(t.Context(), "SELECT 1")
+	rows, err := coll.db.QueryContext(t.Context(), "SELECT 1")
 	if err != nil {
 		t.Fatalf("db.QueryContext() error: %v", err)
 	}
 	_ = rows.Close() //nolint:sqlclosecheck // Close rows immediately so [sql.Rows.Columns] fails.
 
-	if _, err := processResults(t.Context(), rows, 1); err == nil {
-		t.Error("processResults() error = nil, wantErr = true")
+	if _, err := coll.processResults(t.Context(), rows); err == nil {
+		t.Error("Collector.processResults() error = nil, wantErr = true")
 	}
 }
 
-func TestProcessResultsWithFakeDriver(t *testing.T) {
+func TestCollectorProcessResultsWithFakeDriver(t *testing.T) {
 	t.Parallel()
 
 	registerFakeSQLDriver()
@@ -526,26 +552,176 @@ func TestProcessResultsWithFakeDriver(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			db, err := sql.Open(fakeSQLDriverName, tt.dsn)
+			var err error
+			batch, sent := newRecordingBatcher(t)
+			coll := &Collector{batch: batch}
+			coll.db, err = sql.Open(fakeSQLDriverName, tt.dsn)
 			if err != nil {
 				t.Fatalf("sql.Open() error: %v", err)
 			}
-			t.Cleanup(func() { _ = db.Close() })
+			t.Cleanup(func() { _ = coll.db.Close() })
 
-			rows, err := db.QueryContext(t.Context(), "SELECT 1; SELECT 2;")
+			rows, err := coll.db.QueryContext(t.Context(), "SELECT 1; SELECT 2;")
 			if err != nil {
 				t.Fatalf("db.QueryContext() error: %v", err)
 			}
 			t.Cleanup(func() { _ = rows.Close() })
 
-			gotRows, gotErr := processResults(t.Context(), rows, 1)
+			gotRows, gotErr := coll.processResults(t.Context(), rows)
 			if (gotErr != nil) != tt.wantErr {
-				t.Fatalf("processResults() error = %v, wantErr = %v", gotErr, tt.wantErr)
+				t.Fatalf("Collector.processResults() error = %v, wantErr = %v", gotErr, tt.wantErr)
 			}
-			if !reflect.DeepEqual(gotRows, tt.wantRows) {
-				t.Errorf("processResults() = %+v, want %+v", gotRows, tt.wantRows)
+			if gotRows != len(tt.wantRows) {
+				t.Errorf("Collector.processResults() row count = %d, want %d", gotRows, len(tt.wantRows))
+			}
+			if !reflect.DeepEqual(*sent, tt.wantRows) {
+				t.Errorf("Collector.processResults() sent rows = %+v, want %+v", *sent, tt.wantRows)
 			}
 		})
+	}
+}
+
+func TestCollectorExecuteQueryBatches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		destination string
+		batch       map[string]any
+		rows        int
+		wantSizes   []int // Number of rows in each chunk sent to the destination.
+	}{
+		{
+			name:      "no_rows",
+			rows:      0,
+			wantSizes: nil,
+		},
+		{
+			name:      "default_batch_size",
+			rows:      1234,
+			wantSizes: []int{500, 500, 234}, // The last partial batch is flushed after the query.
+		},
+		{
+			name:      "custom_batch_size",
+			batch:     map[string]any{"max_items": int64(1000)},
+			rows:      2500,
+			wantSizes: []int{1000, 1000, 500},
+		},
+		{
+			name:      "batching_disabled",
+			batch:     map[string]any{"max_items": int64(0)},
+			rows:      3,
+			wantSizes: []int{1, 1, 1},
+		},
+		{
+			name:        "discard_destination_disables_batching",
+			destination: config.SenderTypeDiscard,
+			rows:        3,
+			wantSizes:   []int{1, 1, 1},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var mu sync.Mutex
+			var gotSizes []int
+			var gotValues []int64
+			send := func(_ context.Context, chunk flow.Chunk) {
+				rows, ok := chunk.(flow.Structured)
+				if !ok {
+					t.Errorf("sent chunk type = %T, want flow.Structured", chunk)
+					return
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				gotSizes = append(gotSizes, len(rows))
+				for _, row := range rows {
+					x, _ := row["x"].(int64)
+					gotValues = append(gotValues, x)
+				}
+			}
+
+			base := &config.BaseCollector{Type: config.CollectorTypeSQL, Send: send}
+			base.Destination = tt.destination
+			cfg := map[string]any{
+				"type":       DriverTypeSQLite,
+				"connection": ":memory:",
+				"query": fmt.Sprintf(
+					"WITH RECURSIVE n(x) AS (SELECT 1 WHERE %[1]d > 0 UNION ALL SELECT x+1 FROM n WHERE x < %[1]d) "+
+						"SELECT x FROM n", tt.rows,
+				),
+			}
+			if tt.batch != nil {
+				cfg["batch"] = tt.batch
+			}
+			coll, err := NewCollector(base, cfg)
+			if err != nil {
+				t.Fatalf("NewCollector() error: %v", err)
+			}
+			if coll.db, err = sql.Open(coll.driver, coll.conn); err != nil {
+				t.Fatalf("sql.Open() error: %v", err)
+			}
+			t.Cleanup(func() { _ = coll.db.Close() })
+
+			if !coll.executeQuery(t.Context()) {
+				t.Fatal("Collector.executeQuery() = false, want true")
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if !reflect.DeepEqual(gotSizes, tt.wantSizes) {
+				t.Errorf("sent chunk sizes = %v, want %v", gotSizes, tt.wantSizes)
+			}
+			// All the rows, in order, exactly once.
+			for i, x := range gotValues {
+				if x != int64(i+1) {
+					t.Fatalf("sent row %d has x = %d, want %d", i, x, i+1)
+				}
+			}
+			if len(gotValues) != tt.rows {
+				t.Errorf("sent rows = %d, want %d", len(gotValues), tt.rows)
+			}
+		})
+	}
+}
+
+// TestCollectorProcessResultsCanceledBetweenResultSets is a regression test: a cancellation that occurs between
+// result-sets must be reported as an error, otherwise the query's checkpoint would advance as if it succeeded.
+func TestCollectorProcessResultsCanceledBetweenResultSets(t *testing.T) {
+	t.Parallel()
+
+	registerFakeSQLDriver()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+
+	// Batching is disabled in [newTestBatcher], so each row is sent synchronously, as soon as it's scanned.
+	send := func(_ context.Context, chunk flow.Chunk) {
+		if rows, ok := chunk.(flow.Structured); ok && len(rows) > 0 && rows[0]["col"] == int64(1) {
+			cancel() // Right after the only row of the 1st result-set.
+		}
+	}
+
+	var err error
+	coll := &Collector{batch: newTestBatcher(t, send)}
+	if coll.db, err = sql.Open(fakeSQLDriverName, "noErrors"); err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	t.Cleanup(func() { _ = coll.db.Close() })
+
+	rows, err := coll.db.QueryContext(ctx, "SELECT 1; SELECT 2;")
+	if err != nil {
+		t.Fatalf("db.QueryContext() error: %v", err)
+	}
+	t.Cleanup(func() { _ = rows.Close() })
+
+	gotRows, err := coll.processResults(ctx, rows)
+	if err == nil {
+		t.Error("Collector.processResults() error = nil, want a cancellation error")
+	}
+	if gotRows != 1 {
+		t.Errorf("Collector.processResults() row count = %d, want 1", gotRows)
 	}
 }
 
@@ -555,20 +731,20 @@ func TestCollectorClose(t *testing.T) {
 	t.Run("unstarted", func(t *testing.T) {
 		t.Parallel()
 
-		c := &Collector{}
-		c.Close()
+		c := &Collector{batch: newTestBatcher(t, dest.Discard.Send)}
+		c.Close(t.Context())
 	})
 
 	t.Run("fake_pg_pool", func(t *testing.T) {
 		t.Parallel()
 
-		c := &Collector{pgPool: new(fakePGPool), usingPG: true}
+		c := &Collector{pgPool: new(fakePGPool), usingPG: true, batch: newTestBatcher(t, dest.Discard.Send)}
 		_, c.cancelSched = context.WithCancel(t.Context())
 		c.closed = make(chan struct{})
 		t.Cleanup(c.cancelSched)
 
-		c.Close()
-		c.Close()
+		c.Close(t.Context())
+		c.Close(t.Context())
 
 		<-c.Done()
 	})
@@ -581,14 +757,57 @@ func TestCollectorClose(t *testing.T) {
 			t.Fatalf("sql.Open() error: %v", err)
 		}
 
-		c := &Collector{db: db}
+		c := &Collector{db: db, batch: newTestBatcher(t, dest.Discard.Send)}
 		_, c.cancelSched = context.WithCancel(t.Context())
 		c.closed = make(chan struct{})
 
-		c.Close()
+		c.Close(t.Context())
 
 		<-c.Done()
 	})
+}
+
+// TestCollectorCloseWaitsForTimedDispatch checks that [Collector.Close] doesn't signal [Collector.Done] while a timed
+// batch dispatch is still passing rows to the sender, because the sender may shut down and discard them right after.
+// It doesn't use [synctest], because a goroutine waiting for a [sync.RWMutex] isn't durably blocked, so the fake clock
+// wouldn't advance. The real-time wait below can only cause false negatives (if the bug is present), not flakiness.
+func TestCollectorCloseWaitsForTimedDispatch(t *testing.T) {
+	t.Parallel()
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	var sent atomic.Int64
+	c := &Collector{
+		Send: func(_ context.Context, chunk flow.Chunk) {
+			close(entered)
+			<-release
+			sent.Add(int64(chunk.Len()))
+		},
+		closed: make(chan struct{}),
+	}
+	_, c.cancelSched = context.WithCancel(t.Context())
+	t.Cleanup(c.cancelSched)
+
+	var err error
+	opts := new(flow.Options[map[string]any]{Guard: c.guard})
+	if c.batch, err = flow.NewBatcher(flow.Limits{MaxItems: 10, Window: time.Millisecond}, c.sendRows, opts); err != nil {
+		t.Fatalf("flow.NewBatcher() error: %v", err)
+	}
+
+	c.batch.AddItem(t.Context(), map[string]any{"x": int64(1)})
+	<-entered // The timed dispatch took the batch from the buffer, and is now blocked in the sender.
+
+	go c.Close(t.Context())
+	select {
+	case <-c.Done():
+		t.Fatal("Collector.Done() closed while a timed batch dispatch was still in progress")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	<-c.Done()
+	if got := sent.Load(); got != 1 {
+		t.Errorf("sent rows = %d, want 1", got)
+	}
 }
 
 func TestCollectorCloseTimeout(t *testing.T) {
@@ -617,25 +836,26 @@ func TestCollectorCloseTimeout(t *testing.T) {
 			t.Parallel()
 
 			synctest.Test(t, func(t *testing.T) {
-				c := &Collector{
+				coll := &Collector{
 					driver:  DriverTypePostgres,
 					pgPool:  tt.pgPool,
 					usingPG: tt.pgPool != nil,
 					timeout: testTimeout,
+					batch:   newTestBatcher(t, dest.Discard.Send),
 				}
 
 				// Test case 1: Close() before Start() should return immediately and have no effect.
 				start := time.Now()
-				c.Close()
+				coll.Close(t.Context())
 				if got := time.Since(start); got != 0 {
 					t.Fatalf("Collector.Close(1) timeout behaved unexpectedly: got %v, want %v", got, 0)
 				}
 
 				// Test case 2: Close() after Start() should block until the DB is closed / the timeout expires.
-				_, c.cancelSched = context.WithCancel(t.Context())
+				_, coll.cancelSched = context.WithCancel(t.Context())
 
 				start = time.Now()
-				c.Close()
+				coll.Close(t.Context())
 				if got := time.Since(start); got != tt.want2 {
 					t.Errorf("Collector.Close(2) timeout behaved unexpectedly: got %v, want %v", got, tt.want2)
 				}
@@ -649,6 +869,35 @@ func TestCollectorCloseTimeout(t *testing.T) {
 const (
 	fakeSQLDriverName = "versipellis-fake-sql-driver"
 )
+
+// newTestBatcher returns a row batcher for unit tests, with batching disabled: each call to
+// [flow.Batcher.AddItem] sends its row to the given function immediately and synchronously.
+func newTestBatcher(tb testing.TB, send config.SendFunc) *flow.Batcher[map[string]any] {
+	tb.Helper()
+
+	b, err := flow.NewBatcher(flow.Limits{}, func(ctx context.Context, rows []map[string]any) {
+		send(ctx, flow.Structured(rows))
+	}, nil)
+	if err != nil {
+		tb.Fatalf("flow.NewBatcher() error: %v", err)
+	}
+	return b
+}
+
+// newRecordingBatcher returns a row batcher for unit tests, with batching disabled: each call to
+// [flow.Batcher.AddItem] appends its row to the returned slice immediately and synchronously.
+func newRecordingBatcher(tb testing.TB) (*flow.Batcher[map[string]any], *[]map[string]any) {
+	tb.Helper()
+
+	got := new([]map[string]any)
+	b, err := flow.NewBatcher(flow.Limits{}, func(_ context.Context, rows []map[string]any) {
+		*got = append(*got, rows...)
+	}, nil)
+	if err != nil {
+		tb.Fatalf("flow.NewBatcher() error: %v", err)
+	}
+	return b, got
+}
 
 var registerFakeSQLDriver = sync.OnceFunc(func() {
 	sql.Register(fakeSQLDriverName, new(fakeSQLDriver))
@@ -702,7 +951,7 @@ func (*fakeSQLTx) Rollback() error {
 // fakeSQLRows yields 1 row per result-set, across 3 result-sets, unless mode is one of the
 // fakeSQLMode* constants, in which case it fails instead of completing normally. This is used
 // to test the correct handling of multiple result-sets (which the MySQL driver supports, for
-// example), and of driver-level iteration errors, in [processResults].
+// example), and of driver-level iteration errors, in [Collector.processResults].
 type fakeSQLRows struct {
 	set  int
 	read bool
@@ -769,8 +1018,13 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 
 			synctest.Test(t, func(t *testing.T) {
 				base, err := config.NewBaseCollector(
-					map[string]any{"type": config.CollectorTypeSQL, "schedule": "@every 1s", "concurrency_limit": tt.limit},
-					tt.name, map[string]config.Sender{"": dest.Discard},
+					map[string]any{
+						"type":              config.CollectorTypeSQL,
+						"schedule":          "@every 1s",
+						"concurrency_limit": tt.limit,
+						"destination":       config.SenderTypeDiscard,
+					},
+					tt.name, map[string]config.Sender{config.SenderTypeDiscard: dest.Discard},
 				)
 				if err != nil {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
@@ -780,7 +1034,7 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 				unblock := make(chan struct{})
 				var count atomic.Int32
 
-				base.Send = func(_ context.Context, _ any) {
+				base.Send = func(context.Context, flow.Chunk) {
 					count.Add(1)
 					select {
 					case started <- struct{}{}:
@@ -834,17 +1088,17 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 	}
 }
 
-func TestCollectorCheckConcurrencyCanceled(t *testing.T) {
+func TestCollectorExecuteWithConcurrencyCanceled(t *testing.T) {
 	t.Parallel()
 
-	c := &Collector{}
+	c := &Collector{batch: newTestBatcher(t, dest.Discard.Send)}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	ch := make(chan struct{}, 1)
 	ch <- struct{}{}
 
-	c.checkConcurrency(ctx, t.Context(), ch, time.Now())
+	c.executeWithConcurrencyLimit(ctx, t.Context(), ch, time.Now())
 
 	if len(ch) != 1 {
 		t.Errorf("len(ch) = %d, want 1", len(ch))
