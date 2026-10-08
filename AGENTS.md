@@ -2,9 +2,7 @@
 
 ## Overview
 
-Versipellis (`versi`) transfers and transforms data between geographies, services, protocols, and formats.
-
-It acts as an adapter and conduit for data pipelines, sources, and sinks; it is not a data processing pipeline itself.
+Versipellis (`versi`) transfers and transforms data across services, networks, protocols and formats, without altering the data itself.
 
 Design priorities: ease of use, efficiency at scale, security, low footprint, and maintainability.
 
