@@ -501,7 +501,7 @@ func TestConcurrencyLimit(t *testing.T) {
 	}
 }
 
-func TestNewBatchLimits(t *testing.T) {
+func TestBatchLimits(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {

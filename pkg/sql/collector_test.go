@@ -815,8 +815,8 @@ const (
 	fakeSQLDriverName = "versipellis-fake-sql-driver"
 )
 
-// newTestBatcher returns a row batcher for unit tests, with batching disabled: each call
-// to [flow.Batcher.Add] sends its rows to the given function immediately and synchronously.
+// newTestBatcher returns a row batcher for unit tests, with batching disabled: each call to
+// [flow.Batcher.AddItem] sends its row to the given function immediately and synchronously.
 func newTestBatcher(tb testing.TB, send config.SendFunc) *flow.Batcher[map[string]any] {
 	tb.Helper()
 

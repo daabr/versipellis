@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-// Reminder: refactor (in a separate PR!) This file into a new package with a proper struct per format and code reuse.
+// Reminder: refactor (in a separate PR) this file into a new package with a proper struct per format and code reuse.
 
 // Format defines how a batch of [Structured] data should be encoded as a single payload.
 type Format string
@@ -25,10 +25,9 @@ const (
 )
 
 var (
-	jsonOpts = json.JoinOptions(json.Deterministic(true), json.OmitZeroStructFields(true))
+	jsonOpts = json.JoinOptions(json.Deterministic(true))
 
-	printableJSONOpts = json.JoinOptions(
-		json.Deterministic(true), json.OmitZeroStructFields(true),
+	printableJSONOpts = json.JoinOptions(json.Deterministic(true),
 		json.WithMarshalers(json.MarshalToFunc(marshalPrintableBytesToString)),
 	)
 )

@@ -31,7 +31,7 @@ func TestFormatContentType(t *testing.T) {
 	}
 }
 
-// zeroFields contains struct fields that should be omitted when they have zero values.
+// zeroFields contains struct fields that must be kept even when they have zero values.
 type zeroFields struct {
 	A int
 	B string
@@ -148,10 +148,10 @@ func TestFormatEncode(t *testing.T) {
 			want:   `{"html":"<a href='x'>&</a>"}` + "\n",
 		},
 		{
-			name:   "zero_struct_fields_are_omitted",
+			name:   "zero_struct_fields_are_kept",
 			format: flow.FormatNDJSON,
 			data:   flow.Structured{{"s": zeroFields{A: 1}}},
-			want:   `{"s":{"A":1}}` + "\n",
+			want:   `{"s":{"A":1,"B":""}}` + "\n",
 		},
 		{
 			name:    "unsupported_format",

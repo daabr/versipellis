@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"math/big"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -77,17 +78,18 @@ func (d *DeadLetterQueue) Send(ctx context.Context, data flow.Chunk) {
 		return
 	}
 
-	for _, file := range encode(data) {
-		if len(file) > 0 {
-			d.inProgress.Go(func() {
-				for range attempts {
-					if d.asyncWriteFile(file, now, dirPermissions, filePermissions) {
-						return
-					}
+	d.inProgress.Go(func() {
+		for _, file := range encode(data) {
+			if len(file) == 0 {
+				continue
+			}
+			for range attempts {
+				if d.asyncWriteFile(file, now, dirPermissions, filePermissions) {
+					break
 				}
-			})
+			}
 		}
-	}
+	})
 }
 
 // Close waits (up to 1 second) for disk writes which are currently in progress to complete,
@@ -125,9 +127,8 @@ func encode(data flow.Chunk) [][]byte {
 	var files [][]byte
 	switch chunk := data.(type) {
 	case flow.Blobs:
-		for _, b := range chunk {
-			files = append(files, b)
-		}
+		return chunk
+
 	case flow.Structured:
 		file, err := flow.FormatJSON.Encode(chunk)
 		if err != nil {
@@ -138,32 +139,14 @@ func encode(data flow.Chunk) [][]byte {
 
 	case flow.HTTPRequests:
 		for _, req := range chunk {
-			if req == nil {
-				continue
-			}
-			buf := new(bytes.Buffer)
-			if err := req.Write(buf); err != nil {
-				slog.Error("failed to write HTTP request into DLQ file", slog.Any("error", err))
-				continue
-			}
-			files = append(files, buf.Bytes())
-			if req.Body != nil {
-				_ = req.Body.Close()
+			if file := encodeHTTPRequest(req); file != nil {
+				files = append(files, file)
 			}
 		}
 	case flow.HTTPResponses:
 		for _, resp := range chunk {
-			if resp == nil {
-				continue
-			}
-			buf := new(bytes.Buffer)
-			if err := resp.Write(buf); err != nil {
-				slog.Error("failed to write HTTP response into DLQ file", slog.Any("error", err))
-				continue
-			}
-			files = append(files, buf.Bytes())
-			if resp.Body != nil {
-				_ = resp.Body.Close()
+			if file := encodeHTTPResponse(resp); file != nil {
+				files = append(files, file)
 			}
 		}
 	default:
@@ -171,6 +154,38 @@ func encode(data flow.Chunk) [][]byte {
 	}
 
 	return files
+}
+
+func encodeHTTPRequest(req *http.Request) []byte {
+	if req == nil {
+		return nil
+	}
+	if req.Body != nil {
+		defer req.Body.Close()
+	}
+
+	buf := new(bytes.Buffer)
+	if err := req.Write(buf); err != nil {
+		slog.Error("failed to write HTTP request into DLQ file", slog.Any("error", err))
+		return nil
+	}
+	return buf.Bytes()
+}
+
+func encodeHTTPResponse(resp *http.Response) []byte {
+	if resp == nil {
+		return nil
+	}
+	if resp.Body != nil {
+		defer resp.Body.Close()
+	}
+
+	buf := new(bytes.Buffer)
+	if err := resp.Write(buf); err != nil {
+		slog.Error("failed to write HTTP response into DLQ file", slog.Any("error", err))
+		return nil
+	}
+	return buf.Bytes()
 }
 
 func (d *DeadLetterQueue) asyncWriteFile(data []byte, now time.Time, dirPerms, filePerms os.FileMode) bool {

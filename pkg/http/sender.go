@@ -153,7 +153,7 @@ func (s *Sender) Send(ctx context.Context, data flow.Chunk) {
 	ctx = context.WithoutCancel(ctx)
 	switch chunk := data.(type) {
 	case flow.Structured:
-		s.batch.Add(ctx, chunk...) // May dispatch a full batch synchronously, still under the read lock.
+		s.batch.AddChunk(ctx, chunk) // May dispatch a full batch synchronously, still under the read lock.
 
 	case flow.Blobs:
 		for _, blob := range chunk {
@@ -272,6 +272,9 @@ func (s *Sender) sendHTTPRequest(ctx context.Context, req *http.Request) {
 		return
 	}
 	if req.GetBody != nil { // Optimization to avoid duplicate memory allocations for the request body.
+		if req.Body != nil {
+			_ = req.Body.Close()
+		}
 		s.inProgress.Go(func() {
 			s.sendWithRetries(ctx, outURL, outHdr, req.GetBody, req.ContentLength)
 		})
@@ -296,13 +299,16 @@ func (s *Sender) sendHTTPResponse(ctx context.Context, resp *http.Response) {
 		slog.Error("cannot send empty HTTP response", slog.String("name", s.Name))
 		return
 	}
+	if resp.Body == nil {
+		// Received responses without content have no value, so we don't relay them,
+		// in contrast to received requests without a body which may still carry meaning.
+		// Regardless, it's not an error that needs to be reported, unlike a nil object.
+		return
+	}
 
 	outHdr := s.headers.Clone()
 	copyHeaders(resp.Header, outHdr, false)
 
-	if resp.Body == nil {
-		return // Nothing to do, but not an error that needs to be reported.
-	}
 	if b, ok := resp.Body.(bodyProvider); ok {
 		// Memory optimization, due to the same reason as in [Sender.sendHTTPRequest],
 		// working around the fact that [http.Response] doesn't have a GetBody() method.

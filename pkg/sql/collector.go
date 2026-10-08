@@ -386,31 +386,33 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	return ok
 }
 
-// ProcessResults batches and dispatches partial results even when an error interrupts processing,
+// processResults batches and dispatches partial results even when an error interrupts processing,
 // to prevent data loss. It supports multiple result-sets for multiple statements. The provided context
 // is tied to the query's lifecycle (because we read its results), not the collector's entire execution.
 // Either way it has a limited grace period to complete before being forcefully canceled.
 func (c *Collector) processResults(ctx context.Context, rows *sql.Rows) (int, error) {
-	scanned := 0
+	totalScanned := 0
 	for resultSet := 1; ctx.Err() == nil; resultSet++ {
 		cols, err := rows.Columns()
 		if err != nil {
-			return scanned, fmt.Errorf("failed to read SQL column names in result-set %d: %w", resultSet, err)
+			return totalScanned, fmt.Errorf("failed to read SQL column names in result-set %d: %w", resultSet, err)
 		}
 
+		rsScanned := 0
 		for rows.Next() {
 			if err := ctx.Err(); err != nil {
-				return scanned, fmt.Errorf("query result processing canceled: %w", err)
+				return totalScanned, fmt.Errorf("query result processing canceled: %w", err)
 			}
 			row, err := scanRow(rows, cols)
 			if err != nil {
-				return scanned, fmt.Errorf("failed to scan row %d in result-set %d: %w", scanned+1, resultSet, err)
+				return totalScanned, fmt.Errorf("failed to scan row %d in result-set %d: %w", rsScanned+1, resultSet, err)
 			}
-			c.batch.Add(ctx, row) // Async I/O, but it doesn't matter which ctx we use (detached by batcher anyway).
-			scanned++
+			c.batch.AddItem(ctx, row) // Async I/O, but it doesn't matter which ctx we use (detached by batcher anyway).
+			totalScanned++
+			rsScanned++
 		}
 		if err := rows.Err(); err != nil {
-			return scanned, fmt.Errorf("row iteration error: %w", err)
+			return totalScanned, fmt.Errorf("row iteration error: %w", err)
 		}
 
 		if !rows.NextResultSet() {
@@ -419,13 +421,13 @@ func (c *Collector) processResults(ctx context.Context, rows *sql.Rows) (int, er
 	}
 
 	if err := ctx.Err(); err != nil {
-		return scanned, fmt.Errorf("query result processing canceled: %w", err)
+		return totalScanned, fmt.Errorf("query result processing canceled: %w", err)
 	}
 	if err := rows.Err(); err != nil {
-		return scanned, fmt.Errorf("row-set iteration error: %w", err)
+		return totalScanned, fmt.Errorf("row-set iteration error: %w", err)
 	}
 
-	return scanned, nil
+	return totalScanned, nil
 }
 
 func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {

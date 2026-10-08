@@ -109,7 +109,7 @@ func TestBatcherAdd(t *testing.T) {
 	tests := []struct {
 		name   string
 		limits Limits
-		adds   [][]string // Each element is a single Add call, e.g., a single item or a chunk of items.
+		adds   [][]string // Each element is a single [Batcher.AddItem] or [Batcher.AddChunk] call.
 		want   [][]string // Dispatched batches, including a final flush.
 	}{
 		{
@@ -169,7 +169,11 @@ func TestBatcherAdd(t *testing.T) {
 			}
 
 			for _, items := range tt.adds {
-				b.Add(t.Context(), blobs(items...)...)
+				if len(items) == 1 {
+					b.AddItem(t.Context(), []byte(items[0]))
+				} else {
+					b.AddChunk(t.Context(), blobs(items...))
+				}
 			}
 			b.Flush(t.Context())
 
@@ -224,7 +228,7 @@ func TestBatcherWindow(t *testing.T) {
 				}
 
 				for range tt.items {
-					b.Add(t.Context(), []byte("x"))
+					b.AddItem(t.Context(), []byte("x"))
 					time.Sleep(tt.delay)
 				}
 				synctest.Sleep(2 * time.Second)
@@ -241,6 +245,42 @@ func TestBatcherWindow(t *testing.T) {
 	}
 }
 
+// TestBatcherChunkWindow ensures that chunks don't extend the window of a pending batch, and that full batches
+// within a chunk are dispatched immediately, while only the remaining partial batch waits for the window.
+func TestBatcherChunkWindow(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		r := new(recorder)
+		b, err := NewBatcher(Limits{MaxItems: 4, Window: time.Second}, r.dispatch, nil)
+		if err != nil {
+			t.Fatalf("NewBatcher() error = %v", err)
+		}
+
+		b.AddItem(t.Context(), []byte("a"))
+		time.Sleep(600 * time.Millisecond)
+		b.AddChunk(t.Context(), blobs("b", "c", "d", "e", "f")) // Fills the pending batch, and starts a new one.
+
+		want := [][]string{{"a", "b", "c", "d"}}
+		if got := r.get(); !reflect.DeepEqual(got, want) {
+			t.Errorf("dispatched batches after AddChunk() = %q, want %q", got, want)
+		}
+
+		synctest.Sleep(600 * time.Millisecond) // 1.2s after the first item, 0.6s after the new batch started.
+		if got := r.get(); !reflect.DeepEqual(got, want) {
+			t.Errorf("dispatched batches before the new batch's window = %q, want %q", got, want)
+		}
+
+		b.AddChunk(t.Context(), blobs("g"))    // Doesn't fill the pending batch, so it must not restart its timer.
+		synctest.Sleep(500 * time.Millisecond) // 1.1s after the new batch started, but only 0.5s after "g".
+
+		want = append(want, []string{"e", "f", "g"})
+		if got := r.get(); !reflect.DeepEqual(got, want) {
+			t.Errorf("dispatched batches after the new batch's window = %q, want %q", got, want)
+		}
+	})
+}
+
 // TestBatcherDetachedContext ensures that all the dispatch paths detach the context from the caller's cancellation,
 // e.g., when a SQL query's context is canceled after a timeout, rows that were already scanned must still be sent.
 func TestBatcherDetachedContext(t *testing.T) {
@@ -249,11 +289,16 @@ func TestBatcherDetachedContext(t *testing.T) {
 	tests := []struct {
 		name   string
 		limits Limits
+		chunk  bool // Call AddChunk instead of AddItem.
 		flush  bool // Call Flush after Add.
 		wait   bool // Wait for the window timer after Add.
 	}{
 		{
 			name: "batching_disabled",
+		},
+		{
+			name:  "batching_disabled_chunk",
+			chunk: true,
 		},
 		{
 			name:   "full_batch",
@@ -289,7 +334,11 @@ func TestBatcherDetachedContext(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel() // E.g., a canceled request or query context.
 
-				b.Add(ctx, []byte("x"))
+				if tt.chunk {
+					b.AddChunk(ctx, blobs("x"))
+				} else {
+					b.AddItem(ctx, []byte("x"))
+				}
 				if tt.flush {
 					b.Flush(ctx)
 				}
@@ -323,7 +372,7 @@ func TestBatcherFlush(t *testing.T) {
 			t.Errorf("dispatched batches after empty Batcher.Flush() = %q, want nil", got)
 		}
 
-		b.Add(t.Context(), blobs("a", "b")...)
+		b.AddChunk(t.Context(), blobs("a", "b"))
 		b.Flush(t.Context())
 		want := [][]string{{"a", "b"}}
 		if got := r.get(); !reflect.DeepEqual(got, want) {
@@ -377,7 +426,7 @@ func TestBatcherReentrantDispatch(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				b.Add(t.Context(), blobs("a", "b")...)
+				b.AddChunk(t.Context(), blobs("a", "b"))
 				if tt.flush {
 					b.Flush(t.Context())
 				}
@@ -416,9 +465,9 @@ func TestBatcherConcurrency(t *testing.T) {
 		wg.Go(func() {
 			for i := range itemsPerProducer {
 				if i%2 == 0 {
-					b.Add(t.Context(), []byte("x"))
+					b.AddItem(t.Context(), []byte("x"))
 				} else {
-					b.Add(t.Context(), blobs("y", "z")...)
+					b.AddChunk(t.Context(), blobs("y", "z"))
 				}
 				b.Flush(t.Context())
 			}
@@ -448,8 +497,18 @@ func TestBatcherAllocsPerBatch(t *testing.T) { //nolint:paralleltest // [testing
 	// Without a delay limit, adding a single item never allocates, except when the buffer grows.
 	// The item is created only once, so that its own allocation doesn't count as the batcher's.
 	item := []byte("x")
-	if allocs := testing.AllocsPerRun(10_000, func() { b.Add(t.Context(), item) }); allocs > 0.1 {
-		t.Errorf("Batcher.Add() allocations per item = %.2f, want ~0", allocs)
+	if allocs := testing.AllocsPerRun(10_000, func() { b.AddItem(t.Context(), item) }); allocs > 0.1 {
+		t.Errorf("Batcher.AddItem() allocations per item = %.2f, want ~0", allocs)
+	}
+
+	// Without batching, a chunk is dispatched as-is: neither the chunk nor an uncancelable context is copied.
+	p, err := NewBatcher(Limits{}, func(context.Context, [][]byte) {}, nil)
+	if err != nil {
+		t.Fatalf("NewBatcher() error = %v", err)
+	}
+	chunk := blobs("a", "b")
+	if allocs := testing.AllocsPerRun(10_000, func() { p.AddChunk(context.Background(), chunk) }); allocs > 0 {
+		t.Errorf("Batcher.AddChunk() passthrough allocations per chunk = %.2f, want 0", allocs)
 	}
 }
 
@@ -490,7 +549,7 @@ func TestBatcherGuard(t *testing.T) {
 					t.Fatalf("NewBatcher() error = %v", err)
 				}
 
-				b.Add(t.Context(), blobs("a", "b")...)
+				b.AddChunk(t.Context(), blobs("a", "b"))
 				synctest.Sleep(2 * time.Second)
 
 				var gotBatch []string
@@ -549,7 +608,7 @@ func TestBatcherGuardShutdown(t *testing.T) {
 		}
 
 		closeMu.RLock()
-		b.Add(t.Context(), blobs("a", "b", "c")...)
+		b.AddChunk(t.Context(), blobs("a", "b", "c"))
 		closeMu.RUnlock()
 
 		closeMu.Lock()

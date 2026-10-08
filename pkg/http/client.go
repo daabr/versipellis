@@ -42,7 +42,7 @@ type (
 		GetBody() (io.ReadCloser, error)
 	}
 
-	// Used when sending collected responses. See [Collector.processResponse] and [encode].
+	// Used when sending collected responses. See [Collector.processResponse] and [Sender.sendHTTPResponse].
 	// This is a memory optimization, to avoid duplicate allocations for response bodies during retries,
 	// working around the fact that [http.Response] doesn't have a GetBody() method, unlike [http.Request].
 	reusableBody struct {

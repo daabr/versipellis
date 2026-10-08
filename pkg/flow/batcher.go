@@ -3,7 +3,6 @@ package flow
 import (
 	"context"
 	"errors"
-	"slices"
 	"sync"
 	"time"
 )
@@ -67,73 +66,114 @@ func NewBatcher[T Kind](limits Limits, dispatch func(context.Context, []T), opts
 	return &Batcher[T]{limits: limits, dispatch: dispatch, sizeOf: opts.SizeOf, guard: opts.Guard}, nil
 }
 
-// Add appends discrete data items to a new/pending batch, and dispatches it as soon as it's ready. If
-// batching is disabled, it acts as a trivial passthrough. A single item that exceeds [Limits.MaxBytes]
-// on its own is dispatched alone, never dropped. The batcher takes ownership of the items, so the
-// caller must not modify them after this call, but it doesn't retain the variadic slice itself.
+// AddItem appends a single data item to a new or pending batch, and dispatches the batch if it's ready.
+// If batching is disabled, it acts as a trivial passthrough. If an item's size exceeds [Limits.MaxBytes]
+// it is dispatched immediately on its own, never dropped. The batcher takes ownership of the item, so the
+// caller must not modify it after this call.
 //
 // Concurrency & lifecycle: batches are dispatched in the caller's goroutine, but outside the batcher's
 // critical-path lock, so a slow or reentrant dispatch function doesn't block or deadlock other callers,
 // and the dispatch function operates with a context that is detached from the caller's cancellation.
-func (b *Batcher[T]) Add(ctx context.Context, items ...T) {
+func (b *Batcher[T]) AddItem(ctx context.Context, item T) {
+	if b.passthrough() {
+		b.dispatch(detach(ctx), []T{item})
+		return
+	}
+
+	b.mu.Lock()
+	ready := b.appendToBatch(item, nil)
+	b.startTimer(ctx)
+	b.mu.Unlock()
+
+	b.dispatchBatches(ctx, ready)
+}
+
+// AddChunk is like [Batcher.AddItem] for multiple items, but it also takes ownership of the slice itself, so
+// it doesn't copy it when batching is disabled. Callers must not modify or reuse the slice after this call.
+func (b *Batcher[T]) AddChunk(ctx context.Context, items []T) {
 	if len(items) == 0 {
 		return
 	}
 
-	if b.limits.MaxItems <= 0 && b.limits.MaxBytes <= 0 { // Batching is disabled.
-		// Shallow-copying the slice (i.e. not the items) keeps it from escaping to the heap, so callers
-		// don't pay for an allocation per call when batching is enabled, which is the common case.
-		b.dispatch(context.WithoutCancel(ctx), slices.Clone(items))
+	if b.passthrough() {
+		b.dispatch(detach(ctx), items)
 		return
 	}
 
-	var readyToDispatch [][]T
-
+	var ready [][]T
 	b.mu.Lock()
 	for _, item := range items {
-		size := 0
-		if b.limits.MaxBytes > 0 {
-			size = b.sizeOf(item)
-			if len(b.buf) > 0 && b.bytes+size > b.limits.MaxBytes {
-				// Batch by byte size.
-				readyToDispatch = append(readyToDispatch, b.nextBatch())
-			}
-		}
-
-		b.buf = append(b.buf, item)
-		b.bytes += size
-
-		switch {
-		case b.limits.MaxItems > 0 && len(b.buf) >= b.limits.MaxItems,
-			b.limits.MaxBytes > 0 && b.bytes >= b.limits.MaxBytes:
-			// Batch by either item count or byte size, whichever limit is reached first.
-			// We repeat the byte size check from above to enable splicing single oversized items
-			// for immediate dispatch before creating a short-lived timer for 1-item batches.
-			readyToDispatch = append(readyToDispatch, b.nextBatch())
-		case len(b.buf) == 1 && b.limits.Window > 0:
-			// Start a new timer, measured from the first item in each new batch.
-			currentGen := b.gen
-			b.timer = time.AfterFunc(b.limits.Window, func() {
-				b.timedFlush(context.WithoutCancel(ctx), currentGen)
-			})
-		}
+		ready = b.appendToBatch(item, ready)
 	}
+	b.startTimer(ctx) // Once per call, not each new batch (full batches within the chunk don't need a timer).
 	b.mu.Unlock()
 
-	if len(readyToDispatch) > 0 {
-		// Detach only when dispatching, to avoid an allocation per call. A new variable (instead
-		// of reassigning ctx, which the timer closure above captures) also keeps ctx off the heap.
-		detached := context.WithoutCancel(ctx)
-		for _, batch := range readyToDispatch {
-			b.dispatch(detached, batch)
+	b.dispatchBatches(ctx, ready)
+}
+
+func (b *Batcher[T]) passthrough() bool {
+	return b.limits.MaxItems <= 0 && b.limits.MaxBytes <= 0
+}
+
+func detach(ctx context.Context) context.Context {
+	if ctx.Done() == nil {
+		return ctx
+	}
+	return context.WithoutCancel(ctx)
+}
+
+// appendToBatch must be called while the caller is holding [Batcher.mu].
+func (b *Batcher[T]) appendToBatch(item T, ready [][]T) [][]T {
+	size := 0
+	if b.limits.MaxBytes > 0 {
+		size = b.sizeOf(item)
+		if len(b.buf) > 0 && b.bytes+size > b.limits.MaxBytes {
+			// Batch by byte size.
+			ready = append(ready, b.nextBatch())
 		}
+	}
+
+	b.buf = append(b.buf, item)
+	b.bytes += size
+
+	if b.limits.MaxItems > 0 && len(b.buf) >= b.limits.MaxItems || b.limits.MaxBytes > 0 && b.bytes >= b.limits.MaxBytes {
+		// Batch by either item count or byte size, whichever limit is reached first. We repeat
+		// the byte size check from above to dispatch a single oversized item immediately.
+		ready = append(ready, b.nextBatch())
+	}
+
+	return ready
+}
+
+// startTimer starts a timer for a new pending batch, measured from its first item - if there is such a batch which
+// doesn't have a timer yet. It must be called after [Batcher.appendToBatch], while the caller is holding [Batcher.mu].
+func (b *Batcher[T]) startTimer(ctx context.Context) {
+	if b.limits.Window <= 0 || len(b.buf) == 0 || b.timer != nil {
+		return
+	}
+
+	currentGen := b.gen
+	b.timer = time.AfterFunc(b.limits.Window, func() {
+		b.timedFlush(detach(ctx), currentGen)
+	})
+}
+
+// dispatchBatches must be called after [Batcher.mu] has been released by the caller.
+func (b *Batcher[T]) dispatchBatches(ctx context.Context, ready [][]T) {
+	if len(ready) == 0 {
+		return
+	}
+
+	detached := detach(ctx)
+	for _, batch := range ready {
+		b.dispatch(detached, batch)
 	}
 }
 
 // Flush dispatches all pending data immediately, if there is any. Collectors should call it after each retrieval
 // operation (e.g., SQL query) because there's no point in waiting for more items at that point. Senders should call
 // it within their Close method (i.e. while already in lame-duck mode, but before waiting for work that is in progress)
-// to avoid data loss. Like [Batcher.Add], the dispatch function operates with a context that is detached from the
+// to avoid data loss. Like the Add* methods, the dispatch function operates with a context that is detached from the
 // caller's lifecycle, so owners must abort dispatched work by their own means (e.g., after a shutdown timeout).
 func (b *Batcher[T]) Flush(ctx context.Context) {
 	b.mu.Lock()
@@ -141,7 +181,7 @@ func (b *Batcher[T]) Flush(ctx context.Context) {
 	b.mu.Unlock()
 
 	if len(batch) > 0 {
-		b.dispatch(context.WithoutCancel(ctx), batch)
+		b.dispatch(detach(ctx), batch)
 	}
 }
 

@@ -112,7 +112,7 @@ func (c *Collector) processPostgresResults(ctx context.Context, rows pgx.Rows) (
 		for i, col := range cols {
 			row[col.Name] = vals[i]
 		}
-		c.batch.Add(ctx, row) // Async I/O, but it doesn't matter which ctx we use (detached by batcher anyway).
+		c.batch.AddItem(ctx, row) // Async I/O, but it doesn't matter which ctx we use (detached by batcher anyway).
 		scanned++
 		return nil
 	})
