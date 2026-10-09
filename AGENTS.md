@@ -172,7 +172,7 @@ Testing:
   - Exceptions: `discard` and `stdout` address simpler use-cases.
 - **Collectors with a batcher** use the same `guard` pattern: a timed dispatch may have already taken a batch from the buffer when `Close()` calls `Batcher.Flush()`, so `Close()` sets `closing` under `closingMu.Lock()` before flushing, to ensure the dispatch reaches the sender before `Done()` signals `main()` to close senders.
 - **Graceful rejection**: payloads rejected while shutting down are routed to `dest.Discard` to safely release their resources (closes HTTP request and response bodies).
-- `Close()` methods of all entities are idempotent (`sync.Once`), safe to call on components that were never started, and wait at most the component's configured `timeout`, with a non-configurable upper bound (`CloseTimeout` + `abortTimeout`).
+- `Close()` methods are idempotent and safe before startup. HTTP/SQL collectors wait at most `CloseTimeout + abortTimeout`; HTTP senders and receivers wait at most `CloseTimeout` (or an earlier context deadline). Local destination senders return immediately or use a fixed one-second timeout.
 
 ### Data Flow
 
