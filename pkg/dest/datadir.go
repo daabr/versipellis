@@ -114,7 +114,7 @@ func (d *DeadLetterQueue) Close(ctx context.Context) {
 		case <-done:
 			// All done.
 		case <-shutdownCtx.Done():
-			slog.Error("closing Dead-Letter-Queue writer forcefully")
+			slog.Warn("closing Dead-Letter-Queue writer forcefully", slog.Any("error", shutdownCtx.Err()))
 			// Not *really* stopping disk writes, but the next step in
 			// main() is process termination, which does achieve this.
 			return

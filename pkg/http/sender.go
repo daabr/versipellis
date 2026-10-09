@@ -265,7 +265,7 @@ func (s *Sender) sendWithConcurrencyLimit(fn func()) {
 }
 
 func (s *Sender) sendBlob(ctx context.Context, body []byte) {
-	if len(body) == 0 {
+	if len(body) == 0 { // Upstream invariant violation: shouldn't have been sent at all.
 		slog.Error("cannot send HTTP request with no payload",
 			slog.String("name", s.Name), slog.String("format", "raw_bytes"),
 		)
@@ -307,7 +307,7 @@ func (s *Sender) sendStructured(ctx context.Context, data []map[string]any) {
 }
 
 func (s *Sender) sendHTTPRequest(ctx context.Context, req *http.Request) {
-	if req == nil {
+	if req == nil { // Upstream invariant violation: shouldn't have been sent at all.
 		slog.Error("cannot send empty HTTP request", slog.String("name", s.Name))
 		return
 	}
@@ -348,7 +348,7 @@ func (s *Sender) sendHTTPRequest(ctx context.Context, req *http.Request) {
 }
 
 func (s *Sender) sendHTTPResponse(ctx context.Context, resp *http.Response) {
-	if resp == nil {
+	if resp == nil { // Upstream invariant violation: shouldn't have been sent at all.
 		slog.Error("cannot send empty HTTP response", slog.String("name", s.Name))
 		return
 	}
