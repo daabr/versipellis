@@ -117,7 +117,7 @@ func (s *stdoutSender) Close(ctx context.Context) {
 		select {
 		case <-done:
 			// All done.
-		case <-shutdownCtx.Done(): // Shouldn't happen.
+		case <-shutdownCtx.Done():
 			slog.Error("closing stdout sender forcefully", slog.Any("error", shutdownCtx.Err()))
 		}
 	})
