@@ -244,6 +244,47 @@ func TestDeadLetterQueue(t *testing.T) {
 			wantFiles:   1,
 			wantContent: "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nbody",
 		},
+		{
+			name:    "http_request_with_credentials",
+			wantExt: ".http_req",
+			data: flow.HTTPRequests([]*http.Request{
+				func() *http.Request {
+					// URL userinfo is never written by [http.Request.Write], so it's not redacted explicitly.
+					u := "http://user:pass@example.com/p?a=1&api_key=k&sig=s&b=%20" //gosec:disable G101 // Unit test.
+					req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, u, strings.NewReader("token=body"))
+					req.Header.Set("Authorization", "Bearer abc.def")
+					req.Header.Set("Cookie", "a=1; b=2")
+					req.Header.Set("X-Api-Key", "k")
+					req.Header.Set("X-Custom", "keep")
+					return req
+				}(),
+			}),
+			wantFiles: 1,
+			wantContent: "POST /p?a=1&api_key=REDACTED&sig=REDACTED&b=%20 HTTP/1.1\r\nHost: example.com\r\n" +
+				"User-Agent: Go-http-client/1.1\r\nContent-Length: 10\r\nAuthorization: Bearer REDACTED\r\n" +
+				"Cookie: a=REDACTED; b=REDACTED\r\nX-Api-Key: REDACTED\r\nX-Custom: keep\r\n\r\ntoken=body",
+		},
+		{
+			name:    "http_response_with_credentials",
+			wantExt: ".http_resp",
+			data: flow.HTTPResponses([]*http.Response{
+				{
+					Status:     "200 OK",
+					StatusCode: http.StatusOK,
+					Proto:      "HTTP/1.1",
+					ProtoMajor: 1,
+					ProtoMinor: 1,
+					Header: http.Header{
+						"Content-Type": {"text/plain"},
+						"Set-Cookie":   {"sid=1; Path=/; HttpOnly", "theme=dark"},
+					},
+					Body: io.NopCloser(strings.NewReader("body")),
+				},
+			}),
+			wantFiles: 1,
+			wantContent: "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain\r\n" +
+				"Set-Cookie: sid=REDACTED; Path=/; HttpOnly\r\nSet-Cookie: theme=REDACTED\r\n\r\nbody",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

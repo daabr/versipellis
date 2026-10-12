@@ -207,6 +207,12 @@ func encodeHTTPRequest(req *http.Request) []byte {
 		defer req.Body.Close()
 	}
 
+	redactHeaders(req.Header)
+	redactHeaders(req.Trailer)
+	if req.URL != nil {
+		req.URL.RawQuery = redactQuery(req.URL.RawQuery)
+	}
+
 	buf := new(bytes.Buffer)
 	if err := req.Write(buf); err != nil {
 		slog.Error("failed to write HTTP request into DLQ file", slog.Any("error", err))
@@ -222,6 +228,9 @@ func encodeHTTPResponse(resp *http.Response) []byte {
 	if resp.Body != nil {
 		defer resp.Body.Close()
 	}
+
+	redactHeaders(resp.Header)
+	redactHeaders(resp.Trailer)
 
 	buf := new(bytes.Buffer)
 	if err := resp.Write(buf); err != nil {
