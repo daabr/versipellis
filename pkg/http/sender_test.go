@@ -2,10 +2,13 @@ package http
 
 import (
 	"bytes"
+	"cmp"
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"slices"
@@ -17,7 +20,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/daabr/versipellis/pkg/codec"
 	"github.com/daabr/versipellis/pkg/config"
+	"github.com/daabr/versipellis/pkg/dest"
 	"github.com/daabr/versipellis/pkg/flow"
 )
 
@@ -115,6 +120,18 @@ func TestNewSender(t *testing.T) {
 			wantErr:  true,
 		},
 		{
+			name:     "invalid_format",
+			cfg:      map[string]any{"url": "https://example.com", "format": "invalid"},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
+		},
+		{
+			name:     "unsupported_raw_format",
+			cfg:      map[string]any{"url": "https://example.com", "format": string(codec.FormatRaw)},
+			baseType: config.SenderTypeHTTP,
+			wantErr:  true,
+		},
+		{
 			name:     "valid_minimal_config",
 			cfg:      map[string]any{"url": "https://example.com/path"},
 			baseType: config.SenderTypeHTTP,
@@ -148,9 +165,35 @@ func TestNewSender(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, gotErr := NewSender(tt.cfg, tt.name, tt.baseType)
+			_, gotErr := NewSender(tt.cfg, tt.name, tt.baseType, nil)
 			if (gotErr != nil) != tt.wantErr {
 				t.Errorf("NewSender() error = %v, wantErr %v", gotErr, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNewSenderFallback(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		dlq          config.Sender
+		wantFallback bool
+	}{
+		{"without_dlq", nil, false},
+		{"with_dlq", dest.Discard, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			s, err := NewSender(map[string]any{"url": "https://example.com"}, tt.name, config.SenderTypeHTTP, tt.dlq)
+			if err != nil {
+				t.Fatalf("NewSender() error: %v", err)
+			}
+			if got := s.fallback == nil; got == tt.wantFallback {
+				t.Errorf("NewSender().fallback nil = %v, want %v", got, tt.wantFallback)
 			}
 		})
 	}
@@ -208,7 +251,7 @@ func TestNewSenderConcurrencyLimit(t *testing.T) {
 			if tt.limit != nil {
 				cfg["concurrency_limit"] = tt.limit
 			}
-			s, err := NewSender(cfg, tt.name, config.SenderTypeHTTP)
+			s, err := NewSender(cfg, tt.name, config.SenderTypeHTTP, nil)
 			if err != nil {
 				t.Fatalf("NewSender() error: %v", err)
 			}
@@ -222,9 +265,7 @@ func TestNewSenderConcurrencyLimit(t *testing.T) {
 func TestNewSenderHTTP3(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewSender(
-		map[string]any{"url": "https://example.com"}, "TestNewSenderHTTP3", config.SenderTypeHTTP3,
-	)
+	_, err := NewSender(map[string]any{"url": "https://example.com"}, "TestNewSenderHTTP3", config.SenderTypeHTTP3, nil)
 	if err != nil {
 		t.Fatalf("NewSender() error = %v, wantErr %v", err, false)
 	}
@@ -242,7 +283,7 @@ type sentRequest struct {
 func newRecordingSender(t *testing.T, cfg map[string]any) (*Sender, func() []sentRequest) {
 	t.Helper()
 
-	s, err := NewSender(cfg, t.Name(), config.SenderTypeHTTP)
+	s, err := NewSender(cfg, t.Name(), config.SenderTypeHTTP, nil)
 	if err != nil {
 		t.Fatalf("NewSender() error = %v", err)
 	}
@@ -284,7 +325,7 @@ func TestSenderSend(t *testing.T) {
 	t.Parallel()
 
 	textType := http.Header{contentTypeHeader: {"text/plain; charset=utf-8"}}
-	ndjsonType := http.Header{contentTypeHeader: {flow.FormatNDJSON.ContentType()}}
+	ndjsonType := http.Header{contentTypeHeader: {codec.NDJSON.ContentType()}}
 
 	tests := []struct {
 		name    string
@@ -327,27 +368,27 @@ func TestSenderSend(t *testing.T) {
 		},
 		{
 			name:  "structured",
-			chunk: flow.Structured{{"key1": "value1"}, {"key2": int64(2)}},
+			chunk: flow.Rows{{Cols: []string{"key1"}, Vals: []any{"value1"}}, {Cols: []string{"key2"}, Vals: []any{int64(2)}}},
 			want: []sentRequest{
 				{body: `{"key1":"value1"}` + "\n" + `{"key2":2}` + "\n", header: ndjsonType, query: "p1=good"},
 			},
 		},
 		{
 			name:  "structured_with_unencoded_html",
-			chunk: flow.Structured{{"html": "& < >"}},
+			chunk: testRow("html", "& < >"),
 			want:  []sentRequest{{body: `{"html":"& < >"}` + "\n", header: ndjsonType, query: "p1=good"}},
 		},
 		{
 			name:    "structured_with_configured_content_type",
 			headers: map[string]any{contentTypeHeader: "application/json"},
-			chunk:   flow.Structured{{"key": "value"}},
+			chunk:   testRow("key", "value"),
 			want: []sentRequest{
 				{body: `{"key":"value"}` + "\n", header: http.Header{contentTypeHeader: {"application/json"}}, query: "p1=good"},
 			},
 		},
 		{
 			name:  "structured_encoding_error",
-			chunk: flow.Structured{{"key1": "value1"}, {"key2": make(chan struct{})}}, // Channels cannot be encoded.
+			chunk: testRow("key", "value1", make(chan struct{})), // Channels cannot be encoded.
 		},
 		{
 			name:  "nil_http_request",
@@ -423,7 +464,7 @@ func TestSenderSend(t *testing.T) {
 			}
 			s, sent := newRecordingSender(t, cfg)
 
-			s.Send(t.Context(), tt.chunk)
+			s.Send(t.Context(), tt.chunk, codec.FormatDefault)
 			s.Close(t.Context())
 
 			got := sent()
@@ -485,8 +526,8 @@ func TestSenderSendBatch(t *testing.T) {
 				}
 				s, sent := newRecordingSender(t, cfg)
 
-				s.Send(t.Context(), flow.Structured{{"n": int64(1)}, {"n": int64(2)}, {"n": int64(3)}})
-				s.Send(t.Context(), flow.Structured{{"n": int64(4)}})
+				s.Send(t.Context(), testRow("n", int64(1), int64(2), int64(3)), codec.FormatDefault)
+				s.Send(t.Context(), testRow("n", int64(4)), codec.FormatDefault)
 				if tt.window > 0 {
 					time.Sleep(2 * tt.window)
 					synctest.Wait()
@@ -508,6 +549,119 @@ func TestSenderSendBatch(t *testing.T) {
 	}
 }
 
+func TestSenderSendFormat(t *testing.T) {
+	t.Parallel()
+
+	jsonType := http.Header{contentTypeHeader: {codec.JSON.ContentType()}}
+	ndjsonType := http.Header{contentTypeHeader: {codec.NDJSON.ContentType()}}
+
+	type send struct {
+		format config.Format
+		chunk  flow.Chunk
+	}
+	tests := []struct {
+		name   string
+		format config.Format // Sender's configured format.
+		batch  bool
+		sends  []send
+		want   []sentRequest
+	}{
+		{
+			name:  "both_default",
+			sends: []send{{codec.FormatDefault, testJSON(`{"a":1}`, `{"b":2}`)}},
+			want:  []sentRequest{{body: `{"a":1}` + "\n" + `{"b":2}` + "\n", header: ndjsonType}},
+		},
+		{
+			name:  "source_format",
+			sends: []send{{codec.FormatJSON, testJSON(`{"a":1}`, `{"b":2}`)}},
+			want:  []sentRequest{{body: `[{"a":1},{"b":2}]`, header: jsonType}},
+		},
+		{
+			name:  "source_raw_format",
+			sends: []send{{codec.FormatRaw, testRow("a", int64(1))}},
+			want:  []sentRequest{{body: `{"a":1}` + "\n", header: ndjsonType}},
+		},
+		{
+			name:   "sender_format",
+			format: codec.FormatJSONArray,
+			sends:  []send{{codec.FormatDefault, testRow("a", int64(1))}},
+			want:   []sentRequest{{body: `[{"a":1}]`, header: jsonType}},
+		},
+		{
+			name:   "sender_format_overrides_source_format",
+			format: codec.FormatNDJSON,
+			sends:  []send{{codec.FormatJSON, testJSON(`{"a":1}`, `{"b":2}`)}},
+			want:   []sentRequest{{body: `{"a":1}` + "\n" + `{"b":2}` + "\n", header: ndjsonType}},
+		},
+		{
+			name:  "batch_per_source_format",
+			batch: true,
+			sends: []send{
+				{codec.FormatJSON, testRow("a", int64(1))},
+				{codec.FormatDefault, testRow("b", int64(2))},
+				{codec.FormatJSON, testRow("c", int64(3))},
+				{codec.FormatNDJSON, testRow("d", int64(4))},
+			},
+			want: []sentRequest{
+				{body: `[{"a":1},{"c":3}]`, header: jsonType},
+				{body: `{"b":2}` + "\n" + `{"d":4}` + "\n", header: ndjsonType},
+			},
+		},
+		{
+			name:  "batch_per_data_kind",
+			batch: true,
+			sends: []send{
+				{codec.FormatDefault, testJSON(`{"j":1}`)},
+				{codec.FormatDefault, testRow("r", int64(2))},
+				{codec.FormatDefault, testJSON("{\n  \"j\": 3\n}")},
+			},
+			want: []sentRequest{
+				{body: `{"j":1}` + "\n" + `{"j":3}` + "\n", header: ndjsonType},
+				{body: `{"r":2}` + "\n", header: ndjsonType},
+			},
+		},
+		{
+			name:   "batch_with_sender_format",
+			format: codec.FormatJSON,
+			batch:  true,
+			sends: []send{
+				{codec.FormatNDJSON, testRow("a", int64(1))},
+				{codec.FormatJSONArray, testRow("b", int64(2))},
+			},
+			want: []sentRequest{{body: `[{"a":1},{"b":2}]`, header: jsonType}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := map[string]any{"url": "http://example.com"}
+			if tt.format != "" {
+				cfg["format"] = string(tt.format) // TOML strings are untyped.
+			}
+			if tt.batch {
+				cfg["batch"] = map[string]any{"max_items": int64(10), "time_window": "1h"}
+			}
+			s, sent := newRecordingSender(t, cfg)
+
+			for _, send := range tt.sends {
+				s.Send(t.Context(), send.chunk, send.format)
+			}
+			s.Close(t.Context())
+
+			got := sent()
+			if len(got) != len(tt.want) {
+				t.Fatalf("sent requests = %+v, want %+v", got, tt.want)
+			}
+			for i := range got {
+				if !reflect.DeepEqual(got[i], tt.want[i]) {
+					t.Errorf("sent request %d = %+v, want %+v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestSenderSendDiscard(t *testing.T) {
 	t.Parallel()
 
@@ -516,15 +670,118 @@ func TestSenderSendDiscard(t *testing.T) {
 
 	// Rejected data must be discarded, and its resources released.
 	body := &closeTracker{Reader: strings.NewReader("test")}
-	s.Send(t.Context(), flow.HTTPRequests{{URL: &url.URL{}, Body: body}})
+	s.Send(t.Context(), flow.HTTPRequests{{URL: &url.URL{}, Body: body}}, codec.FormatDefault)
 	if !body.closed.Load() {
 		t.Error("rejected HTTP request body was not closed")
 	}
 
-	s.Send(t.Context(), flow.Structured{{"key": "value"}})
+	s.Send(t.Context(), testRow("key", "value"), codec.FormatDefault)
+	s.Send(t.Context(), testJSON(`{"key":"value"}`), codec.FormatDefault)
 
 	if got := sent(); len(got) > 0 {
 		t.Errorf("sent requests after Close = %+v, want none", got)
+	}
+}
+
+func TestSenderOutputFormat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		senderFormat config.Format // Empty for the default format.
+		data         flow.Chunk
+		upstream     config.Format
+		want         config.Format
+	}{
+		{"json_upstream_format", "", testJSON(`{"a":1}`), codec.FormatJSON, codec.FormatJSON},
+		{"json_default_format", "", testJSON(`{"a":1}`), codec.FormatDefault, codec.FormatNDJSON},
+		{"json_non_structured_format", "", testJSON(`{"a":1}`), codec.FormatRaw, codec.FormatNDJSON},
+		{"json_explicit_sender_format", codec.FormatJSONArray, testJSON(`{"a":1}`), codec.FormatJSON, codec.FormatJSONArray},
+		{"rows_explicit_sender_format", codec.FormatJSON, testRow("a", 1), codec.FormatNDJSON, codec.FormatJSON},
+		{"blob_default_format", "", flow.Blobs{[]byte("x")}, codec.FormatDefault, codec.FormatRaw},
+		{"blob_upstream_format", codec.FormatNDJSON, flow.Blobs{[]byte("x")}, codec.FormatJSON, codec.FormatJSON},
+		{"http_request", codec.FormatJSON, flow.HTTPRequests{{}}, codec.FormatDefault, codec.FormatDefault},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := &Sender{format: cmp.Or(tt.senderFormat, codec.FormatDefault)}
+			if got := s.outputFormat(tt.data, tt.upstream); got != tt.want {
+				t.Errorf("outputFormat(%T, %q) = %q, want %q", tt.data, tt.upstream, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSenderSendFallback(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		senderFormat string // Empty for the default format.
+		want         []string
+	}{
+		{
+			name: "default_sender_format", // Structured data uses the upstream format, or NDJSON for the default.
+			want: []string{`json: [{"key":"value"}] (json)`, `rows: ["a"]=["x"] (ndjson)`, "blobs: blob (raw)"},
+		},
+		{
+			name:         "explicit_sender_format", // Overrides the upstream format of structured data only.
+			senderFormat: string(codec.FormatJSONArray),
+			want:         []string{`json: [{"key":"value"}] (json_array)`, `rows: ["a"]=["x"] (json_array)`, "blobs: blob (raw)"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := map[string]any{"url": "http://example.com"}
+			if tt.senderFormat != "" {
+				cfg["format"] = tt.senderFormat
+			}
+			s, sent := newRecordingSender(t, cfg)
+			fallback, fallbackSent := recordSends(t)
+			s.fallback = fallback
+			s.Close(t.Context())
+
+			// Rejected data must be passed to the fallback sender (the DLQ) instead of being discarded, and structured
+			// data in the sender's resolved format, like all other rejections (see TestSenderCloseRejectsWaitingDataToFallback).
+			s.Send(t.Context(), testJSON(`{"key":"value"}`), codec.FormatJSON)
+			s.Send(t.Context(), testRow("a", "x"), codec.FormatDefault)
+			s.Send(t.Context(), flow.Blobs{[]byte("blob")}, codec.FormatRaw)
+
+			if got := fallbackSent(); !slices.Equal(got, tt.want) {
+				t.Errorf("sent to fallback after Close = %q, want %q", got, tt.want)
+			}
+			if got := sent(); len(got) > 0 {
+				t.Errorf("sent requests after Close = %+v, want none", got)
+			}
+		})
+	}
+}
+
+func TestSenderEncodingFailureFallback(t *testing.T) {
+	t.Parallel()
+
+	s, sent := newRecordingSender(t, map[string]any{"url": "http://example.com"})
+	fallback, fallbackSent := recordSends(t)
+	s.fallback = fallback
+
+	// Strings with invalid UTF-8 can't be encoded as JSON, so the entire batch must go to the
+	// fallback sender (the DLQ), in the format that the sender resolved, instead of being dropped.
+	s.Send(t.Context(), flow.Rows{
+		{Cols: []string{"a"}, Vals: []any{"ok"}},
+		{Cols: []string{"a"}, Vals: []any{"\xff"}},
+	}, codec.FormatJSON)
+	s.Close(t.Context())
+
+	want := []string{`rows: ["a"]=["ok"] | ["a"]=["\xff"] (json)`}
+	if got := fallbackSent(); !slices.Equal(got, want) {
+		t.Errorf("sent to fallback = %q, want %q", got, want)
+	}
+	if got := sent(); len(got) > 0 {
+		t.Errorf("sent requests = %+v, want none", got)
 	}
 }
 
@@ -631,7 +888,7 @@ func TestSenderClose(t *testing.T) {
 	t.Parallel()
 
 	var counter atomic.Int64
-	s, err := NewSender(map[string]any{"url": "http://example.com"}, "TestSenderClose", config.SenderTypeHTTP)
+	s, err := NewSender(map[string]any{"url": "http://example.com"}, "TestSenderClose", config.SenderTypeHTTP, nil)
 	if err != nil {
 		t.Fatalf("NewSender() error: %v", err)
 	}
@@ -646,7 +903,7 @@ func TestSenderClose(t *testing.T) {
 		}, nil
 	})
 
-	s.Send(t.Context(), flow.Blobs{[]byte("payload")})
+	s.Send(t.Context(), flow.Blobs{[]byte("payload")}, codec.FormatDefault)
 	s.Close(t.Context())
 
 	if got := counter.Load(); got != 1 {
@@ -654,7 +911,7 @@ func TestSenderClose(t *testing.T) {
 	}
 
 	// Calling Send after Close should be rejected.
-	s.Send(t.Context(), flow.Blobs{[]byte("another payload")})
+	s.Send(t.Context(), flow.Blobs{[]byte("another payload")}, codec.FormatDefault)
 	s.Close(t.Context()) // Idempotent.
 
 	if got := counter.Load(); got != 1 {
@@ -670,6 +927,7 @@ func TestSenderCloseTimeout(t *testing.T) {
 			map[string]any{"url": "http://example.com", "timeout": "100ms"},
 			"TestSenderCloseTimeout",
 			config.SenderTypeHTTP,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("NewSender() error: %v", err)
@@ -680,7 +938,7 @@ func TestSenderCloseTimeout(t *testing.T) {
 			return nil, req.Context().Err()
 		})
 
-		s.Send(t.Context(), flow.Blobs{[]byte("payload")})
+		s.Send(t.Context(), flow.Blobs{[]byte("payload")}, codec.FormatDefault)
 
 		want := 50 * time.Millisecond
 		ctx, cancel := context.WithTimeout(t.Context(), want)
@@ -706,7 +964,7 @@ func TestSenderCloseDuringRetryDelay(t *testing.T) {
 				"type":     retryTypeStatic,
 				"interval": "1m",
 			},
-		}, "TestSenderCloseDuringRetryDelay", config.SenderTypeHTTP)
+		}, "TestSenderCloseDuringRetryDelay", config.SenderTypeHTTP, nil)
 		if err != nil {
 			t.Fatalf("NewSender() error: %v", err)
 		}
@@ -719,7 +977,7 @@ func TestSenderCloseDuringRetryDelay(t *testing.T) {
 			}, nil
 		})
 
-		s.Send(t.Context(), flow.Blobs{[]byte("payload")})
+		s.Send(t.Context(), flow.Blobs{[]byte("payload")}, codec.FormatDefault)
 
 		// Allow attempt 0 to fail and enter the 1-minute retry wait.
 		time.Sleep(10 * time.Millisecond)
@@ -749,7 +1007,7 @@ func TestSenderConcurrencyLimit(t *testing.T) {
 		},
 		{
 			name: "structured_batches", // Encoding happens only after acquiring a slot.
-			data: flow.Structured{{"x": int64(1)}, {"x": int64(2)}, {"x": int64(3)}, {"x": int64(4)}, {"x": int64(5)}},
+			data: testRow("x", int64(1), int64(2), int64(3), int64(4), int64(5)),
 		},
 	}
 	for _, tt := range tests {
@@ -761,7 +1019,7 @@ func TestSenderConcurrencyLimit(t *testing.T) {
 					"url":               "http://example.com",
 					"concurrency_limit": int64(limit),
 					"batch":             map[string]any{"max_items": int64(1)},
-				}, tt.name, config.SenderTypeHTTP)
+				}, tt.name, config.SenderTypeHTTP, nil)
 				if err != nil {
 					t.Fatalf("NewSender() error: %v", err)
 				}
@@ -784,7 +1042,8 @@ func TestSenderConcurrencyLimit(t *testing.T) {
 					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
 				})
 
-				s.Send(t.Context(), tt.data) // Must not block, even though there are more payloads than slots.
+				// Must not block, even though there are more payloads than slots.
+				s.Send(t.Context(), tt.data, codec.FormatDefault)
 				synctest.Wait()
 				mu.Lock()
 				if started != limit {
@@ -812,8 +1071,9 @@ func TestSenderCloseDropsWaitingRequests(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		s, err := NewSender(map[string]any{"url": "http://example.com", "concurrency_limit": int64(1)},
-			"TestSenderCloseDropsWaitingRequests", config.SenderTypeHTTP,
+		s, err := NewSender(
+			map[string]any{"url": "http://example.com", "concurrency_limit": int64(1)},
+			"TestSenderCloseDropsWaitingRequests", config.SenderTypeHTTP, nil,
 		)
 		if err != nil {
 			t.Fatalf("NewSender() error: %v", err)
@@ -827,7 +1087,7 @@ func TestSenderCloseDropsWaitingRequests(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
 		})
 
-		s.Send(t.Context(), flow.Blobs{[]byte("1"), []byte("2"), []byte("3")})
+		s.Send(t.Context(), flow.Blobs{[]byte("1"), []byte("2"), []byte("3")}, codec.FormatDefault)
 		synctest.Wait() // The first request holds the only slot, the others are waiting for it.
 
 		closed := make(chan struct{})
@@ -845,6 +1105,124 @@ func TestSenderCloseDropsWaitingRequests(t *testing.T) {
 	})
 }
 
+func TestSenderCloseRejectsWaitingDataToFallback(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		senderFormat string        // Empty for the default format.
+		upstream     config.Format // Empty for the default format.
+		data         func() flow.Chunk
+		want         string
+	}{
+		{
+			name: "blob", // Sent in the default format, which means raw bytes for blobs.
+			data: func() flow.Chunk { return flow.Blobs{[]byte("blob")} },
+			want: "blobs: blob (raw)",
+		},
+		{
+			name:         "blob_with_upstream_format", // E.g., an encoded payload, which keeps its format.
+			senderFormat: string(codec.FormatNDJSON),  // Irrelevant for blobs.
+			upstream:     codec.FormatJSON,
+			data:         func() flow.Chunk { return flow.Blobs{[]byte(`{"a":1}`)} },
+			want:         `blobs: {"a":1} (json)`,
+		},
+		{
+			name: "rows", // Dispatched by the batcher when Close flushes it.
+			data: func() flow.Chunk { return testRow("a", "x") },
+			want: `rows: ["a"]=["x"] (ndjson)`,
+		},
+		{
+			name:         "rows_explicit_sender_format", // Overrides the upstream format.
+			senderFormat: string(codec.FormatJSONArray),
+			data:         func() flow.Chunk { return testRow("a", "x") },
+			want:         `rows: ["a"]=["x"] (json_array)`,
+		},
+		{
+			name: "request_without_body",
+			data: func() flow.Chunk { return flow.HTTPRequests{{URL: &url.URL{}}} },
+			want: "requests: <nil> (default)",
+		},
+		{
+			name: "request_with_get_body", // Like requests from receivers.
+			data: func() flow.Chunk {
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", nil)
+				return flow.HTTPRequests{outgoingRequest(req, []byte("req"))}
+			},
+			want: "requests: req (default)",
+		},
+		{
+			name: "request_without_get_body",
+			data: func() flow.Chunk {
+				return flow.HTTPRequests{{URL: &url.URL{}, Body: io.NopCloser(strings.NewReader("req"))}}
+			},
+			want: "requests: req (default)",
+		},
+		{
+			name: "response_with_reusable_body", // Like responses from collectors.
+			data: func() flow.Chunk {
+				body := &reusableBody{Reader: bytes.NewReader([]byte("resp")), raw: []byte("resp")}
+				return flow.HTTPResponses{{StatusCode: http.StatusOK, Body: body}}
+			},
+			want: "responses: resp (default)",
+		},
+		{
+			name: "response_without_reusable_body",
+			data: func() flow.Chunk {
+				return flow.HTTPResponses{{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("resp"))}}
+			},
+			want: "responses: resp (default)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				cfg := map[string]any{"url": "http://example.com", "concurrency_limit": int64(1)}
+				if tt.senderFormat != "" {
+					cfg["format"] = tt.senderFormat
+				}
+				s, err := NewSender(cfg, tt.name, config.SenderTypeHTTP, nil)
+				if err != nil {
+					t.Fatalf("NewSender() error: %v", err)
+				}
+				fallback, fallbackSent := recordSends(t)
+				s.fallback = fallback
+
+				release := make(chan struct{})
+				var started atomic.Int64
+				s.client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
+					started.Add(1)
+					<-release
+					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
+				})
+
+				s.Send(t.Context(), flow.Blobs{[]byte("active")}, codec.FormatDefault) // Holds the only slot.
+				synctest.Wait()
+				s.Send(t.Context(), tt.data(), cmp.Or(tt.upstream, codec.FormatDefault)) // Waits for a slot, or in the batcher.
+				synctest.Wait()
+
+				closed := make(chan struct{})
+				go func() {
+					defer close(closed)
+					s.Close(t.Context())
+				}()
+				synctest.Wait() // Close began: waiting data is rejected, and Close waits only for the active request.
+
+				close(release)
+				<-closed
+				if got := started.Load(); got != 1 {
+					t.Errorf("requests started = %d, want 1", got)
+				}
+				if got, want := fallbackSent(), []string{tt.want}; !slices.Equal(got, want) {
+					t.Errorf("sent to fallback = %q, want %q", got, want)
+				}
+			})
+		})
+	}
+}
+
 func TestSenderCloseSendsWithAvailableSlots(t *testing.T) {
 	t.Parallel()
 
@@ -856,8 +1234,8 @@ func TestSenderCloseSendsWithAvailableSlots(t *testing.T) {
 		"batch":             map[string]any{"max_items": int64(10), "time_window": "1h"},
 	})
 
-	s.Send(t.Context(), flow.Blobs{[]byte("a"), []byte("b")})
-	s.Send(t.Context(), flow.Structured{{"n": int64(1)}})
+	s.Send(t.Context(), flow.Blobs{[]byte("a"), []byte("b")}, codec.FormatDefault)
+	s.Send(t.Context(), testRow("n", int64(1)), codec.FormatDefault)
 	s.Close(t.Context())
 
 	if got := len(sent()); got != 3 {
@@ -869,4 +1247,21 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
+}
+
+func testRow(col string, vals ...any) flow.Rows {
+	cols := []string{col}
+	rows := make(flow.Rows, len(vals))
+	for i, v := range vals {
+		rows[i] = flow.Row{Cols: cols, Vals: []any{v}}
+	}
+	return rows
+}
+
+func testJSON(objs ...string) flow.JSON {
+	chunk := make(flow.JSON, len(objs))
+	for i, obj := range objs {
+		chunk[i] = jsontext.Value(obj)
+	}
+	return chunk
 }

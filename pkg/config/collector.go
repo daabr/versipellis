@@ -10,7 +10,7 @@ import (
 	"github.com/daabr/versipellis/pkg/cron"
 )
 
-// CollectorType* constants represent all the available types of "collector" configurations in the TOML file.
+// CollectorType* constants represent all the available types of "collector" sections in the TOML file.
 const (
 	CollectorTypeHTTP  = "http"
 	CollectorTypeHTTP3 = "http3"
@@ -23,7 +23,7 @@ var validCollectorTypes = []string{
 	CollectorTypeSQL,
 }
 
-// BaseCollector contains the basic details of any "collector" configuration in the TOML file.
+// BaseCollector contains the basic details of any "collector" section in the TOML file.
 type BaseCollector struct {
 	// For now, [BaseCollector] is an extension of [BaseReceiver], but
 	// if this changes in the future, it shouldn't break existing code.
@@ -50,6 +50,9 @@ func NewBaseCollector(cfg map[string]any, name string, senders map[string]Sender
 	c.Destination = strings.TrimSpace(Value(cfg, "destination", "")) // Attention: case sensitive!
 	if sender, found := senders[c.Destination]; found {
 		c.Send = sender.Send
+	}
+	if dlq, found := senders[SenderTypeDLQ]; found {
+		c.Fallback = dlq.Send
 	}
 
 	switch {

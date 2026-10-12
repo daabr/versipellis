@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/daabr/versipellis/pkg/codec"
 	"github.com/daabr/versipellis/pkg/flow"
 )
 
@@ -51,7 +52,7 @@ func TestDiscard(t *testing.T) {
 
 			// The most we can check is that this doesn't panic.
 			d := newDiscard()
-			d.Send(t.Context(), tt.data)
+			d.Send(t.Context(), tt.data, codec.FormatDefault)
 			d.Close(t.Context())
 		})
 	}

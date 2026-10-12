@@ -218,8 +218,8 @@ func TestCollectorProcessPostgresResults(t *testing.T) {
 			if gotRows != len(tt.wantRows) {
 				t.Errorf("Collector.processPostgresResults() row count = %d, want %d", gotRows, len(tt.wantRows))
 			}
-			if !reflect.DeepEqual(*sent, tt.wantRows) {
-				t.Errorf("Collector.processPostgresResults() sent rows = %+v, want %+v", *sent, tt.wantRows)
+			if !reflect.DeepEqual(sent(), tt.wantRows) {
+				t.Errorf("Collector.processPostgresResults() sent rows = %+v, want %+v", sent(), tt.wantRows)
 			}
 		})
 	}

@@ -32,8 +32,9 @@ Receivers (HTTP servers) ────┘
 | `cmd/versi/`  | CLI entry point, flag parsing, OS signal handling, lifecycle orchestration                   |
 | `pkg/config/` | TOML config parsing & validation, `BaseCollector` & `BaseReceiver` types, `Sender` interface |
 | `pkg/http/`   | Ingress and egress over HTTP/1.1, HTTP/2, and HTTP/3 with TLS/mTLS                           |
-| `pkg/sql/`    | SQL collectors supporting many relational databases                                          |
+| `pkg/sql/`    | SQL collectors supporting various relational databases                                       |
 | `pkg/flow/`   | Generic `Batcher` mechanism, using typed `Chunk`s of data                                    |
+| `pkg/codec/`  | Various data formatters and encoders                                                         |
 | `pkg/dest/`   | Default senders for local destinations: `discard`, `stdout`, `dead_letter_queue`             |
 | `pkg/cache/`  | Concurrency-safe in-memory caching mechanisms                                                |
 | `pkg/cron/`   | Cron schedule parsing and triggering for collectors                                          |
@@ -159,29 +160,52 @@ Testing:
 - **Concurrency limits**:
   - Collectors and senders should support this as a configurable option, with reasonable defaults and guardrails.
   - **Collectors skip** excess operations instead of catching up.
-  - **Senders queue** excess operations (without blocking), they never reject/drop operations (until shutdown).
+  - **Senders queue** excess operations (without blocking), they never reject/drop operations (until shutdown, when pending operations are sent to the sender's fallback, see below).
 
 ### Shutting Down
 
 - SIGINT/SIGTERM cancels the root context (the app enters "lame-duck" mode: graceful completion of work in progress without accepting new work).
-- Shutdown order: receivers close in parallel with collectors draining, then all senders close except the Dead Letter Queue, and the DLQ closes **last**, so it's able to save data that other senders fail to deliver while they close.
+- Shutdown order: receivers close in parallel with collectors draining, then all senders close except the Dead-Letter Queue, and the DLQ closes **last**, so it's able to save data that other senders fail to deliver while they close.
 - **Senders** use `lameDuck atomic.Bool` plus a `closeMu sync.RWMutex`: `Send()` holds `closeMu.RLock()` for its entire duration, checks `lameDuck`, then registers work in a `sync.WaitGroup`, so each chunk is accepted or rejected as a whole. An extra `lameDuck` check before acquiring the lock is an optional fast path.
   - **Nothing under `closeMu.RLock()` may block**: `Close()` waits for it before its timeout starts, and a pending `Lock()` blocks new readers. Only check and register work under the lock; encode and serialize in the registered goroutines. HTTP bodies must be fully buffered before `Send()`, so reading them is never network I/O.
   - **Batching**: a full batch dispatched synchronously by `Batcher.Add*()` is covered by `Send()`'s read lock, and delayed dispatches are covered by the batcher's `guard`, which acquires the read lock and checks `lameDuck`. Dispatch functions must not acquire `closeMu.RLock()` again, because recursive read locking may deadlock with a pending `closeMu.Lock()`.
   - `Close()`: `closeMu.Lock()` → `lameDuck = true` → unlock → `Batcher.Flush()` (if any) → `inProgress.Wait()` with a timeout. Holding the write lock ensures no `Send()` can register after the wait begins.
   - Exceptions: `discard` and `stdout` address simpler use-cases.
+  - **Memory**: work registered for retries can live for many seconds, so after encoding a payload, release references to the original items (e.g., `data, encode = nil, nil` in captured variables) so only the encoded body stays in memory.
 - **Collectors with a batcher** use the same `guard` pattern: a timed dispatch may have already taken a batch from the buffer when `Close()` calls `Batcher.Flush()`, so `Close()` sets `closing` under `closingMu.Lock()` before flushing, to ensure the dispatch reaches the sender before `Done()` signals `main()` to close senders.
-- **Graceful rejection**: payloads rejected while shutting down are routed to `dest.Discard` to safely release their resources (closes HTTP request and response bodies).
+- **Graceful rejection**: data that a sender accepted or received but can't deliver goes to its fallback sender via `deadLetter()`: the DLQ if it exists, otherwise `dest.Discard`, which safely releases resources (closes HTTP request and response bodies). The DLQ, `stdout`, and `discard` senders always use `dest.Discard`.
+  - This covers:
+    - `Send()` calls after `Close()` began (e.g., after a collector's or receiver's close timeout).
+    - Operations still waiting for a concurrency slot when `Close()` begins (including batches it flushes).
+    - Structured batches that fail to encode.
+  - Each rejection path must pass the data in a usable state: HTTP requests/responses get a fresh body from `GetBody`/the buffered copy, because the original may have been read or closed.
+  - Not covered yet: delivery failures after retries are only logged (see roadmap).
 - `Close()` methods are idempotent and safe before startup. HTTP/SQL collectors wait at most `CloseTimeout + abortTimeout`; HTTP senders and receivers wait at most `CloseTimeout` (or an earlier context deadline). Local destination senders return immediately or use a fixed one-second timeout.
 
-### Data Flow
+### Data Flow (`pkg/flow`)
 
-- Data is always passed in `Chunk`s: flat (never nested), homogeneous slices of recognized types (depending on the source). When passing a single item, it still needs to be wrapped.
+- Data is always passed in `Chunk`s: flat (never nested), homogeneous slices of recognized item types (`flow.Item`, depending on the source and optional formatting of the data). When passing a single item, it still needs to be wrapped.
 - Chunks and items in chunks must never be `nil`, and empty items and payloads should be ignored.
+- **Structured data** has two chunk types: `JSON` (valid JSON objects, kept verbatim) and `Rows` (tabular data, e.g., SQL results, with column names shared per result-set and typed values). Senders encode them only when sending.
 - **Ownership**:
   - `Batcher.AddItem()` takes ownership of the item provided to it.
   - `Batcher.AddChunk()` and `Sender.Send()` take ownership of both the chunk/slice and the items it contains.
   - Callers must never modify or reuse them afterwards.
+
+### Formatting (`pkg/codec`)
+
+- `Format`s are meaningful only for structured data.
+- Collectors/receivers pass their configured format downstream in `Send()`.
+- If a sender has its own explicit format, it overrides the upstream one; specifically, `stdout` always prints readable NDJSON.
+- Configuring a non-default format in HTTP collectors/receivers causes them to discard HTTP headers and pass only the body: as `Blobs` (`raw`) or parsed `JSON` objects (JSON formats); HTTP requests/responses with unparsable bodies go to their `Fallback` (the DLQ), and receivers respond with a `422` status code.
+- SQL collectors default to `ndjson`, and the HTTP sender falls back to `ndjson` when neither it nor the source sets a format.
+- `codec` encoders are strict and lossless: one unencodable value fails the entire payload, except non-finite floats, which become the strings `"NaN"`, `"Infinity"`, and `"-Infinity"` (`codec.NonFiniteFloats`, shared with `stdout`).
+- The DLQ falls back to the lossy readable NDJSON of `stdout` when strict encoding fails, skipping only unencodable items.
+- DLQ file extensions reflect their actual content: the resolved format (e.g., `.json`), `.lossy_ndjson`, `.http_req`/`.http_resp`, or none for blobs in the default format.
+- DLQ files don't record *why* they were written - yet (see roadmap).
+- `DecodeJSON` is zero-copy: each object aliases the payload (24 B per object, regardless of its size), so body buffers must never be modified or reused (e.g., pooled) afterwards.
+  - Don't decode JSON into maps: each one costs hundreds of bytes, so untrusted payloads of tiny objects could amplify memory usage dozens of times.
+- `Rows` keep column names as-is; the `codec` formatters make duplicate/empty names unique only when encoding rows as JSON objects, and the `stdout` sender prints them as-is.
 
 ### Batching
 
@@ -198,7 +222,8 @@ Testing:
   - Any setting that affects transport behavior **must** be added to that key, or clients with different settings will silently share a transport.
 - **Retries**: POST and PATCH have no retries unless configured explicitly, because they may not be idempotent. Other methods default to exponential backoff (3 attempts, 1s interval, 20s cap).
 - **Body reuse for retries**: received requests get a `GetBody` function, and collected responses wrap their body in `reusableBody` (the `bodyProvider` interface), so retries don't copy large payloads. Keep this zero-copy path.
-- Payload types that the HTTP sender supports: `[]byte` (with auto-detected MIME content type), `*http.Request` (from receivers), `*http.Response` (from collectors), and `map[string]any` (encoded as NDJSON using `encoding/json/v2`).
+- **Receiver responses**: `readRequest()` writes only error statuses; `ServeHTTP()` writes the success status (`202`) after processing the body, so it can still reject it.
+- Payload types that the HTTP sender supports: `[]byte` (with auto-detected MIME content type), `*http.Request` (from receivers), `*http.Response` (from collectors), and `JSON` objects and `Rows` (batched and encoded in the resolved format, see the Formatting section).
 
 ### Logging
 

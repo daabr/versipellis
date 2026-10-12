@@ -19,6 +19,7 @@ import (
 	_ "github.com/snowflakedb/gosnowflake/v2"
 	_ "modernc.org/sqlite"
 
+	"github.com/daabr/versipellis/pkg/codec"
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/flow"
 )
@@ -75,13 +76,14 @@ type Collector struct {
 	conn    string
 	query   string
 	timeout time.Duration
+	format  config.Format
 
 	// Mutually-exclusive connections, depending on the driver type.
 	db      *sql.DB
 	pgPool  pgPool
 	usingPG bool
 
-	batch *flow.Batcher[map[string]any]
+	batch *flow.Batcher[flow.Row]
 
 	// For checkpointing: timestamps of the last (at least partially) successful query.
 	checkpointMu sync.Mutex
@@ -136,13 +138,21 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	if c.timeout, err = time.ParseDuration(config.Value(cfg, "timeout", defaultQueryTimeout.String())); err != nil {
 		return nil, fmt.Errorf("invalid query timeout duration: %w", err)
 	}
+
+	if c.format, err = codec.ParseStructuredFormat(cfg); err != nil {
+		return nil, fmt.Errorf("format setting: %w", err)
+	}
+	if c.format == codec.FormatDefault {
+		c.format = codec.FormatNDJSON
+	}
+
 	if limits, err = config.BatchLimits(cfg["batch"], c.Name, defaultBatchLimits); err != nil {
 		return nil, fmt.Errorf("SQL row batching limits: %w", err)
 	}
 	if c.Destination == config.SenderTypeDiscard || c.Destination == config.SenderTypeNone {
 		limits = flow.Limits{} // No point in enabling batching if all the data will be discarded anyway.
 	}
-	opts := new(flow.Options[map[string]any]{Guard: c.guard})
+	opts := new(flow.Options[flow.Row]{Guard: c.guard})
 	if c.batch, err = flow.NewBatcher(limits, c.sendRows, opts); err != nil {
 		return nil, fmt.Errorf("SQL row batching: %w", err)
 	}
@@ -195,9 +205,10 @@ func (c *Collector) guard(flush func()) {
 	}
 }
 
-// sendRows reads [Collector.Send] when it's called, not at construction time, so tests may replace it.
-func (c *Collector) sendRows(ctx context.Context, rows []map[string]any) {
-	c.Send(ctx, flow.Structured(rows)) // Free conversion: the sender takes ownership of the chunk.
+// sendRows is the dispatch function of [Collector.batch], so it passes the configured format through the
+// batcher. It reads [Collector.Send] when it's called, not at construction time, so tests may replace it.
+func (c *Collector) sendRows(ctx context.Context, rows []flow.Row) {
+	c.Send(ctx, flow.Rows(rows), c.format) // Free conversion: the sender takes ownership of the chunk.
 }
 
 // Start connects to the configured SQL-based database and starts sending queries to it. This
@@ -412,6 +423,9 @@ func (c *Collector) processResults(ctx context.Context, rows *sql.Rows) (int, er
 		if err != nil {
 			return totalScanned, fmt.Errorf("failed to read SQL column names in result-set %d: %w", resultSet, err)
 		}
+		// Rows share this slice and outlive this loop (senders encode them asynchronously),
+		// but nothing is preventing drivers from reusing it, so we copy it once per result-set.
+		cols = slices.Clone(cols)
 
 		rsScanned := 0
 		for rows.Next() {
@@ -445,7 +459,9 @@ func (c *Collector) processResults(ctx context.Context, rows *sql.Rows) (int, er
 	return totalScanned, nil
 }
 
-func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
+// scanRow scans the current row into a new [flow.Row], which shares the given column names (they're read-only) with
+// all the other rows of the same result-set, and has its own values slice (the sender takes ownership of it).
+func scanRow(rows *sql.Rows, cols []string) (flow.Row, error) {
 	size := len(cols)
 	vals := make([]any, size)
 	ptrs := make([]any, size)
@@ -454,15 +470,10 @@ func scanRow(rows *sql.Rows, cols []string) (map[string]any, error) {
 	}
 
 	if err := rows.Scan(ptrs...); err != nil {
-		return nil, fmt.Errorf("row scanning error: %w", err)
+		return flow.Row{}, fmt.Errorf("row scanning error: %w", err)
 	}
 
-	row := make(map[string]any, size)
-	for i, col := range cols {
-		row[col] = vals[i]
-	}
-
-	return row, nil
+	return flow.Row{Cols: cols, Vals: vals}, nil
 }
 
 // Done returns a channel that closes when shutdown completes or its grace period expires.

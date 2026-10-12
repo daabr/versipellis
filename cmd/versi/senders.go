@@ -24,16 +24,21 @@ var (
 // any of them failed. This provides a better experience for first-time users with multiple configuration
 // mistakes, as they get feedback on all issues at once rather than encountering them one by one.
 func initSenders(cfg map[string]any) (map[string]config.Sender, bool) {
-	dlq := dest.InitDeadLetterQueue("data")
-	ok := dlq != nil
-
 	senders := map[string]config.Sender{
 		"":                       dest.Discard,
 		config.SenderTypeDiscard: dest.Discard,
 		config.SenderTypeNone:    dest.Discard,
 
 		config.SenderTypeStdout: dest.Stdout,
-		config.SenderTypeDLQ:    dlq,
+	}
+
+	var dlq config.Sender
+	ok := false
+
+	// Don't wrap a nil [dest.DeadLetterQueue] pointer in a non-nil [config.Sender] interface.
+	if d := dest.InitDeadLetterQueue("data"); d != nil {
+		dlq, ok = d, true
+		senders[config.SenderTypeDLQ] = dlq
 	}
 
 	for name, cfg := range config.ExtractSubSubmaps(cfg, "sender", validSenderTypes) {
@@ -48,7 +53,7 @@ func initSenders(cfg map[string]any) (map[string]config.Sender, bool) {
 
 		switch baseType {
 		case config.SenderTypeHTTP, config.SenderTypeHTTP3:
-			s, err := http.NewSender(cfg, name, baseType)
+			s, err := http.NewSender(cfg, name, baseType, dlq)
 			if err != nil {
 				slog.Error("sender initialization error", slog.Any("error", err),
 					slog.String("name", name), slog.String("type", baseType),

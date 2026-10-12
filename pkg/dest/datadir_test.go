@@ -1,7 +1,10 @@
 package dest
 
 import (
+	"cmp"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"io/fs"
 	"math"
@@ -11,8 +14,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
+	"github.com/daabr/versipellis/pkg/codec"
+	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/flow"
 )
 
@@ -23,8 +29,10 @@ func TestDeadLetterQueue(t *testing.T) {
 		name        string
 		lameDuck    bool
 		data        flow.Chunk
+		format      config.Format
 		wantFiles   int
 		wantContent string
+		wantExt     string
 	}{
 		{
 			name:      "nil_chunk",
@@ -49,6 +57,14 @@ func TestDeadLetterQueue(t *testing.T) {
 			wantContent: "payload",
 		},
 		{
+			name:        "byte_slice_raw_format",
+			data:        flow.Blobs([][]byte{[]byte("payload")}),
+			format:      codec.FormatRaw,
+			wantFiles:   1,
+			wantContent: "payload",
+			wantExt:     ".raw",
+		},
+		{
 			name:        "printable_unicode_byte_slice",
 			data:        flow.Blobs([][]byte{[]byte("πayload")}),
 			wantFiles:   1,
@@ -67,31 +83,95 @@ func TestDeadLetterQueue(t *testing.T) {
 			wantContent: "\x00\x01\x02\x00\x01\x02\x00\x01\x02",
 		},
 		{
-			name:        "json",
-			data:        flow.Structured([]map[string]any{{"key": "value", "number": 42, "list": []any{1, 2, 3}}}),
+			name:        "json_objects",
+			wantExt:     ".json",
+			data:        flow.JSON{jsontext.Value(`{"key":"value","number":42,"list":[1,2,3]}`)},
 			wantFiles:   1,
-			wantContent: `{"key":"value","list":[1,2,3],"number":42}`,
+			wantContent: `{"key":"value","number":42,"list":[1,2,3]}`,
 		},
 		{
-			name: "json_batch",
-			data: flow.Structured([]map[string]any{
-				{"key": "value", "number": 42, "list": []any{1, 2, 3}},
-				{"key": "value", "number": 42, "list": []any{1, 2, 3}},
-			}),
+			name:        "json_objects_batch",
+			wantExt:     ".json",
+			data:        flow.JSON{jsontext.Value(`{"z":1}`), jsontext.Value("{\n \"a\": 2\n}")},
 			wantFiles:   1,
-			wantContent: `[{"key":"value","list":[1,2,3],"number":42},{"key":"value","list":[1,2,3],"number":42}]`,
+			wantContent: `[{"z":1},{"a":2}]`,
 		},
 		{
-			name:        "json_with_unencoded_html",
-			data:        flow.Structured([]map[string]any{{"html": "& < >"}}),
+			name:        "json_objects_ndjson_format",
+			wantExt:     ".ndjson",
+			data:        flow.JSON{jsontext.Value(`{"a":1}`), jsontext.Value(`{"b":2}`)},
+			format:      codec.FormatNDJSON,
 			wantFiles:   1,
-			wantContent: `{"html":"& < >"}`,
+			wantContent: `{"a":1}` + "\n" + `{"b":2}` + "\n",
+		},
+		{
+			name:      "invalid_json_object",
+			data:      flow.JSON{jsontext.Value(`{"a":}`)},
+			wantFiles: 0,
+		},
+		{
+			name:        "rows",
+			wantExt:     ".json",
+			data:        flow.Rows{{Cols: []string{"key", "number"}, Vals: []any{"value", 42}}},
+			wantFiles:   1,
+			wantContent: `{"key":"value","number":42}`,
+		},
+		{
+			name:        "rows_batch_with_unencoded_html",
+			wantExt:     ".json",
+			data:        flow.Rows{{Cols: []string{"html"}, Vals: []any{"& < >"}}, {Cols: []string{"n"}, Vals: []any{1}}},
+			wantFiles:   1,
+			wantContent: `[{"html":"& < >"},{"n":1}]`,
+		},
+		{
+			name:        "rows_json_array_format",
+			wantExt:     ".json_array",
+			data:        flow.Rows{{Cols: []string{"a"}, Vals: []any{1}}},
+			format:      codec.FormatJSONArray,
+			wantFiles:   1,
+			wantContent: `[{"a":1}]`,
+		},
+		{
+			name:        "rows_ndjson_format",
+			wantExt:     ".ndjson",
+			data:        flow.Rows{{Cols: []string{"a"}, Vals: []any{1}}, {Cols: []string{"b"}, Vals: []any{2}}},
+			format:      codec.FormatNDJSON,
+			wantFiles:   1,
+			wantContent: `{"a":1}` + "\n" + `{"b":2}` + "\n",
+		},
+		{
+			name:        "rows_raw_format_falls_back_to_json",
+			wantExt:     ".json",
+			data:        flow.Rows{{Cols: []string{"a"}, Vals: []any{1}}, {Cols: []string{"b"}, Vals: []any{2}}},
+			format:      codec.FormatRaw,
+			wantFiles:   1,
+			wantContent: `[{"a":1},{"b":2}]`,
 		},
 		{
 			// Go channels cannot be encoded as JSON.
-			name:      "not_json",
-			data:      flow.Structured([]map[string]any{{"channel": make(chan struct{})}}),
+			name:      "unencodable_row",
+			data:      flow.Rows{{Cols: []string{"channel"}, Vals: []any{make(chan struct{})}}},
 			wantFiles: 0,
+		},
+		{
+			name:    "unencodable_row_in_batch_falls_back_to_readable_ndjson",
+			wantExt: ".lossy_ndjson",
+			data: flow.Rows{
+				{Cols: []string{"a"}, Vals: []any{"ok"}},
+				{Cols: []string{"a"}, Vals: []any{make(chan struct{})}},
+			},
+			wantFiles:   1,
+			wantContent: `{"a": "ok"}` + "\n",
+		},
+		{
+			name:    "invalid_utf8_row_falls_back_to_readable_ndjson",
+			wantExt: ".lossy_ndjson",
+			data: flow.Rows{
+				{Cols: []string{"a"}, Vals: []any{"ok"}},
+				{Cols: []string{"a"}, Vals: []any{"\xff"}},
+			},
+			wantFiles:   1,
+			wantContent: `{"a": "ok"}` + "\n" + "{\"a\": \"\uFFFD\"}\n",
 		},
 		{
 			name:      "nil_http_request",
@@ -99,7 +179,8 @@ func TestDeadLetterQueue(t *testing.T) {
 			wantFiles: 0,
 		},
 		{
-			name: "http_request_without_body",
+			name:    "http_request_without_body",
+			wantExt: ".http_req",
 			data: flow.HTTPRequests([]*http.Request{
 				func() *http.Request {
 					req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com", http.NoBody)
@@ -110,7 +191,8 @@ func TestDeadLetterQueue(t *testing.T) {
 			wantContent: "GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Go-http-client/1.1\r\n\r\n",
 		},
 		{
-			name: "http_request_with_body",
+			name:    "http_request_with_body",
+			wantExt: ".http_req",
 			data: flow.HTTPRequests([]*http.Request{
 				func() *http.Request {
 					body := strings.NewReader("body")
@@ -122,12 +204,28 @@ func TestDeadLetterQueue(t *testing.T) {
 			wantContent: "POST / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Go-http-client/1.1\r\nContent-Length: 4\r\n\r\nbody",
 		},
 		{
+			name:      "http_request_write_error", // No URL or host.
+			data:      flow.HTTPRequests([]*http.Request{{Method: http.MethodGet, Body: http.NoBody}}),
+			wantFiles: 0,
+		},
+		{
 			name:      "nil_http_response",
 			data:      flow.HTTPResponses([]*http.Response{nil}),
 			wantFiles: 0,
 		},
 		{
-			name: "http_response",
+			name: "http_response_write_error",
+			data: flow.HTTPResponses([]*http.Response{{
+				StatusCode: http.StatusOK,
+				ProtoMajor: 1,
+				ProtoMinor: 1,
+				Body:       io.NopCloser(iotest.ErrReader(errors.New("read error"))),
+			}}),
+			wantFiles: 0,
+		},
+		{
+			name:    "http_response",
+			wantExt: ".http_resp",
 			data: flow.HTTPResponses([]*http.Response{
 				func() *http.Response {
 					body := strings.NewReader("body")
@@ -159,7 +257,7 @@ func TestDeadLetterQueue(t *testing.T) {
 			if tt.lameDuck {
 				dlq.lameDuck.Store(true)
 			}
-			dlq.Send(t.Context(), tt.data)
+			dlq.Send(t.Context(), tt.data, cmp.Or(tt.format, codec.FormatDefault))
 			dlq.Close(t.Context())
 
 			gotFiles := 0
@@ -174,6 +272,10 @@ func TestDeadLetterQueue(t *testing.T) {
 				f, err := os.ReadFile(path) //gosec:disable G122 G304 // Unit test.
 				if err != nil {
 					t.Fatalf("failed to read file %q: %v", path, err)
+				}
+				gotExt := filepath.Ext(path)
+				if gotExt != tt.wantExt {
+					t.Errorf("DeadLetterQueue(%s) file extension = %q, want %q", tt.name, gotExt, tt.wantExt)
 				}
 				gotFiles++
 				gotContent.Write(f)
@@ -208,7 +310,8 @@ func TestDeadLetterQueueConcurrency(t *testing.T) {
 	for goroutine := range concurrencyFactor {
 		wg.Go(func() {
 			for call := range concurrencyFactor {
-				dlq.Send(t.Context(), flow.Structured([]map[string]any{{"goroutine": goroutine, "call": call}}))
+				data := flow.Rows{{Cols: []string{"goroutine", "call"}, Vals: []any{goroutine, call}}}
+				dlq.Send(t.Context(), data, codec.FormatDefault)
 			}
 		})
 	}
@@ -263,11 +366,24 @@ func TestDeadLetterQueueConcurrency(t *testing.T) {
 	}
 }
 
+func TestInitDeadLetterQueueError(t *testing.T) {
+	t.Parallel()
+
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, filePermissions); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+
+	if dlq := InitDeadLetterQueue(file); dlq != nil {
+		t.Errorf("InitDeadLetterQueue(file) = %v, want nil", dlq)
+	}
+}
+
 func TestEncodeNil(t *testing.T) {
 	t.Parallel()
 
-	if got := encode(nil); got != nil {
-		t.Errorf("encode(nil) = %v, want nil", got)
+	if got, ext := encode(nil, codec.FormatJSON); got != nil || ext != "" {
+		t.Errorf("encode(nil) = %v, %q, want nil, %q", got, ext, "")
 	}
 }
 
@@ -295,9 +411,40 @@ func TestAsyncWriteFileErrors(t *testing.T) {
 			}
 			t.Cleanup(func() { dlq.Close(t.Context()) })
 
-			gotOK := dlq.asyncWriteFile([]byte("data"), time.Now().UTC(), tt.dirPerms, tt.filePerms)
+			gotOK := dlq.asyncWriteFile([]byte("data"), "", time.Now().UTC(), tt.dirPerms, tt.filePerms)
 			if gotOK != tt.wantOK {
 				t.Errorf("asyncWriteFile() = %v, want %v", gotOK, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestFileExtension(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		format config.Format
+		want   string
+	}{
+		{"", ""},
+		{codec.FormatDefault, ""},
+		{codec.FormatJSON, ".json"},
+		{codec.FormatJSONArray, ".json_array"},
+		{codec.FormatNDJSON, ".ndjson"},
+		{codec.FormatRaw, ".raw"},
+		// Non-word characters are removed (Go's \W is ASCII-only), so formats can't affect the file's path.
+		{"../", ""},
+		{"../x", ".x"},
+		{"a/b\\c", ".abc"},
+		{"json-é 2", ".json2"},
+		{"JSON", ".json"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.format), func(t *testing.T) {
+			t.Parallel()
+
+			if got := fileExtension(tt.format); got != tt.want {
+				t.Errorf("fileExtension(%q) = %q, want %q", tt.format, got, tt.want)
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package flow_test
 
 import (
+	"encoding/json/jsontext"
 	"net/http"
 	"testing"
 
@@ -15,12 +16,14 @@ func TestChunk(t *testing.T) {
 		switch c.(type) {
 		case flow.Blobs:
 			return "blobs"
-		case flow.Structured:
-			return "structured"
 		case flow.HTTPRequests:
 			return "reqs"
 		case flow.HTTPResponses:
 			return "resps"
+		case flow.JSON:
+			return "json"
+		case flow.Rows:
+			return "rows"
 		default:
 			return "unexpected"
 		}
@@ -45,18 +48,6 @@ func TestChunk(t *testing.T) {
 			wantLen:  2,
 		},
 		{
-			name:     "nil_map",
-			chunk:    flow.Structured(nil),
-			wantKind: "structured",
-			wantLen:  0,
-		},
-		{
-			name:     "map",
-			chunk:    flow.Structured{{"a": 1}, {"b": 2}},
-			wantKind: "structured",
-			wantLen:  2,
-		},
-		{
 			name:     "http_request",
 			chunk:    flow.HTTPRequests{new(http.Request)},
 			wantKind: "reqs",
@@ -66,6 +57,24 @@ func TestChunk(t *testing.T) {
 			name:     "http_responses",
 			chunk:    flow.HTTPResponses{new(http.Response), new(http.Response)},
 			wantKind: "resps",
+			wantLen:  2,
+		},
+		{
+			name:     "nil_json",
+			chunk:    flow.JSON(nil),
+			wantKind: "json",
+			wantLen:  0,
+		},
+		{
+			name:     "json",
+			chunk:    flow.JSON{jsontext.Value(`{"a":1}`), jsontext.Value(`{"b":2}`)},
+			wantKind: "json",
+			wantLen:  2,
+		},
+		{
+			name:     "rows",
+			chunk:    flow.Rows{{Cols: []string{"a"}, Vals: []any{1}}, {Cols: []string{"a"}, Vals: []any{2}}},
+			wantKind: "rows",
 			wantLen:  2,
 		},
 		{
@@ -104,7 +113,7 @@ func TestIsEmpty(t *testing.T) {
 		},
 		{
 			name:  "nil_chunk",
-			chunk: flow.Structured(nil),
+			chunk: flow.Rows(nil),
 			want:  true,
 		},
 		{

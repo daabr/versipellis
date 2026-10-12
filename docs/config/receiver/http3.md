@@ -33,6 +33,20 @@
 - Format: string containing decimal numbers, each with a unit suffix, e.g., `m` (minutes), and `s` (seconds)
 - Special case: `"0"` and negative values (e.g., `"-1s"`) = no server-side timeout
 
+`format` - discard all HTTP headers, pass only the HTTP body
+
+- Optional
+- Default: none (don't discard HTTP headers)
+- Options:
+  - `"json"` (an array if the body contains multiple objects, otherwise an object)
+  - `"json_array"` (always an array, even when there are fewer than 2 objects)
+  - `"ndjson"` ([NDJSON](https://ndjson.com/), a.k.a. JSONL)
+  - `"raw"` (opaque byte payload)
+- This format is a downstream preference...
+  - It does not have to be identical to the body's own content type, for example: you can receive JSON and pass it as NDJSON, and vice versa
+  - Either way, the configured [sender](../sender/README.md) may override this
+- If the body can't be parsed in the configured format, the entire HTTP request is moved to the Dead-Letter Queue (DLQ), and the client receives a `422 Unprocessable Content` response
+
 ## `[receiver.http3.tls]` Sub-Section
 
 - Required

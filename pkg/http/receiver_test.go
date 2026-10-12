@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/dest"
@@ -43,6 +45,12 @@ func TestNewReceiver(t *testing.T) { //nolint:paralleltest // [parseAddress] req
 			name:    "tls_not_a_table",
 			base:    &config.BaseReceiver{Type: config.ReceiverTypeHTTP},
 			cfg:     map[string]any{"address": ":https", "tls": "invalid"},
+			wantErr: true,
+		},
+		{
+			name:    "invalid_format",
+			base:    &config.BaseReceiver{Type: config.ReceiverTypeHTTP},
+			cfg:     map[string]any{"address": ":https", "format": "invalid"},
 			wantErr: true,
 		},
 		{
@@ -180,6 +188,54 @@ func TestReceiverServeHTTPAndClose(t *testing.T) { //nolint:paralleltest // [par
 	}
 }
 
+func TestReceiverServeHTTPFormat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantSent   []string
+		wantDLQ    []string
+	}{
+		{
+			name:       "valid_body",
+			body:       `{"a":1}`,
+			wantStatus: http.StatusAccepted,
+			wantSent:   []string{`json: [{"a":1}] (json)`},
+		},
+		{
+			name:       "unparsable_body",
+			body:       "not JSON",
+			wantStatus: http.StatusUnprocessableEntity,
+			wantDLQ:    []string{"requests: not JSON (default)"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			send, sent := recordSends(t)
+			dlq, dlqSent := recordSends(t)
+			base := config.BaseReceiver{Name: tt.name, Send: send, Fallback: dlq}
+			rcv := &Receiver{BaseReceiver: base, maxBodySize: defaultMaxBodySize, format: "json"}
+
+			w := httptest.NewRecorder()
+			rcv.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(tt.body)))
+
+			if got := w.Result().StatusCode; got != tt.wantStatus {
+				t.Errorf("ServeHTTP() status = %v, want %v", got, tt.wantStatus)
+			}
+			if got := sent(); !reflect.DeepEqual(got, tt.wantSent) {
+				t.Errorf("sent = %q, want %q", got, tt.wantSent)
+			}
+			if got := dlqSent(); !reflect.DeepEqual(got, tt.wantDLQ) {
+				t.Errorf("sent to DLQ = %q, want %q", got, tt.wantDLQ)
+			}
+		})
+	}
+}
+
 func TestReadRequest(t *testing.T) {
 	t.Parallel()
 
@@ -208,6 +264,23 @@ func TestReadRequest(t *testing.T) {
 			maxBytes:   9,
 			wantOK:     false,
 			wantStatus: http.StatusRequestEntityTooLarge,
+		},
+		{
+			name:       "body_read_error",
+			req:        httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", nil),
+			body:       io.NopCloser(iotest.ErrReader(errors.New("read error"))),
+			maxBytes:   9,
+			wantOK:     false,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "success",
+			req:        httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", nil),
+			body:       io.NopCloser(strings.NewReader("123")),
+			maxBytes:   9,
+			want:       []byte("123"),
+			wantOK:     true,
+			wantStatus: http.StatusOK, // Not written: [Receiver.ServeHTTP] writes it after processing the body.
 		},
 	}
 	for _, tt := range tests {

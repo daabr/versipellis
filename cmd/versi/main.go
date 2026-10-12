@@ -75,7 +75,7 @@ func main() {
 	}
 	wg.Wait()
 
-	// Close the Dead Letter Queue (DLQ) only after all other senders are closed, to
+	// Close the Dead-Letter Queue (DLQ) only after all other senders are closed, to
 	// ensure it can still handle undelivered data from them while they're being closed.
 	dlq := senders[config.SenderTypeDLQ]
 	delete(senders, config.SenderTypeDLQ)

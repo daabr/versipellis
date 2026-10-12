@@ -50,6 +50,12 @@ func TestNewCollector(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "invalid_format",
+			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP},
+			cfg:     map[string]any{"url": "https://example.com", "format": "invalid"},
+			wantErr: true,
+		},
+		{
 			name:    "headers_not_a_table",
 			base:    &config.BaseCollector{Type: config.CollectorTypeHTTP},
 			cfg:     map[string]any{"url": "https://example.com", "headers": "Accept: application/json"},
