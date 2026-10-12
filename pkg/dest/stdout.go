@@ -214,13 +214,14 @@ func marshalPrintableBytesAsString(enc *jsontext.Encoder, data []byte) error {
 	if !utf8.Valid(data) {
 		return errors.ErrUnsupported
 	}
-	for _, r := range string(data) {
+	s := string(data)
+	for _, r := range s {
 		if !unicode.IsPrint(r) && !unicode.IsSpace(r) {
 			return errors.ErrUnsupported
 		}
 	}
 
 	// Success: printable UTF-8 bytes can be written as a regular string.
-	_ = enc.WriteToken(jsontext.String(string(data)))
+	_ = enc.WriteToken(jsontext.String(s))
 	return nil
 }
