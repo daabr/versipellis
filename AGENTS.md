@@ -173,11 +173,17 @@ Testing:
   - Exceptions: `discard` and `stdout` address simpler use-cases.
   - **Memory**: work registered for retries can live for many seconds, so after encoding a payload, release references to the original items (e.g., `data, encode = nil, nil` in captured variables) so only the encoded body stays in memory.
 - **Collectors with a batcher** use the same `guard` pattern: a timed dispatch may have already taken a batch from the buffer when `Close()` calls `Batcher.Flush()`, so `Close()` sets `closing` under `closingMu.Lock()` before flushing, to ensure the dispatch reaches the sender before `Done()` signals `main()` to close senders.
-- **Graceful rejection**: data that a sender accepted or received but can't deliver goes to its fallback sender via `deadLetter()`: the DLQ if it exists, otherwise `dest.Discard`, which safely releases resources (closes HTTP request and response bodies). The DLQ, `stdout`, and `discard` senders always use `dest.Discard`.
-  - This covers:
-    - `Send()` calls after `Close()` began (e.g., after a collector's or receiver's close timeout).
-    - Operations still waiting for a concurrency slot when `Close()` begins (including batches it flushes).
-    - Structured batches that fail to encode.
+- **Graceful rejection**: data that a sender accepted but can't deliver goes to its fallback sender via `deadLetter()`: the DLQ if it's available, otherwise `dest.Discard`, which safely releases resources (closes HTTP request and response bodies).
+  - Use-cases:
+    - The DLQ, `stdout`, and `discard` senders always use `dest.Discard`.
+    - Structured batches with encoding errors.
+    - Operations still waiting for a concurrency slot when `Close()` begins (including batches that it flushes).
+    - SQL collector workers after `abortTimeout`, or HTTP receiver handlers after a forced server close.
+  - Producers that outlive their own close timeouts are technically able to call `Send()` after `main()` has already started closing the DLQ.
+    - However, the closing duration of the DLQ is extremely short in practice, compared to its 1-second timeout:
+      - Writing a size-limited batch of size-limited files to a local disk almost never takes more than a few milliseconds.
+      - The process terminates as soon as the DLQ announces that it's closed.
+    - Anyway, if that happens, the only thing that the DLQ can do is discard the data with a warning.
   - Each rejection path must pass the data in a usable state: HTTP requests/responses get a fresh body from `GetBody`/the buffered copy, because the original may have been read or closed.
   - Not covered yet: delivery failures after retries are only logged (see roadmap).
 - `Close()` methods are idempotent and safe before startup. HTTP/SQL collectors wait at most `CloseTimeout + abortTimeout`; HTTP senders and receivers wait at most `CloseTimeout` (or an earlier context deadline). Local destination senders return immediately or use a fixed one-second timeout.

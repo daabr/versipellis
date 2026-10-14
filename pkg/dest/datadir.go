@@ -61,16 +61,21 @@ func InitDeadLetterQueue(rootDir string) *DeadLetterQueue {
 	return &DeadLetterQueue{root: r}
 }
 
-// Send encodes and writes any data into a file with a k-sortable name within the
-// "data" directory in the process's current working directory. Structured data (e.g.,
-// JSON objects and SQL rows) is encoded in the given format, or as JSON by default.
+// Send encodes and writes data into a file with a k-sortable name within the "data" directory in the process's
+// current working directory. Structured data (e.g., JSON objects and SQL rows) is encoded in the given format,
+// or as JSON by default.
+//
+// The DLQ is the last [config.Sender] to be closed, after closing all the other configured I/O components has
+// already completed or timed out. This means that this function can be called after [DeadLetterQueue.Close] only
+// by a collector or receiver goroutine that outlived its own close timeout. If that happens, the provided data is
+// undeliverable anyway, so we can only warn about it and release it resources before the process terminates.
 func (d *DeadLetterQueue) Send(ctx context.Context, data flow.Chunk, format config.Format) {
 	if flow.IsEmpty(data) {
 		return
 	}
 
 	if d.lameDuck.Load() {
-		Discard.Send(ctx, data, format)
+		discardAfterClose(ctx, data, format)
 		return
 	}
 
@@ -79,7 +84,7 @@ func (d *DeadLetterQueue) Send(ctx context.Context, data flow.Chunk, format conf
 	defer d.closeMu.RUnlock()
 
 	if d.lameDuck.Load() {
-		Discard.Send(ctx, data, format)
+		discardAfterClose(ctx, data, format)
 		return
 	}
 
@@ -126,6 +131,13 @@ func (d *DeadLetterQueue) Close(ctx context.Context) {
 			return
 		}
 	})
+}
+
+func discardAfterClose(ctx context.Context, data flow.Chunk, format config.Format) {
+	slog.Warn("data loss due to process termination", slog.String("data_type", fmt.Sprintf("%T", data)),
+		slog.Int("batch_size", data.Len()), slog.String("format", string(format)),
+	)
+	Discard.Send(ctx, data, format)
 }
 
 //bodyclose:handled
