@@ -102,6 +102,18 @@
 - Format: string containing decimal numbers, each with a unit suffix, e.g., `m` (minutes), and `s` (seconds)
 - Special case: `"0"` and negative values (e.g., `"-1s"`) = no client-side timeout
 
+`format` - convert structured data into a specific content type
+
+- Optional
+- Default: the source's `format` setting, if it has one, otherwise `"ndjson"`
+- Options:
+  - `"json"` (an array if the data contains multiple objects, otherwise an object)
+  - `"json_array"` (always an array, even when there are fewer than 2 objects)
+  - `"ndjson"` ([NDJSON](https://ndjson.com/), a.k.a. JSONL)
+- This overrides the `format` setting of the source collector or receiver
+- This also sets the HTTP header `Content-Type` automatically, unless you override it in `headers`
+- Exception: opaque byte payloads and proxied HTTP requests and responses are sent as-is, ignoring this setting
+
 `concurrency_limit` - how many requests are allowed to be in progress at any time
 
 - Optional

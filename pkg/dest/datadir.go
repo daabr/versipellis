@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"math/big"
@@ -13,10 +14,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/daabr/versipellis/pkg/codec"
+	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/flow"
 )
 
@@ -50,22 +54,28 @@ func InitDeadLetterQueue(rootDir string) *DeadLetterQueue {
 
 	r, err := os.OpenRoot(rootDir)
 	if err != nil {
-		slog.Error("dead-letter-queue directory initialization error", slog.Any("error", err))
+		slog.Error("Dead-Letter Queue directory initialization error", slog.Any("error", err))
 		return nil
 	}
 
 	return &DeadLetterQueue{root: r}
 }
 
-// Send encodes and writes any data into a file with a k-sortable name
-// within the "data" directory in the process's current working directory.
-func (d *DeadLetterQueue) Send(ctx context.Context, data flow.Chunk) {
+// Send encodes and writes data into a file with a k-sortable name within the "data" directory in the process's
+// current working directory. Structured data (e.g., JSON objects and SQL rows) is encoded in the given format,
+// or as JSON by default.
+//
+// The DLQ is the last [config.Sender] to be closed, after closing all the other configured I/O components has
+// already completed or timed out. This means that this function can be called after [DeadLetterQueue.Close] only
+// by a collector or receiver goroutine that outlived its own close timeout. If that happens, the provided data is
+// undeliverable anyway, so we can only warn about it and release it resources before the process terminates.
+func (d *DeadLetterQueue) Send(ctx context.Context, data flow.Chunk, format config.Format) {
 	if flow.IsEmpty(data) {
 		return
 	}
 
 	if d.lameDuck.Load() {
-		Discard.Send(ctx, data)
+		discardAfterClose(ctx, data, format)
 		return
 	}
 
@@ -74,17 +84,18 @@ func (d *DeadLetterQueue) Send(ctx context.Context, data flow.Chunk) {
 	defer d.closeMu.RUnlock()
 
 	if d.lameDuck.Load() {
-		Discard.Send(ctx, data)
+		discardAfterClose(ctx, data, format)
 		return
 	}
 
 	d.inProgress.Go(func() {
-		for _, file := range encode(data) {
+		files, ext := encode(data, format)
+		for _, file := range files {
 			if len(file) == 0 {
 				continue
 			}
 			for range attempts {
-				if d.asyncWriteFile(file, now, dirPermissions, filePermissions) {
+				if d.asyncWriteFile(file, ext, now, dirPermissions, filePermissions) {
 					break
 				}
 			}
@@ -114,7 +125,7 @@ func (d *DeadLetterQueue) Close(ctx context.Context) {
 		case <-done:
 			// All done.
 		case <-shutdownCtx.Done():
-			slog.Warn("closing Dead-Letter-Queue writer forcefully", slog.Any("error", shutdownCtx.Err()))
+			slog.Warn("closing Dead-Letter Queue writer forcefully", slog.Any("error", shutdownCtx.Err()))
 			// Not *really* stopping disk writes, but the next step in
 			// main() is process termination, which does achieve this.
 			return
@@ -122,38 +133,82 @@ func (d *DeadLetterQueue) Close(ctx context.Context) {
 	})
 }
 
+func discardAfterClose(ctx context.Context, data flow.Chunk, format config.Format) {
+	slog.Warn("data loss due to process termination", slog.String("data_type", fmt.Sprintf("%T", data)),
+		slog.Int("batch_size", data.Len()), slog.String("format", string(format)),
+	)
+	Discard.Send(ctx, data, format)
+}
+
 //bodyclose:handled
-func encode(data flow.Chunk) [][]byte {
-	var files [][]byte
+func encode(data flow.Chunk, format config.Format) (files [][]byte, ext string) {
 	switch chunk := data.(type) {
 	case flow.Blobs:
-		return chunk
-
-	case flow.Structured:
-		file, err := flow.FormatJSON.Encode(chunk)
-		if err != nil {
-			slog.Error("failed to write structured data as JSON into DLQ file", slog.Any("error", err))
-			return nil
-		}
-		files = [][]byte{file}
-
+		return chunk, fileExtension(format)
 	case flow.HTTPRequests:
+		ext = ".http_req"
 		for _, req := range chunk {
 			if file := encodeHTTPRequest(req); file != nil {
 				files = append(files, file)
 			}
 		}
 	case flow.HTTPResponses:
+		ext = ".http_resp"
 		for _, resp := range chunk {
 			if file := encodeHTTPResponse(resp); file != nil {
 				files = append(files, file)
 			}
 		}
+	case flow.JSON:
+		return encodeStructured(chunk, format, codec.Formatter.EncodeJSON, printJSON)
+	case flow.Rows:
+		return encodeStructured(chunk, format, codec.Formatter.EncodeRows, printRows)
 	default:
 		slog.Error("unhandled data type in DLQ", slog.String("data_type", fmt.Sprintf("%T", chunk)))
 	}
 
-	return files
+	return files, ext
+}
+
+func fileExtension(format config.Format) string {
+	if format == "" || format == codec.FormatDefault {
+		return ""
+	}
+	ext := "." + strings.Map(stripInvalidChars, strings.ToLower(string(format)))
+	if ext == "." {
+		return ""
+	}
+	return ext
+}
+
+func stripInvalidChars(r rune) rune {
+	if r < '0' || (r > '9' && r != '_' && r < 'a') || r > 'z' {
+		return -1
+	}
+	return r
+}
+
+// encodeStructured encodes structured data in the given format (JSON by default)
+// into a single DLQ file. However, the DLQ is a last resort, so if that fails, we
+// prefer to save whatever we can in a lossy way instead of dropping all the data.
+func encodeStructured[C flow.JSON | flow.Rows](
+	chunk C, format config.Format, strict func(codec.Formatter, C) ([]byte, error), lossy func(io.Writer, C) error,
+) ([][]byte, string) {
+	format, fmtr := codec.Resolve(format, codec.FormatJSON)
+	content, err := strict(fmtr, chunk)
+	if err == nil {
+		return [][]byte{content}, fileExtension(format)
+	}
+
+	slog.Warn("failed to encode structured data into DLQ file, falling back to lossy NDJSON", slog.Any("error", err),
+		slog.String("data_type", fmt.Sprintf("%T", chunk)), slog.String("format", string(format)),
+	)
+	buf := new(bytes.Buffer)
+	_ = lossy(buf, chunk)
+	if buf.Len() == 0 {
+		return nil, ""
+	}
+	return [][]byte{buf.Bytes()}, ".lossy_ndjson"
 }
 
 func encodeHTTPRequest(req *http.Request) []byte {
@@ -162,6 +217,12 @@ func encodeHTTPRequest(req *http.Request) []byte {
 	}
 	if req.Body != nil {
 		defer req.Body.Close()
+	}
+
+	redactHeaders(req.Header)
+	redactHeaders(req.Trailer)
+	if req.URL != nil {
+		req.URL.RawQuery = redactQuery(req.URL.RawQuery)
 	}
 
 	buf := new(bytes.Buffer)
@@ -180,6 +241,9 @@ func encodeHTTPResponse(resp *http.Response) []byte {
 		defer resp.Body.Close()
 	}
 
+	redactHeaders(resp.Header)
+	redactHeaders(resp.Trailer)
+
 	buf := new(bytes.Buffer)
 	if err := resp.Write(buf); err != nil {
 		slog.Error("failed to write HTTP response into DLQ file", slog.Any("error", err))
@@ -188,9 +252,9 @@ func encodeHTTPResponse(resp *http.Response) []byte {
 	return buf.Bytes()
 }
 
-func (d *DeadLetterQueue) asyncWriteFile(data []byte, now time.Time, dirPerms, filePerms os.FileMode) bool {
+func (d *DeadLetterQueue) asyncWriteFile(data []byte, ext string, now time.Time, dirPerms, filePerms os.FileMode) bool {
 	dir, file := uniqueKSortablePath(now)
-	path := filepath.Join(dir, file)
+	path := filepath.Join(dir, file+ext)
 
 	if err := d.root.Mkdir(dir, dirPerms); err != nil && !errors.Is(err, os.ErrExist) {
 		slog.Error("failed to create DLQ subdirectory", slog.Any("error", err), slog.String("dir", dir))
@@ -206,6 +270,7 @@ func (d *DeadLetterQueue) asyncWriteFile(data []byte, now time.Time, dirPerms, f
 
 	if err := writeAndSync(f, data); err != nil {
 		slog.Error("failed to write DLQ file", slog.Any("error", err), slog.String("path", path))
+		_ = f.Close()
 		_ = d.root.Remove(path) // Cleanup in case the file was created but writing to it failed.
 		return false
 	}

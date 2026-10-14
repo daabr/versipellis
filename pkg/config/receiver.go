@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// ReceiverType* constants represent all the available types of "receiver" configurations in the TOML file.
+// ReceiverType* constants represent all the available types of "receiver" sections in the TOML file.
 const (
 	ReceiverTypeHTTP  = "http"
 	ReceiverTypeHTTP3 = "http3"
@@ -18,13 +18,14 @@ var validReceiverTypes = []string{
 	ReceiverTypeHTTP3,
 }
 
-// BaseReceiver contains the basic details of any "receiver" configuration in the TOML file.
+// BaseReceiver contains the basic details of any "receiver" section in the TOML file.
 type BaseReceiver struct {
 	Type string
 	Name string
 
 	Destination string
 	Send        SendFunc
+	Fallback    SendFunc
 }
 
 // NewBaseReceiver creates a new [BaseReceiver] from the given configuration,
@@ -35,6 +36,9 @@ func NewBaseReceiver(cfg map[string]any, name string, senders map[string]Sender)
 	r.Destination = strings.TrimSpace(Value(cfg, "destination", "")) // Attention: case sensitive!
 	if sender, found := senders[r.Destination]; found {
 		r.Send = sender.Send
+	}
+	if dlq, found := senders[SenderTypeDLQ]; found {
+		r.Fallback = dlq.Send
 	}
 
 	switch {

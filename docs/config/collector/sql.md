@@ -36,6 +36,16 @@
 - Format: string containing decimal numbers, each with a unit suffix, e.g., `h` (hours), `m` (minutes), and `s` (seconds)
 - Special case: `"0"` and negative values (e.g., `"-1s"`) = no client-side timeout
 
+`format` - preferred downstream format for the results
+
+- Optional
+- Default: `"ndjson"`
+- Options:
+  - `"json"` (an array if the result contains multiple rows, otherwise an object)
+  - `"json_array"` (always an array, even when there are fewer than 2 rows)
+  - `"ndjson"` ([NDJSON](https://ndjson.com/), a.k.a. JSONL)
+- The configured [sender](../sender/README.md) may override this
+
 ## `[collector.sql.batch]` Sub-Section
 
 - Optional

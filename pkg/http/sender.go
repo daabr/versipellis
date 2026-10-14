@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json/jsontext"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/daabr/versipellis/pkg/codec"
 	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/dest"
 	"github.com/daabr/versipellis/pkg/flow"
 )
 
@@ -33,19 +34,22 @@ const (
 
 // Sender contains all the configuration and state details for sending HTTP requests.
 type Sender struct {
-	Name string
-	Type string
+	Name     string
+	Type     string
+	fallback config.SendFunc
 
 	url     *url.URL
 	method  string
 	headers http.Header
 	timeout time.Duration
+	format  config.Format
 	tls     *tls.Config
 	retries *retries
 
 	transportID string
 	client      *http.Client
-	batch       *flow.Batcher[map[string]any]
+	jsonBatches batchersMap[jsontext.Value] // See [initBatchers].
+	rowBatches  batchersMap[flow.Row]
 
 	slots      chan struct{} // See [Sender.sendWithConcurrencyLimit].
 	inProgress sync.WaitGroup
@@ -58,7 +62,7 @@ type Sender struct {
 
 // NewSender creates a new [config.Sender] with the provided configuration, which was read
 // from a TOML file. It checks the details and returns an error if any of them is invalid.
-func NewSender(cfg map[string]any, name, baseType string) (*Sender, error) {
+func NewSender(cfg map[string]any, name, baseType string, dlq config.Sender) (*Sender, error) {
 	s := &Sender{Name: name, Type: baseType, closing: make(chan struct{}), stop: make(chan struct{})}
 	var err error
 
@@ -80,6 +84,22 @@ func NewSender(cfg map[string]any, name, baseType string) (*Sender, error) {
 	if s.retries, err = parseRetries(cfg["retries"], s.method, s.Name); err != nil {
 		return nil, err
 	}
+	if s.format, err = codec.ParseStructuredFormat(cfg); err != nil {
+		return nil, fmt.Errorf("format setting: %w", err)
+	}
+	if dlq != nil {
+		s.fallback = dlq.Send
+	}
+
+	concurrency := config.Value(cfg, "concurrency_limit", defaultConcurrencyLimit)
+	if concurrency < 1 {
+		slog.Warn("normalizing sender concurrency limit", slog.String("name", s.Name),
+			slog.Int64("below_min", concurrency), slog.Int64("new_max_value", maxConcurrencyLimit),
+		)
+		concurrency = maxConcurrencyLimit
+	}
+	concurrencyLimit := config.BoundedInt(concurrency, 1, maxConcurrencyLimit, s.Name, "sender concurrency limit")
+	s.slots = make(chan struct{}, concurrencyLimit)
 
 	if s.tls, s.transportID, err = loadClientTLSConfig(cfg["tls"], s.Type); err != nil {
 		return nil, err
@@ -110,26 +130,53 @@ func NewSender(cfg map[string]any, name, baseType string) (*Sender, error) {
 		return nil, fmt.Errorf("unexpected sender type %q", s.Type)
 	}
 
-	concurrency := config.Value(cfg, "concurrency_limit", defaultConcurrencyLimit)
-	if concurrency < 1 {
-		slog.Warn("normalizing sender concurrency limit", slog.String("name", s.Name),
-			slog.Int64("below_min", concurrency), slog.Int64("new_max_value", maxConcurrencyLimit),
-		)
-		concurrency = maxConcurrencyLimit
-	}
-	concurrencyLimit := config.BoundedInt(concurrency, 1, maxConcurrencyLimit, s.Name, "sender concurrency limit")
-	s.slots = make(chan struct{}, concurrencyLimit)
-
 	var limits flow.Limits
 	if limits, err = config.BatchLimits(cfg["batch"], s.Name, defaultBatchLimits); err != nil {
 		return nil, fmt.Errorf("HTTP batching limits: %w", err)
 	}
-	opts := new(flow.Options[map[string]any]{Guard: s.guard})
-	if s.batch, err = flow.NewBatcher(limits, s.sendStructured, opts); err != nil {
-		return nil, fmt.Errorf("HTTP batching: %w", err)
+	// Both kinds of batchers have the same limits and options, so if one fails, the other would fail too.
+	if s.jsonBatches, err = initBatchers(s, limits, codec.Formatter.EncodeJSON); err == nil {
+		s.rowBatches, err = initBatchers(s, limits, codec.Formatter.EncodeRows)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	return s, nil
+}
+
+type (
+	batchersMap[T flow.StructuredItem]   = map[config.Format]*flow.Batcher[T]
+	formatterFunc[T flow.StructuredItem] = func(codec.Formatter, flow.ChunkOf[T]) ([]byte, error)
+)
+
+// initBatchers creates batchers for a single kind of structured data (e.g., [flow.JSON] or [flow.Rows]),
+// which encode their batches with the given function (e.g., [codec.Formatter.EncodeJSON]) and send them.
+// Data in different formats can't be joined in a single payload, so each structured format needs to have its
+// own batcher (while non-structured data is sent directly without batching). However, an explicit sender format
+// applies to all the data and overrides upstream format settings, so in that case only one batcher is needed.
+func initBatchers[T flow.StructuredItem](s *Sender, l flow.Limits, encode formatterFunc[T]) (batchersMap[T], error) {
+	opts := new(flow.Options[T]{Guard: s.guard})
+	batchers := make(batchersMap[T])
+	for format, fmtr := range codec.StructuredFormats() {
+		if s.format != codec.FormatDefault && format != s.format {
+			continue
+		}
+
+		dispatch := func(ctx context.Context, items []T) {
+			chunk := flow.ChunkOf[T](items)
+			s.sendStructured(ctx, chunk, format, fmtr.ContentType(), func() ([]byte, error) {
+				return encode(fmtr, chunk)
+			})
+		}
+		b, err := flow.NewBatcher(l, dispatch, opts)
+		if err != nil {
+			return nil, fmt.Errorf("HTTP batching (%s format): %w", format, err)
+		}
+		batchers[format] = b
+	}
+
+	return batchers, nil
 }
 
 // guard synchronizes dispatches of delayed batches (see [flow.Options.Guard]) with [Sender.Close].
@@ -142,38 +189,66 @@ func (s *Sender) guard(flush func()) {
 	}
 }
 
-// Send any data as an HTTP request to the configured [Sender], retrying on transient errors
-// based on [Sender.retries]. Byte blobs are sent as raw payloads, full [http.Request]s and
-// [http.Response]s are proxied with their headers and body preserved. Other data types are
-// encoded, if possible. This method supports batching based on user-configured [flow.Limits].
+// outputFormat returns the format in which the sender should send the given data, which applies to
+// its batching, encoding, and rejections alike. For structured data, it's the sender's own explicit
+// format, or the given upstream format, or NDJSON ([NewSender] ensures that its own format is either
+// default or structured). Blobs keep the upstream format (e.g., an encoded payload's format),
+// but they're opaque bytes by definition, so the default format becomes [codec.FormatRaw].
+// Other data (i.e. HTTP messages) keeps the upstream format, because it's sent as-is.
+func (s *Sender) outputFormat(data flow.Chunk, upstream config.Format) config.Format {
+	switch data.(type) {
+	case flow.Blobs:
+		if upstream == codec.FormatDefault {
+			return codec.FormatRaw
+		}
+		return upstream
+	case flow.JSON, flow.Rows:
+		if s.format != codec.FormatDefault {
+			return s.format
+		}
+		format, _ := codec.Resolve(upstream, codec.FormatNDJSON)
+		return format
+	default:
+		return upstream
+	}
+}
+
+// Send any data as an HTTP request to the configured [Sender], retrying on transient errors based on [Sender.retries].
+// Byte blobs are sent as raw payloads, full [http.Request]s and [http.Response]s are proxied with their headers and
+// body preserved. JSON objects and rows are encoded in the sender's configured format, or the source's format, or
+// as NDJSON - in this order of precedence. This method supports batching based on user-configured [flow.Limits].
 //
 // Concurrency & lifecycle: the entire chunk is either accepted or rejected, because this method holds a read lock
 // of [Sender.closeMu] while it checks [Sender.lameDuck] and registers work in [Sender.inProgress], so [Sender.Close]
 // can't start waiting in the middle. Therefore, nothing under this lock may block, and the actual I/O is asynchronous.
-func (s *Sender) Send(ctx context.Context, data flow.Chunk) {
+func (s *Sender) Send(ctx context.Context, data flow.Chunk, format config.Format) {
 	if flow.IsEmpty(data) {
 		return
 	}
+	format = s.outputFormat(data, format)
 
 	s.closeMu.RLock()
 	defer s.closeMu.RUnlock()
 
 	if s.lameDuck.Load() {
-		slog.Warn("cannot send HTTP request: shutdown in progress",
-			slog.String("name", s.Name), slog.Int("batch_size", data.Len()),
+		sender := deadLetter(ctx, s.fallback, data, format)
+		slog.Warn("cannot send HTTP request: shutdown in progress", slog.String("name", s.Name),
+			slog.Int("batch_size", data.Len()), slog.String("fallback", sender),
 		)
-		dest.Discard.Send(ctx, data)
 		return
 	}
 
 	ctx = context.WithoutCancel(ctx)
 	switch chunk := data.(type) {
-	case flow.Structured:
-		s.batch.AddChunk(ctx, chunk) // May dispatch a full batch synchronously, still under the read lock.
+	// Structured data may dispatch a full batch synchronously, still under the read lock.
+	case flow.JSON:
+		s.jsonBatches[format].AddChunk(ctx, chunk)
+	case flow.Rows:
+		s.rowBatches[format].AddChunk(ctx, chunk)
 
 	case flow.Blobs:
 		for _, blob := range chunk {
-			s.sendBlob(ctx, blob)
+			s.sendBlob(ctx, blob, format)
 		}
 	case flow.HTTPRequests:
 		for _, req := range chunk {
@@ -209,7 +284,13 @@ func (s *Sender) Close(ctx context.Context) {
 			close(s.closing)
 			defer close(done)
 
-			s.batch.Flush(ctx) // Forceful shutdowns abort its requests too, via [Sender.stop].
+			// Forceful shutdowns abort the requests of these batches too, via [Sender.stop].
+			for _, b := range s.jsonBatches {
+				b.Flush(ctx)
+			}
+			for _, b := range s.rowBatches {
+				b.Flush(ctx)
+			}
 			s.inProgress.Wait()
 		}()
 
@@ -234,9 +315,9 @@ func (s *Sender) Close(ctx context.Context) {
 // goroutines are cheap, and their payloads were already in memory anyway.
 //
 // If a slot is available immediately, it's acquired synchronously, so the request is sent even if [Sender.Close]
-// begins before its goroutine starts (e.g., batches that Close flushes). Only requests that are blocked by the
-// limit wait for a slot, and if [Sender.Close] begins first, they're dropped instead of delaying the shutdown.
-func (s *Sender) sendWithConcurrencyLimit(fn func()) {
+// begins before its goroutine starts (e.g., batches that Close flushes). Only requests that are blocked by the limit
+// wait for a slot. If [Sender.Close] begins first, they're rejected (sent to the DLQ) so as not to delay the shutdown.
+func (s *Sender) sendWithConcurrencyLimit(fn func(), reject func() string) {
 	select {
 	case s.slots <- struct{}{}: // Non-blocking, so it's safe under the read lock.
 		s.inProgress.Go(func() {
@@ -257,14 +338,17 @@ func (s *Sender) sendWithConcurrencyLimit(fn func()) {
 		// Check again, because if a slot was released during [Sender.Close], the choice above was random.
 		select {
 		case <-s.closing:
-			slog.Warn("HTTP request dropped while waiting for concurrency slot", slog.String("name", s.Name))
+			sender := reject()
+			slog.Warn("HTTP request not sent: shutdown began while waiting for concurrency slot",
+				slog.String("name", s.Name), slog.String("fallback", sender),
+			)
 		default:
 			fn()
 		}
 	})
 }
 
-func (s *Sender) sendBlob(ctx context.Context, body []byte) {
+func (s *Sender) sendBlob(ctx context.Context, body []byte, format config.Format) {
 	if len(body) == 0 { // Upstream invariant violation: shouldn't have been sent at all.
 		slog.Error("cannot send HTTP request with no payload",
 			slog.String("name", s.Name), slog.String("format", "raw_bytes"),
@@ -279,30 +363,40 @@ func (s *Sender) sendBlob(ctx context.Context, body []byte) {
 
 	s.sendWithConcurrencyLimit(func() {
 		s.sendWithRetries(ctx, s.url.Clone(), outHdr, retryableBody(body), int64(len(body)))
+	}, func() string {
+		return deadLetter(ctx, s.fallback, flow.Blobs{body}, format)
 	})
 }
 
-// sendStructured is called only via [Sender.batch]: from [Sender.Send] and [Sender.guard], which hold a read lock
-// of [Sender.closeMu] after checking [Sender.lameDuck], and from [Sender.Close] before it waits for requests that are
-// in progress. Either way, it may register new work without checking [Sender.lameDuck] again, and it must not acquire
-// a recursive read lock, which may deadlock with Close. Encoding happens asynchronously, so it doesn't hold the lock,
-// and only after acquiring a concurrency slot, so the number of encoded payloads in memory is bounded too.
-func (s *Sender) sendStructured(ctx context.Context, data []map[string]any) {
+// sendStructured is called only via [initBatchers]: from [Sender.Send] and [Sender.guard], which hold a read
+// lock of [Sender.closeMu] after checking [Sender.lameDuck], and [Sender.Close] before it waits for requests that
+// are in progress. Either way, it may register new work without checking [Sender.lameDuck] again, and it must not
+// acquire a recursive read lock, which may deadlock with Close. Encoding happens asynchronously, so it doesn't hold
+// the lock, and only after acquiring a concurrency slot, so the number of encoded payloads in memory is bounded too.
+// If encoding fails, the data is passed as-is to the sender's fallback (the DLQ), which encodes it on its own terms.
+func (s *Sender) sendStructured(ctx context.Context, data flow.Chunk, format config.Format, contentType string,
+	encode func() ([]byte, error),
+) {
 	s.sendWithConcurrencyLimit(func() {
-		body, err := flow.FormatNDJSON.Encode(data)
+		body, err := encode()
 		if err != nil {
-			slog.Error("failed to encode HTTP request payload", slog.Any("error", err),
-				slog.String("name", s.Name), slog.Int("batch_size", len(data)), slog.String("format", "ndjson"),
+			sender := deadLetter(ctx, s.fallback, data, format)
+			slog.Warn("failed to encode HTTP request payload", slog.Any("error", err), slog.String("name", s.Name),
+				slog.Int("batch_size", data.Len()), slog.String("format", string(format)), slog.String("fallback", sender),
 			)
 			return
 		}
+		// Only the encoded body is needed from here on (including retries), so release the original items.
+		data, encode = nil, nil
 
 		outHdr := s.headers.Clone()
 		if outHdr.Get(contentTypeHeader) == "" {
-			outHdr.Set(contentTypeHeader, flow.FormatNDJSON.ContentType())
+			outHdr.Set(contentTypeHeader, contentType)
 		}
 
 		s.sendWithRetries(ctx, s.url.Clone(), outHdr, retryableBody(body), int64(len(body)))
+	}, func() string {
+		return deadLetter(ctx, s.fallback, data, format)
 	})
 }
 
@@ -321,6 +415,8 @@ func (s *Sender) sendHTTPRequest(ctx context.Context, req *http.Request) {
 	if req.Body == nil && req.GetBody == nil {
 		s.sendWithConcurrencyLimit(func() {
 			s.sendWithRetries(ctx, outURL, outHdr, retryableBody(nil), 0)
+		}, func() string {
+			return s.rejectRequest(ctx, req, nil)
 		})
 		return
 	}
@@ -330,6 +426,8 @@ func (s *Sender) sendHTTPRequest(ctx context.Context, req *http.Request) {
 		}
 		s.sendWithConcurrencyLimit(func() {
 			s.sendWithRetries(ctx, outURL, outHdr, req.GetBody, req.ContentLength)
+		}, func() string {
+			return s.rejectRequest(ctx, req, req.GetBody)
 		})
 		return
 	}
@@ -344,7 +442,20 @@ func (s *Sender) sendHTTPRequest(ctx context.Context, req *http.Request) {
 
 	s.sendWithConcurrencyLimit(func() {
 		s.sendWithRetries(ctx, outURL, outHdr, retryableBody(b), int64(len(b)))
+	}, func() string {
+		return s.rejectRequest(ctx, req, retryableBody(b))
 	})
+}
+
+// rejectRequest passes an HTTP request that wasn't sent to the fallback sender (see [deadLetter]). Its original
+// body may have been consumed or closed already, so it's replaced with a fresh one from getBody, if there is one.
+func (s *Sender) rejectRequest(ctx context.Context, req *http.Request, getBody getBodyFunc) string {
+	if getBody != nil {
+		if body, err := getBody(); err == nil {
+			req.Body = body
+		}
+	}
+	return deadLetter(ctx, s.fallback, flow.HTTPRequests{req}, codec.FormatDefault)
 }
 
 func (s *Sender) sendHTTPResponse(ctx context.Context, resp *http.Response) {
@@ -367,6 +478,8 @@ func (s *Sender) sendHTTPResponse(ctx context.Context, resp *http.Response) {
 		// working around the fact that [http.Response] doesn't have a GetBody() method.
 		s.sendWithConcurrencyLimit(func() {
 			s.sendWithRetries(ctx, s.url.Clone(), outHdr, b.GetBody, resp.ContentLength)
+		}, func() string {
+			return s.rejectResponse(ctx, resp, b.GetBody)
 		})
 		return
 	}
@@ -381,7 +494,17 @@ func (s *Sender) sendHTTPResponse(ctx context.Context, resp *http.Response) {
 
 	s.sendWithConcurrencyLimit(func() {
 		s.sendWithRetries(ctx, s.url.Clone(), outHdr, retryableBody(b), int64(len(b)))
+	}, func() string {
+		return s.rejectResponse(ctx, resp, retryableBody(b))
 	})
+}
+
+// rejectResponse is like [Sender.rejectRequest], for HTTP responses.
+func (s *Sender) rejectResponse(ctx context.Context, resp *http.Response, getBody getBodyFunc) string {
+	if body, err := getBody(); err == nil {
+		resp.Body = body
+	}
+	return deadLetter(ctx, s.fallback, flow.HTTPResponses{resp}, codec.FormatDefault)
 }
 
 func retryableBody(b []byte) getBodyFunc {

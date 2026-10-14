@@ -17,7 +17,7 @@ type Limits struct {
 }
 
 // Options are optional settings for a [Batcher].
-type Options[T Kind] struct {
+type Options[T Item] struct {
 	// SizeOf returns the size of an item. It is required if [Limits.MaxBytes] is positive.
 	SizeOf func(T) int
 
@@ -30,11 +30,11 @@ type Options[T Kind] struct {
 	Guard func(flush func())
 }
 
-// Batcher accumulates items of any [Kind], and dispatches them in batches when a batch reaches [Limits.MaxItems]
+// Batcher accumulates items of any [Item] type, and dispatches them in batches when a batch reaches [Limits.MaxItems]
 // or [Limits.MaxBytes], when [Limits.Window] expires, or when it's flushed. If batching is disabled, it acts as
 // a trivial passthrough. It is safe for concurrent use, but the order of batches from concurrent producers is
 // non-deterministic. This mechanism is usable by collectors, receivers, and senders alike.
-type Batcher[T Kind] struct {
+type Batcher[T Item] struct {
 	limits   Limits
 	dispatch func(context.Context, []T)
 	sizeOf   func(T) int
@@ -51,7 +51,7 @@ type Batcher[T Kind] struct {
 // NewBatcher creates a new [Batcher], which passes each batch to the dispatch function, which takes
 // ownership of it. User-configured [Limits] are parsed and normalized by BatchLimits() in the "config"
 // package. This function returns an error and a nil instance if and only if the configuration is invalid.
-func NewBatcher[T Kind](limits Limits, dispatch func(context.Context, []T), opts *Options[T]) (*Batcher[T], error) {
+func NewBatcher[T Item](limits Limits, dispatch func(context.Context, []T), opts *Options[T]) (*Batcher[T], error) {
 	if opts == nil {
 		opts = new(Options[T])
 	}

@@ -108,7 +108,7 @@ func TestCollectorReceiverSender(t *testing.T) {
 			if tt.tls {
 				cfg["tls"] = map[string]any{"server_ca_cert_file": certPath}
 			}
-			sender, err := NewSender(cfg, "TestCollectorReceiverSender.sender", tt.baseType)
+			sender, err := NewSender(cfg, "TestCollectorReceiverSender.sender", tt.baseType, nil)
 			if err != nil {
 				t.Fatalf("NewSender() error: %v", err)
 			}
@@ -165,7 +165,7 @@ func TestCollectorReceiverSender(t *testing.T) {
 					cfg["url"] = "https://" + rcv.address
 					cfg["tls"] = map[string]any{"server_ca_cert_file": caPath}
 				}
-				sender, err = NewSender(cfg, "TestCollectorReceiverSender.client", tt.baseType)
+				sender, err = NewSender(cfg, "TestCollectorReceiverSender.client", tt.baseType, nil)
 				if err != nil {
 					t.Fatalf("NewSender() error: %v", err)
 				}

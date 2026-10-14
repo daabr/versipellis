@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/daabr/versipellis/pkg/flow"
 )
 
 // Defines the minimal interface required for [pgxpool.Pool], for testing purposes.
@@ -95,11 +98,13 @@ func (c *Collector) executePostgresQuery(execCtx, queryCtx context.Context) bool
 // PostgreSQL-specific variant of [Collector.processResults]. Using [pgx]
 // instead of [sql] for better performance and PostgreSQL feature support.
 func (c *Collector) processPostgresResults(ctx context.Context, rows pgx.Rows) (int, error) {
-	cols := rows.FieldDescriptions()
-	size := len(cols)
-	vals := make([]any, size)
+	fields := rows.FieldDescriptions()
+	size := len(fields)
+	cols := make([]string, size) // Shared by all the rows of the result-set, so it's read-only.
+	vals := make([]any, size)    // Reused by [pgx.ForEachRow] for each row, so it's copied below.
 	ptrs := make([]any, size)
 	for i := range size {
+		cols[i] = fields[i].Name
 		ptrs[i] = &vals[i]
 	}
 
@@ -108,10 +113,7 @@ func (c *Collector) processPostgresResults(ctx context.Context, rows pgx.Rows) (
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("query result processing canceled: %w", err)
 		}
-		row := make(map[string]any, size)
-		for i, col := range cols {
-			row[col.Name] = vals[i]
-		}
+		row := flow.Row{Cols: cols, Vals: slices.Clone(vals)}
 		c.batch.AddItem(ctx, row) // Async I/O, but it doesn't matter which ctx we use (detached by batcher anyway).
 		scanned++
 		return nil

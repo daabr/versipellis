@@ -16,9 +16,11 @@ Versipellis (`versi`) is a versatile, scalable tool for transferring and transfo
 
 It is an easy-to-use adapter and conduit around data pipelines, sources, and sinks. It can move and restructure data of any shape or size, with adjustable security in transit and at rest - while maintaining strong safeguards against corruption and loss, or latency and crashes under heavy load.
 
-The primary design principles of this project are: ease of use, efficiency at scale, security, low footprint, and maintainability.
+In other words: ["We should take all this data and push it somewhere else!"](https://knowyourmeme.com/memes/push-it-somewhere-else-patrick)
 
 [![Let's take all this data, and push it somewhere else](./images/patrick_meme.png)](https://knowyourmeme.com/memes/push-it-somewhere-else-patrick)
+
+The primary design principles of this project are: ease of use, efficiency at scale, security, low footprint, and maintainability.
 
 ## Getting Started
 
@@ -41,7 +43,7 @@ docker run -d --name my-versi-container \
 - Platforms: Linux (amd64/arm64)
 - Volumes / mount points:
   - `/app/config` - app and database configuration files, TLS certificates
-  - `/app/data` - dead letter queue (data that was received but not sent)
+  - `/app/data` - dead-letter queue (data that was received but not sent)
 - Already bundled and tested with:
   - Oracle Instant Client
   - unixODBC
@@ -107,7 +109,7 @@ Supported SQL-based databases:
 ### Zero Config
 
 - Stdout
-- Local filesystem (dead letter queue)
+- Local filesystem (dead-letter queue)
 
 ### HTTP Output
 

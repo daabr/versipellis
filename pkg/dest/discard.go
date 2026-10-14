@@ -3,6 +3,7 @@ package dest
 import (
 	"context"
 
+	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/flow"
 )
 
@@ -17,7 +18,7 @@ func newDiscard() discardSender {
 }
 
 //bodyclose:handled
-func (discardSender) Send(_ context.Context, data flow.Chunk) {
+func (discardSender) Send(_ context.Context, data flow.Chunk, _ config.Format) {
 	if flow.IsEmpty(data) {
 		return
 	}

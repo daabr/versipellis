@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/daabr/versipellis/pkg/codec"
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/flow"
 )
@@ -28,6 +29,7 @@ type Collector struct {
 	maxBodySize   int64
 	maxHeaderSize int64
 	timeout       time.Duration
+	format        config.Format
 	tls           *tls.Config
 	retries       *retries
 
@@ -76,6 +78,9 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	}
 	if c.body, err = loadBody(cfg, c.method); err != nil {
 		return nil, err
+	}
+	if c.format, err = codec.ParseFormat(cfg); err != nil {
+		return nil, fmt.Errorf("format setting: %w", err)
 	}
 	c.maxBodySize = parseByteSize(cfg, "max_body_size", c.Name, defaultMaxBodySize)
 	c.maxHeaderSize = parseByteSize(cfg, "max_headers_size", c.Name, defaultMaxHeaderSize)
@@ -222,15 +227,45 @@ func (c *Collector) requestWithConcurrencyLimit(schedCtx, execCtx context.Contex
 		c.inProgress.Go(func() {
 			defer func() { <-sem }()
 
-			resp := c.requestWithRetries(schedCtx, execCtx) //nolint:bodyclose // False positive despite bodyclose:handled.
+			resp := c.requestWithRetries(schedCtx, execCtx)
 			if resp.StatusCode <= MaxSuccessfulStatusCode {
-				c.Send(execCtx, flow.HTTPResponses{resp}) // I/O is asynchronous.
+				c.sendResponse(execCtx, resp)
 			}
 		})
 	default:
 		slog.Warn("HTTP collector is at its concurrency limit, skipping request",
 			slog.String("name", c.Name), slog.Int("limit", cap(sem)), slog.Time("skipped", scheduled),
 		)
+	}
+}
+
+// sendResponse passes a collected HTTP response to the collector's destination: as-is by default, or only
+// its body, in a specific format (when one is configured). If the body can't be converted to that format,
+// the entire HTTP response is routed to the Dead-Letter Queue. Either way, all I/O is asynchronous.
+func (c *Collector) sendResponse(ctx context.Context, resp *http.Response) {
+	if c.format == codec.FormatDefault {
+		c.Send(ctx, flow.HTTPResponses{resp}, c.format)
+		return
+	}
+
+	var chunk flow.Chunk
+	body, err := responseBody(resp)
+	if err == nil {
+		chunk, err = bodyChunk(body, c.format)
+	}
+	if err != nil {
+		sender := deadLetter(ctx, c.Fallback, flow.HTTPResponses{resp}, codec.FormatDefault)
+		slog.Warn("processing error in HTTP response body", slog.Any("error", err), slog.String("name", c.Name),
+			slog.String("format", string(c.format)), slog.String("fallback", sender),
+		)
+		return
+	}
+
+	if resp.Body != nil {
+		_ = resp.Body.Close() // The rest of the response is discarded, but the chunk may still reference its body.
+	}
+	if chunk != nil {
+		c.Send(ctx, chunk, c.format)
 	}
 }
 

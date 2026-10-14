@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/daabr/versipellis/pkg/codec"
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/dest"
 	"github.com/daabr/versipellis/pkg/flow"
@@ -44,6 +45,7 @@ func TestCollectorRequestWithRetries(t *testing.T) {
 		{"404", http.StatusNotFound, false},
 		{"405", http.StatusMethodNotAllowed, false},
 		{"413", http.StatusRequestEntityTooLarge, false},
+		{"422", http.StatusUnprocessableEntity, false},
 		{"431", http.StatusRequestHeaderFieldsTooLarge, false},
 		{"501", http.StatusNotImplemented, false},
 		{"503_retryable", http.StatusServiceUnavailable, true},
@@ -106,6 +108,7 @@ func TestSenderSendWithRetries(t *testing.T) { //nolint:paralleltest // Don't sh
 		{"404", http.StatusNotFound, false},
 		{"405", http.StatusMethodNotAllowed, false},
 		{"413", http.StatusRequestEntityTooLarge, false},
+		{"422", http.StatusUnprocessableEntity, false},
 		{"431", http.StatusRequestHeaderFieldsTooLarge, false},
 		{"501", http.StatusNotImplemented, false},
 		{"503_retryable", http.StatusServiceUnavailable, true},
@@ -123,12 +126,12 @@ func TestSenderSendWithRetries(t *testing.T) { //nolint:paralleltest // Don't sh
 			sender, err := NewSender(map[string]any{
 				"method": http.MethodPost, "url": server.URL,
 				"retries": map[string]any{"type": retryTypeStatic, "interval": "1ms"},
-			}, tt.name, config.SenderTypeHTTP)
+			}, tt.name, config.SenderTypeHTTP, nil)
 			if err != nil {
 				t.Fatalf("NewSender() error: %v", err)
 			}
 
-			sender.Send(t.Context(), flow.Blobs{[]byte("payload")})
+			sender.Send(t.Context(), flow.Blobs{[]byte("payload")}, codec.FormatDefault)
 			sender.inProgress.Wait()
 
 			wantRequests := 1
@@ -228,7 +231,7 @@ func TestSenderSendOnceEdgeCases(t *testing.T) {
 
 			sender, err := NewSender(
 				map[string]any{"method": http.MethodPost, "url": server.URL},
-				tt.name, config.SenderTypeHTTP,
+				tt.name, config.SenderTypeHTTP, nil,
 			)
 			if err != nil {
 				t.Fatalf("NewSender() error: %v", err)
@@ -436,7 +439,7 @@ func TestSenderSendWithRetriesShutdown(t *testing.T) {
 			sender, err := NewSender(map[string]any{
 				"method": http.MethodPost, "url": server.URL,
 				"retries": map[string]any{"type": retryTypeStatic, "interval": "1ms"},
-			}, tt.name, config.SenderTypeHTTP)
+			}, tt.name, config.SenderTypeHTTP, nil)
 			if err != nil {
 				t.Fatalf("NewSender() error: %v", err)
 			}
@@ -534,7 +537,7 @@ func TestSenderSendOnceNetworkError(t *testing.T) {
 
 	sender, err := NewSender(
 		map[string]any{"method": http.MethodPut, "url": server.URL, "timeout": "25ms"},
-		"TestSenderSendOnceNetworkError", config.SenderTypeHTTP,
+		"TestSenderSendOnceNetworkError", config.SenderTypeHTTP, nil,
 	)
 	if err != nil {
 		t.Fatalf("NewSender() error: %v", err)

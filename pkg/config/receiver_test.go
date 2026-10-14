@@ -52,3 +52,46 @@ func TestNewBaseReceiver(t *testing.T) {
 		})
 	}
 }
+
+func TestNewBaseReceiverWithFallbackSender(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		senders map[string]config.Sender
+		wantDLQ bool
+	}{
+		{
+			name:    "without_dlq",
+			senders: map[string]config.Sender{"": dest.Discard},
+			wantDLQ: false,
+		},
+		{
+			name:    "with_dlq",
+			senders: map[string]config.Sender{"": dest.Discard, config.SenderTypeDLQ: dest.Discard},
+			wantDLQ: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r, err := config.NewBaseReceiver(map[string]any{"type": config.ReceiverTypeHTTP}, tt.name, tt.senders)
+			if err != nil {
+				t.Fatalf("NewBaseReceiver() error: %v", err)
+			}
+			if got := r.Fallback != nil; got != tt.wantDLQ {
+				t.Errorf("NewBaseReceiver().Fallback != nil = %v, want %v", got, tt.wantDLQ)
+			}
+
+			cfg := map[string]any{"type": config.CollectorTypeSQL, "trigger": "boo!"}
+			c, err := config.NewBaseCollector(cfg, tt.name, tt.senders)
+			if err != nil {
+				t.Fatalf("NewBaseCollector() error: %v", err)
+			}
+			if got := c.Fallback != nil; got != tt.wantDLQ {
+				t.Errorf("NewBaseCollector().Fallback != nil = %v, want %v", got, tt.wantDLQ)
+			}
+		})
+	}
+}

@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -17,6 +18,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/daabr/versipellis/pkg/codec"
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/cron"
 	"github.com/daabr/versipellis/pkg/dest"
@@ -112,6 +114,50 @@ func TestNewCollector(t *testing.T) {
 				"batch":      map[string]any{"time_window": "invalid"},
 			},
 			wantErr: true,
+		},
+		{
+			name: "unsupported_batch_byte_limit", // Byte size batching is currently out of scope.
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			cfg: map[string]any{
+				"type":       DriverTypeSQLite,
+				"connection": "connection",
+				"query":      "SELECT 1",
+				"batch":      map[string]any{"max_bytes": int64(1024)},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid_format",
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			cfg: map[string]any{
+				"type":       DriverTypeSQLite,
+				"connection": "connection",
+				"query":      "SELECT 1",
+				"format":     "invalid",
+			},
+			wantErr: true,
+		},
+		{
+			name: "raw_format_not_supported",
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			cfg: map[string]any{
+				"type":       DriverTypeSQLite,
+				"connection": "connection",
+				"query":      "SELECT 1",
+				"format":     string(codec.FormatRaw),
+			},
+			wantErr: true,
+		},
+		{
+			name: "json_format",
+			base: &config.BaseCollector{Type: config.CollectorTypeSQL},
+			cfg: map[string]any{
+				"type":       DriverTypeSQLite,
+				"connection": "connection",
+				"query":      "SELECT 1",
+				"format":     string(codec.FormatJSON),
+			},
+			wantErr: false,
 		},
 		{
 			name: "happy_path",
@@ -574,8 +620,8 @@ func TestCollectorProcessResultsWithFakeDriver(t *testing.T) {
 			if gotRows != len(tt.wantRows) {
 				t.Errorf("Collector.processResults() row count = %d, want %d", gotRows, len(tt.wantRows))
 			}
-			if !reflect.DeepEqual(*sent, tt.wantRows) {
-				t.Errorf("Collector.processResults() sent rows = %+v, want %+v", *sent, tt.wantRows)
+			if !reflect.DeepEqual(sent(), tt.wantRows) {
+				t.Errorf("Collector.processResults() sent rows = %+v, want %+v", sent(), tt.wantRows)
 			}
 		})
 	}
@@ -588,6 +634,7 @@ func TestCollectorExecuteQueryBatches(t *testing.T) {
 		name        string
 		destination string
 		batch       map[string]any
+		format      config.Format
 		rows        int
 		wantSizes   []int // Number of rows in each chunk sent to the destination.
 	}{
@@ -619,6 +666,13 @@ func TestCollectorExecuteQueryBatches(t *testing.T) {
 			rows:        3,
 			wantSizes:   []int{1, 1, 1},
 		},
+		{
+			name:      "configured_format_passes_through_batcher",
+			batch:     map[string]any{"max_items": int64(2)},
+			format:    codec.FormatNDJSON,
+			rows:      3,
+			wantSizes: []int{2, 1},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -627,17 +681,21 @@ func TestCollectorExecuteQueryBatches(t *testing.T) {
 			var mu sync.Mutex
 			var gotSizes []int
 			var gotValues []int64
-			send := func(_ context.Context, chunk flow.Chunk) {
-				rows, ok := chunk.(flow.Structured)
+			wantFormat := cmp.Or(tt.format, codec.FormatNDJSON)
+			send := func(_ context.Context, chunk flow.Chunk, format config.Format) {
+				rows, ok := chunk.(flow.Rows)
 				if !ok {
-					t.Errorf("sent chunk type = %T, want flow.Structured", chunk)
+					t.Errorf("sent chunk type = %T, want flow.Rows", chunk)
 					return
+				}
+				if format != wantFormat {
+					t.Errorf("sent chunk format = %q, want %q", format, wantFormat)
 				}
 				mu.Lock()
 				defer mu.Unlock()
 				gotSizes = append(gotSizes, len(rows))
 				for _, row := range rows {
-					x, _ := row["x"].(int64)
+					x, _ := rowMap(t, row)["x"].(int64)
 					gotValues = append(gotValues, x)
 				}
 			}
@@ -654,6 +712,9 @@ func TestCollectorExecuteQueryBatches(t *testing.T) {
 			}
 			if tt.batch != nil {
 				cfg["batch"] = tt.batch
+			}
+			if tt.format != "" {
+				cfg["format"] = string(tt.format) // TOML strings are untyped.
 			}
 			coll, err := NewCollector(base, cfg)
 			if err != nil {
@@ -697,8 +758,8 @@ func TestCollectorProcessResultsCanceledBetweenResultSets(t *testing.T) {
 	t.Cleanup(cancel)
 
 	// Batching is disabled in [newTestBatcher], so each row is sent synchronously, as soon as it's scanned.
-	send := func(_ context.Context, chunk flow.Chunk) {
-		if rows, ok := chunk.(flow.Structured); ok && len(rows) > 0 && rows[0]["col"] == int64(1) {
+	send := func(_ context.Context, chunk flow.Chunk, _ config.Format) {
+		if rows, ok := chunk.(flow.Rows); ok && len(rows) > 0 && rows[0].Vals[0] == int64(1) {
 			cancel() // Right after the only row of the 1st result-set.
 		}
 	}
@@ -777,7 +838,7 @@ func TestCollectorCloseWaitsForTimedDispatch(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var sent atomic.Int64
 	c := &Collector{
-		Send: func(_ context.Context, chunk flow.Chunk) {
+		Send: func(_ context.Context, chunk flow.Chunk, _ config.Format) {
 			close(entered)
 			<-release
 			sent.Add(int64(chunk.Len()))
@@ -788,12 +849,12 @@ func TestCollectorCloseWaitsForTimedDispatch(t *testing.T) {
 	t.Cleanup(c.cancelSched)
 
 	var err error
-	opts := new(flow.Options[map[string]any]{Guard: c.guard})
+	opts := new(flow.Options[flow.Row]{Guard: c.guard})
 	if c.batch, err = flow.NewBatcher(flow.Limits{MaxItems: 10, Window: time.Millisecond}, c.sendRows, opts); err != nil {
 		t.Fatalf("flow.NewBatcher() error: %v", err)
 	}
 
-	c.batch.AddItem(t.Context(), map[string]any{"x": int64(1)})
+	c.batch.AddItem(t.Context(), flow.Row{Cols: []string{"x"}, Vals: []any{int64(1)}})
 	<-entered // The timed dispatch took the batch from the buffer, and is now blocked in the sender.
 
 	go c.Close(t.Context())
@@ -872,11 +933,11 @@ const (
 
 // newTestBatcher returns a row batcher for unit tests, with batching disabled: each call to
 // [flow.Batcher.AddItem] sends its row to the given function immediately and synchronously.
-func newTestBatcher(tb testing.TB, send config.SendFunc) *flow.Batcher[map[string]any] {
+func newTestBatcher(tb testing.TB, send config.SendFunc) *flow.Batcher[flow.Row] {
 	tb.Helper()
 
-	b, err := flow.NewBatcher(flow.Limits{}, func(ctx context.Context, rows []map[string]any) {
-		send(ctx, flow.Structured(rows))
+	b, err := flow.NewBatcher(flow.Limits{}, func(ctx context.Context, rows []flow.Row) {
+		send(ctx, flow.Rows(rows), codec.FormatDefault)
 	}, nil)
 	if err != nil {
 		tb.Fatalf("flow.NewBatcher() error: %v", err)
@@ -885,18 +946,39 @@ func newTestBatcher(tb testing.TB, send config.SendFunc) *flow.Batcher[map[strin
 }
 
 // newRecordingBatcher returns a row batcher for unit tests, with batching disabled: each call to
-// [flow.Batcher.AddItem] appends its row to the returned slice immediately and synchronously.
-func newRecordingBatcher(tb testing.TB) (*flow.Batcher[map[string]any], *[]map[string]any) {
+// [flow.Batcher.AddItem] records its row immediately and synchronously. The returned function converts
+// the recorded rows to maps only when it's called, so tests detect rows that share the same values slice.
+func newRecordingBatcher(tb testing.TB) (*flow.Batcher[flow.Row], func() []map[string]any) {
 	tb.Helper()
 
-	got := new([]map[string]any)
-	b, err := flow.NewBatcher(flow.Limits{}, func(_ context.Context, rows []map[string]any) {
-		*got = append(*got, rows...)
+	var got []flow.Row
+	b, err := flow.NewBatcher(flow.Limits{}, func(_ context.Context, rows []flow.Row) {
+		got = append(got, rows...)
 	}, nil)
 	if err != nil {
 		tb.Fatalf("flow.NewBatcher() error: %v", err)
 	}
-	return b, got
+	return b, func() []map[string]any {
+		var maps []map[string]any
+		for _, row := range got {
+			maps = append(maps, rowMap(tb, row))
+		}
+		return maps
+	}
+}
+
+// rowMap converts a [flow.Row] into a map, for readable comparisons in unit tests.
+func rowMap(tb testing.TB, row flow.Row) map[string]any {
+	tb.Helper()
+
+	if len(row.Cols) != len(row.Vals) {
+		tb.Fatalf("row has %d columns but %d values", len(row.Cols), len(row.Vals))
+	}
+	m := make(map[string]any, len(row.Cols))
+	for i, col := range row.Cols {
+		m[col] = row.Vals[i]
+	}
+	return m
 }
 
 var registerFakeSQLDriver = sync.OnceFunc(func() {
@@ -1034,7 +1116,7 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 				unblock := make(chan struct{})
 				var count atomic.Int32
 
-				base.Send = func(context.Context, flow.Chunk) {
+				base.Send = func(context.Context, flow.Chunk, config.Format) {
 					count.Add(1)
 					select {
 					case started <- struct{}{}:

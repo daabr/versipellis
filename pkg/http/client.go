@@ -373,9 +373,7 @@ func retryable(statusCode int) bool {
 		return false
 	case http.StatusRequestEntityTooLarge, http.StatusRequestURITooLong, http.StatusUnsupportedMediaType:
 		return false
-	case http.StatusRequestHeaderFieldsTooLarge:
-		return false
-	case http.StatusNotImplemented:
+	case http.StatusUnprocessableEntity, http.StatusRequestHeaderFieldsTooLarge, http.StatusNotImplemented:
 		return false
 	}
 	return true

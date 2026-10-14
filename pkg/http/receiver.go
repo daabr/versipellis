@@ -15,6 +15,7 @@ import (
 
 	"github.com/quic-go/quic-go/http3"
 
+	"github.com/daabr/versipellis/pkg/codec"
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/flow"
 )
@@ -28,6 +29,7 @@ type Receiver struct {
 	maxBodySize   int64
 	maxHeaderSize int64
 	timeout       time.Duration
+	format        config.Format
 	tls           *tls.Config
 
 	tcp *http.Server
@@ -51,6 +53,9 @@ func NewReceiver(base *config.BaseReceiver, cfg map[string]any) (*Receiver, erro
 	var err error
 	if r.address, err = parseAddress(config.Value(cfg, "address", ""), base.Type); err != nil {
 		return nil, err
+	}
+	if r.format, err = codec.ParseFormat(cfg); err != nil {
+		return nil, fmt.Errorf("format setting: %w", err)
 	}
 
 	r.maxBodySize = parseByteSize(cfg, "max_body_size", r.Name, defaultMaxBodySize)
@@ -148,31 +153,64 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, inReq *http.Request) {
 	// to stream multi-gigabyte files efficiently instead of buffering them naively.
 	body, ok := readRequest(w, inReq, r.Name, r.maxBodySize)
 	if !ok {
+		return // [readRequest] called [w.WriteHeader] internally.
+	}
+
+	if r.Send != nil && !r.sendRequest(inReq, body) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
 
-	if r.Send != nil {
-		// Note that we ignore the incoming request's method and path, to use the sender's preconfigured values.
-		outReq := inReq.Clone(inReq.Context())
-		// Update the "Content-Length" header, if needed.
-		if bodyLen := int64(len(body)); bodyLen != outReq.ContentLength {
-			outReq.ContentLength = bodyLen
-		}
-		// Memory optimization to avoid duplicate allocations: preserve access to the body's underlying
-		// []byte slice to support sender retries (which [io.ReadCloser] does not enable on its own).
-		outReq.Body = io.NopCloser(bytes.NewReader(body))
-		outReq.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(body)), nil
-		}
-
-		r.Send(inReq.Context(), flow.HTTPRequests{outReq}) // I/O is asynchronous.
-	}
-
+	w.WriteHeader(http.StatusAccepted)
 	slog.Debug("HTTP request received successfully", slog.String("name", r.Name),
 		slog.String("proto", inReq.Proto), slog.String("method", inReq.Method),
 		slog.String("remote_addr", inReq.RemoteAddr), slog.Int("content_length", len(body)),
 		slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
 	)
+}
+
+// sendRequest passes a received HTTP request to the receiver's destination: as-is by default, or only its body, in a
+// specific format (when one is configured). If the body can't be converted to that format, the entire HTTP request is
+// sent to the Dead-Letter Queue. Either way, all I/O is asynchronous, so the result is returned to the HTTP client.
+func (r *Receiver) sendRequest(inReq *http.Request, body []byte) bool {
+	ctx := inReq.Context()
+	if r.format == codec.FormatDefault {
+		r.Send(ctx, flow.HTTPRequests{outgoingRequest(inReq, body)}, r.format)
+		return true
+	}
+
+	chunk, err := bodyChunk(body, r.format)
+	if err != nil {
+		sender := deadLetter(ctx, r.Fallback, flow.HTTPRequests{outgoingRequest(inReq, body)}, codec.FormatDefault)
+		slog.Warn("processing error in received HTTP request body", slog.Any("error", err),
+			slog.String("name", r.Name), slog.String("format", string(r.format)), slog.String("fallback", sender),
+		)
+		return false
+	}
+	if chunk != nil {
+		r.Send(ctx, chunk, r.format)
+	}
+	return true
+}
+
+// outgoingRequest clones a received HTTP request, with its locally-buffered body, so it can be passed to senders.
+func outgoingRequest(inReq *http.Request, body []byte) *http.Request {
+	// We ignore the incoming request's method and path, to use the sender's preconfigured values.
+	outReq := inReq.Clone(inReq.Context())
+
+	// Update the "Content-Length" header, if needed.
+	if bodyLen := int64(len(body)); bodyLen != outReq.ContentLength {
+		outReq.ContentLength = bodyLen
+	}
+
+	// Memory optimization to avoid duplicate allocations: preserve access to the body's underlying
+	// []byte slice to support sender retries (which [io.ReadCloser] does not enable on its own).
+	outReq.Body = io.NopCloser(bytes.NewReader(body))
+	outReq.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+
+	return outReq
 }
 
 // readRequest reads the provided [http.Request.Body], and returns a locally-buffered copy,
@@ -201,6 +239,5 @@ func readRequest(w http.ResponseWriter, r *http.Request, name string, maxBytes i
 		return nil, false
 	}
 
-	w.WriteHeader(http.StatusAccepted)
-	return body, true
+	return body, true // The caller will write the response status, after processing the body.
 }
