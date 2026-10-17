@@ -3,7 +3,7 @@ module github.com/daabr/versipellis
 go 1.27
 
 require (
-	github.com/SAP/go-hdb v1.19.1
+	github.com/SAP/go-hdb v1.19.2
 	github.com/alexbrainman/odbc v0.0.0-20250601004241-49e6b2bc0cf0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/godror/godror v0.51.5
@@ -13,7 +13,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/quic-go/quic-go v0.63.0
 	github.com/snowflakedb/gosnowflake/v2 v2.3.0
-	golang.org/x/net v0.60.0
+	golang.org/x/net v0.61.0
 	modernc.org/sqlite v1.60.1
 )
 
@@ -78,13 +78,13 @@ require (
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20261007192929-f45ad48fbe92 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/term v0.46.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
