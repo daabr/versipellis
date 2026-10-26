@@ -15,11 +15,11 @@ ARG TARGETARCH
 # https://www.oracle.com/database/technologies/instant-client/linux-arm-aarch64-downloads.html
 WORKDIR /opt/oracle
 RUN if [ "${TARGETARCH}" = "amd64" ]; then \
-        BASIC_URL="https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip"; \
-        ODBC_URL="https://download.oracle.com/otn_software/linux/instantclient/instantclient-odbc-linuxx64.zip"; \
+        BASIC_URL="https://download.oracle.com/otn_software/linux/instantclient/2326400/instantclient-basiclite-linux.x64-23.26.4.0.0.zip"; \
+        ODBC_URL="https://download.oracle.com/otn_software/linux/instantclient/2326400/instantclient-odbc-linux.x64-23.26.4.0.0.zip"; \
     elif [ "${TARGETARCH}" = "arm64" ]; then \
-        BASIC_URL="https://download.oracle.com/otn_software/linux/instantclient/2326300/instantclient-basiclite-linux.arm64-23.26.3.0.0.zip"; \
-        ODBC_URL="https://download.oracle.com/otn_software/linux/instantclient/2326300/instantclient-odbc-linux.arm64-23.26.3.0.0.zip"; \
+        BASIC_URL="https://download.oracle.com/otn_software/linux/instantclient/2326400/instantclient-basiclite-linux.arm64-23.26.4.0.0.zip"; \
+        ODBC_URL="https://download.oracle.com/otn_software/linux/instantclient/2326400/instantclient-odbc-linux.arm64-23.26.4.0.0.zip"; \
     else \
         echo "Error - unsupported architecture: ${TARGETARCH}" && exit 1; \
     fi && \
