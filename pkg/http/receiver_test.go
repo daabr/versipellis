@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"testing/iotest"
+	"testing/synctest"
 	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
@@ -370,21 +371,64 @@ func TestReceiverClose(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		receiver *Receiver
-		wantOK   bool
+		name    string
+		started bool
+		timeout time.Duration
+		want    time.Duration
 	}{
 		{
-			name:     "adjust_timeout",
-			receiver: &Receiver{},
-			wantOK:   true,
+			name: "not_started",
+			want: 0,
+		},
+		{
+			name:    "default_timeout",
+			started: true,
+			timeout: 0,
+			want:    CloseTimeout,
+		},
+		{
+			name:    "capped_timeout",
+			started: true,
+			timeout: time.Hour,
+			want:    CloseTimeout,
+		},
+		{
+			name:    "custom_timeout",
+			started: true,
+			timeout: time.Second,
+			want:    time.Second,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			tt.receiver.Close(t.Context())
-			// No panic = success.
+
+			synctest.Test(t, func(t *testing.T) {
+				r := &Receiver{timeout: tt.timeout}
+				if tt.started {
+					r.state.Start()
+					r.state.InProgress.Add(1) // Never done before the timeout, so [Receiver.Close] waits for all of it.
+					defer r.state.InProgress.Done()
+				}
+
+				start := time.Now()
+				r.Close(t.Context())
+				if got := time.Since(start); got != tt.want {
+					t.Errorf("Receiver.Close() took %v, want %v", got, tt.want)
+				}
+				if got := r.state.IsClosing(); got != tt.started {
+					t.Errorf("Receiver.state.IsClosing() = %v, want %v", got, tt.started)
+				}
+
+				// Closing before startup must not consume [config.State.CloseOnce].
+				if !tt.started {
+					r.state.Start()
+					r.Close(t.Context())
+					if !r.state.IsClosing() {
+						t.Error("Receiver.state.IsClosing() = false after a later start and close, want true")
+					}
+				}
+			})
 		})
 	}
 }
