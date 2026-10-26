@@ -16,7 +16,7 @@ import (
 	"github.com/daabr/versipellis/pkg/flow"
 )
 
-func TestParseFile(t *testing.T) { //nolint:paralleltest // [os.Chdir] has process-wide effect.
+func TestParseFile(t *testing.T) {
 	dir := t.TempDir()
 
 	empty := filepath.Join(dir, "empty.toml")

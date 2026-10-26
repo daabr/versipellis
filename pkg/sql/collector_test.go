@@ -174,12 +174,12 @@ func TestNewCollector(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			c, gotErr := NewCollector(tt.base, tt.cfg)
+			coll, gotErr := NewCollector(tt.base, tt.cfg)
 			if (gotErr != nil) != tt.wantErr {
 				t.Fatalf("NewCollector() error = %v, wantErr %v", gotErr, tt.wantErr)
 			}
-			if c != nil {
-				if b := c.Base(); !reflect.DeepEqual(b, tt.base) {
+			if coll != nil {
+				if b := coll.Base(); !reflect.DeepEqual(b, tt.base) {
 					t.Errorf("Collector.Base() = %+v, want %+v", b, tt.base)
 				}
 			}
@@ -273,15 +273,6 @@ func TestLoadAndCheckQuery(t *testing.T) {
 	}
 }
 
-func TestCollectorStartNilGuard(t *testing.T) {
-	t.Parallel()
-
-	var nilCollector *Collector
-	if ok := nilCollector.Start(t.Context()); ok {
-		t.Error("nil Collector.Start() = true, want false")
-	}
-}
-
 func TestCollectorStart(t *testing.T) {
 	t.Parallel()
 
@@ -293,7 +284,7 @@ func TestCollectorStart(t *testing.T) {
 		t.Fatalf("config.NewBaseCollector() error: %v", err)
 	}
 
-	c, err := NewCollector(base, map[string]any{
+	coll, err := NewCollector(base, map[string]any{
 		"type":       DriverTypeSQLite,
 		"connection": ":memory:",
 		"query":      "SELECT 1",
@@ -302,14 +293,11 @@ func TestCollectorStart(t *testing.T) {
 		t.Fatalf("NewCollector() error: %v", err)
 	}
 
-	if ok := c.Start(t.Context()); !ok {
+	if ok := coll.Start(t.Context()); !ok {
 		t.Fatal("Collector.Start() failed")
 	}
-	if ok := c.Start(t.Context()); !ok {
-		t.Fatal("second Collector.Start() failed (should be idempotent)")
-	}
 
-	<-c.Done() // Wait for the collector's goroutine to finish its work.
+	<-coll.Done() // Wait for the collector's goroutine to finish its work.
 }
 
 func TestCollectorConnectionStringError(t *testing.T) {
@@ -405,7 +393,7 @@ func TestScheduleNextQuery(t *testing.T) {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
 				}
 
-				c, err := NewCollector(base, map[string]any{
+				coll, err := NewCollector(base, map[string]any{
 					"type":       DriverTypeSQLite,
 					"connection": ":memory:",
 					"query":      "SELECT 1;",
@@ -414,14 +402,14 @@ func TestScheduleNextQuery(t *testing.T) {
 					t.Fatalf("NewCollector() error: %v", err)
 				}
 
-				c.db, err = openDB(t.Context(), c.driver, c.conn)
+				coll.db, err = openDB(t.Context(), coll.driver, coll.conn)
 				if err != nil {
 					t.Fatalf("openDB() error: %v", err)
 				}
-				t.Cleanup(func() { _ = c.db.Close() })
+				t.Cleanup(func() { _ = coll.db.Close() })
 
 				ctx, cancel := context.WithCancel(t.Context())
-				c.cancelSched = cancel
+				schedCtx, execCtx := coll.state.StartWith(ctx)
 				if tt.cancel {
 					cancel()
 				} else {
@@ -429,11 +417,11 @@ func TestScheduleNextQuery(t *testing.T) {
 				}
 
 				if !tt.isAsync {
-					c.scheduleNext(ctx, ctx, time.Now())
+					coll.scheduleNext(schedCtx, execCtx, time.Now())
 					return
 				}
 
-				go c.scheduleNext(ctx, ctx, time.Now().Add(-5*time.Second))
+				go coll.scheduleNext(schedCtx, execCtx, time.Now().Add(-5*time.Second))
 				synctest.Wait()
 				cancel()
 				synctest.Wait()
@@ -529,6 +517,78 @@ func TestCollectorExecuteQuery(t *testing.T) {
 			}
 			if timestampUpdated := !coll.prevStart.IsZero(); timestampUpdated != tt.wantOK {
 				t.Errorf("Collector.prevXXXX checkpoint updated = %v, want %v", timestampUpdated, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestCollectorExecuteQueryCommit(t *testing.T) {
+	t.Parallel()
+
+	registerFakeSQLDriver()
+
+	tests := []struct {
+		name          string
+		driver        string
+		dsn           string
+		query         string
+		wantOK        bool
+		wantRemaining int // Rows left in the SQLite table after the query.
+	}{
+		{
+			name:          "sqlite_delete_committed",
+			driver:        DriverTypeSQLite,
+			dsn:           ":memory:",
+			query:         "DELETE FROM t RETURNING id",
+			wantOK:        true,
+			wantRemaining: 0,
+		},
+		{
+			name:   "commit_error",
+			driver: fakeSQLDriverName,
+			dsn:    "commitError",
+			query:  "SELECT 1",
+			wantOK: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var err error
+			coll := &Collector{driver: tt.driver, query: tt.query, batch: newTestBatcher(t, dest.Discard.Send)}
+			coll.db, err = sql.Open(tt.driver, tt.dsn)
+			if err != nil {
+				t.Fatalf("sql.Open() error: %v", err)
+			}
+			t.Cleanup(func() { _ = coll.db.Close() })
+
+			isSQLite := tt.driver == DriverTypeSQLite
+			if isSQLite {
+				coll.db.SetMaxOpenConns(1) // Each connection has its own in-memory database.
+				if _, err := coll.db.ExecContext(
+					t.Context(),
+					"CREATE TABLE t (id INTEGER); INSERT INTO t VALUES (1), (2);",
+				); err != nil {
+					t.Fatalf("sql.DB.ExecContext() error: %v", err)
+				}
+			}
+
+			if gotOK := coll.executeQuery(t.Context()); gotOK != tt.wantOK {
+				t.Errorf("Collector.executeQuery() = %v, want %v", gotOK, tt.wantOK)
+			}
+			if coll.prevStart.IsZero() {
+				t.Error("Collector.executeQuery() didn't update the checkpoint after collecting rows")
+			}
+
+			if isSQLite {
+				var got int
+				if err := coll.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM t").Scan(&got); err != nil {
+					t.Fatalf("sql.DB.QueryRowContext() error: %v", err)
+				}
+				if got != tt.wantRemaining {
+					t.Errorf("remaining rows after Collector.executeQuery() = %d, want %d", got, tt.wantRemaining)
+				}
 			}
 		})
 	}
@@ -792,22 +852,23 @@ func TestCollectorClose(t *testing.T) {
 	t.Run("unstarted", func(t *testing.T) {
 		t.Parallel()
 
-		c := &Collector{batch: newTestBatcher(t, dest.Discard.Send)}
-		c.Close(t.Context())
+		coll := &Collector{batch: newTestBatcher(t, dest.Discard.Send)}
+		coll.Close(t.Context())
 	})
 
 	t.Run("fake_pg_pool", func(t *testing.T) {
 		t.Parallel()
 
-		c := &Collector{pgPool: new(fakePGPool), usingPG: true, batch: newTestBatcher(t, dest.Discard.Send)}
-		_, c.cancelSched = context.WithCancel(t.Context())
-		c.closed = make(chan struct{})
-		t.Cleanup(c.cancelSched)
+		coll := &Collector{
+			pgPool: new(fakePGPool), usingPG: true,
+			batch: newTestBatcher(t, dest.Discard.Send),
+		}
+		coll.state.Start()
 
-		c.Close(t.Context())
-		c.Close(t.Context())
+		coll.Close(t.Context())
+		coll.Close(t.Context())
 
-		<-c.Done()
+		<-coll.Done()
 	})
 
 	t.Run("in_memory_sqlite", func(t *testing.T) {
@@ -818,13 +879,12 @@ func TestCollectorClose(t *testing.T) {
 			t.Fatalf("sql.Open() error: %v", err)
 		}
 
-		c := &Collector{db: db, batch: newTestBatcher(t, dest.Discard.Send)}
-		_, c.cancelSched = context.WithCancel(t.Context())
-		c.closed = make(chan struct{})
+		coll := &Collector{db: db, batch: newTestBatcher(t, dest.Discard.Send)}
+		coll.state.Start()
 
-		c.Close(t.Context())
+		coll.Close(t.Context())
 
-		<-c.Done()
+		<-coll.Done()
 	})
 }
 
@@ -837,35 +897,34 @@ func TestCollectorCloseWaitsForTimedDispatch(t *testing.T) {
 
 	entered, release := make(chan struct{}), make(chan struct{})
 	var sent atomic.Int64
-	c := &Collector{
+	coll := &Collector{
 		Send: func(_ context.Context, chunk flow.Chunk, _ config.Format) {
 			close(entered)
 			<-release
 			sent.Add(int64(chunk.Len()))
 		},
-		closed: make(chan struct{}),
 	}
-	_, c.cancelSched = context.WithCancel(t.Context())
-	t.Cleanup(c.cancelSched)
+	coll.state.Start()
 
 	var err error
-	opts := new(flow.Options[flow.Row]{Guard: c.guard})
-	if c.batch, err = flow.NewBatcher(flow.Limits{MaxItems: 10, Window: time.Millisecond}, c.sendRows, opts); err != nil {
+	opts := new(flow.Options[flow.Row]{Guard: coll.guard})
+	coll.batch, err = flow.NewBatcher(flow.Limits{MaxItems: 10, Window: time.Millisecond}, coll.sendRows, opts)
+	if err != nil {
 		t.Fatalf("flow.NewBatcher() error: %v", err)
 	}
 
-	c.batch.AddItem(t.Context(), flow.Row{Cols: []string{"x"}, Vals: []any{int64(1)}})
+	coll.batch.AddItem(t.Context(), flow.Row{Cols: []string{"x"}, Vals: []any{int64(1)}})
 	<-entered // The timed dispatch took the batch from the buffer, and is now blocked in the sender.
 
-	go c.Close(t.Context())
+	go coll.Close(t.Context())
 	select {
-	case <-c.Done():
+	case <-coll.Done():
 		t.Fatal("Collector.Done() closed while a timed batch dispatch was still in progress")
 	case <-time.After(100 * time.Millisecond):
 	}
 
 	close(release)
-	<-c.Done()
+	<-coll.Done()
 	if got := sent.Load(); got != 1 {
 		t.Errorf("sent rows = %d, want 1", got)
 	}
@@ -874,22 +933,26 @@ func TestCollectorCloseWaitsForTimedDispatch(t *testing.T) {
 func TestCollectorCloseTimeout(t *testing.T) {
 	t.Parallel()
 
-	testTimeout := CloseTimeout + abortTimeout
-
 	tests := []struct {
-		name   string
-		pgPool pgPool
-		want2  time.Duration
+		name     string
+		worker   bool // A query is in progress when Close() is called.
+		stubborn bool // The query ignores the cancellation of its execution context.
+		want2    time.Duration
 	}{
 		{
-			name:   "with_fake_pg_pool",
-			pgPool: &fakePGPool{closeTimeout: true},
-			want2:  testTimeout,
+			name:  "no_workers",
+			want2: 0,
 		},
 		{
-			name:   "without_any_db",
-			pgPool: nil,
-			want2:  0,
+			name:   "worker_stops_when_canceled",
+			worker: true,
+			want2:  CloseTimeout,
+		},
+		{
+			name:     "worker_ignores_cancellation",
+			worker:   true,
+			stubborn: true,
+			want2:    CloseTimeout + AbortTimeout,
 		},
 	}
 	for _, tt := range tests {
@@ -899,9 +962,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				coll := &Collector{
 					driver:  DriverTypePostgres,
-					pgPool:  tt.pgPool,
-					usingPG: tt.pgPool != nil,
-					timeout: testTimeout,
+					timeout: CloseTimeout * 2, // Close() should cap it to CloseTimeout.
 					batch:   newTestBatcher(t, dest.Discard.Send),
 				}
 
@@ -912,8 +973,20 @@ func TestCollectorCloseTimeout(t *testing.T) {
 					t.Fatalf("Collector.Close(1) timeout behaved unexpectedly: got %v, want %v", got, 0)
 				}
 
-				// Test case 2: Close() after Start() should block until the DB is closed / the timeout expires.
-				_, coll.cancelSched = context.WithCancel(t.Context())
+				// Test case 2: Close() after Start() should block until workers stop / the timeouts expire.
+				_, execCtx := coll.state.StartWith(t.Context())
+				release := make(chan struct{})
+				if tt.worker {
+					coll.state.InProgress.Go(func() {
+						if !tt.stubborn {
+							<-execCtx.Done()
+						}
+						<-release
+					})
+				}
+				if !tt.stubborn {
+					close(release)
+				}
 
 				start = time.Now()
 				coll.Close(t.Context())
@@ -921,7 +994,9 @@ func TestCollectorCloseTimeout(t *testing.T) {
 					t.Errorf("Collector.Close(2) timeout behaved unexpectedly: got %v, want %v", got, tt.want2)
 				}
 
-				synctest.Sleep(testTimeout * 3)
+				if tt.stubborn {
+					close(release) // Let the straggler finish, so the synctest bubble can end.
+				}
 			})
 		})
 	}
@@ -995,6 +1070,8 @@ func (*fakeSQLDriver) Open(dsn string) (driver.Conn, error) {
 		c.rowsNextError = true
 	case strings.Contains(dsn, "rowsNextResultSetError"):
 		c.rowsNextResultSetError = true
+	case strings.Contains(dsn, "commitError"):
+		c.commitError = true
 	}
 	return c, nil
 }
@@ -1002,6 +1079,7 @@ func (*fakeSQLDriver) Open(dsn string) (driver.Conn, error) {
 type fakeSQLConn struct {
 	rowsNextError          bool
 	rowsNextResultSetError bool
+	commitError            bool
 }
 
 func (c *fakeSQLConn) Prepare(_ string) (driver.Stmt, error) {
@@ -1013,16 +1091,21 @@ func (c *fakeSQLConn) Close() error {
 }
 
 func (c *fakeSQLConn) Begin() (driver.Tx, error) {
-	return &fakeSQLTx{}, nil
+	return &fakeSQLTx{commitError: c.commitError}, nil
 }
 
 func (c *fakeSQLConn) QueryContext(_ context.Context, _ string, _ []driver.NamedValue) (driver.Rows, error) {
 	return &fakeSQLRows{nextError: c.rowsNextError, nextResultSetError: c.rowsNextResultSetError}, nil
 }
 
-type fakeSQLTx struct{}
+type fakeSQLTx struct {
+	commitError bool
+}
 
-func (*fakeSQLTx) Commit() error {
+func (tx *fakeSQLTx) Commit() error {
+	if tx.commitError {
+		return errors.New("commit error")
+	}
 	return nil
 }
 
@@ -1125,7 +1208,7 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 					<-unblock
 				}
 
-				c, err := NewCollector(base, map[string]any{
+				coll, err := NewCollector(base, map[string]any{
 					"type":       DriverTypeSQLite,
 					"connection": ":memory:",
 					"query":      "SELECT 1;",
@@ -1134,16 +1217,16 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 					t.Fatalf("NewCollector() error: %v", err)
 				}
 
-				c.db, err = openDB(t.Context(), c.driver, c.conn)
+				coll.db, err = openDB(t.Context(), coll.driver, coll.conn)
 				if err != nil {
 					t.Fatalf("openDB() error: %v", err)
 				}
-				t.Cleanup(func() { _ = c.db.Close() })
+				t.Cleanup(func() { _ = coll.db.Close() })
 
 				ctx, cancel := context.WithCancel(t.Context())
-				c.cancelSched = cancel
-
-				go c.scheduleNext(ctx, ctx, time.Now())
+				t.Cleanup(cancel)
+				schedCtx, execCtx := coll.state.StartWith(ctx)
+				go coll.scheduleNext(schedCtx, execCtx, time.Now())
 
 				// Advance to 1st tick.
 				synctest.Sleep(time.Second)
@@ -1155,7 +1238,7 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 					<-started
 				}
 
-				// Unblock in-flight queries and let them finish.
+				// Unblock ongoing queries and let them finish.
 				close(unblock)
 				synctest.Sleep(10 * time.Millisecond)
 
@@ -1170,19 +1253,81 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 	}
 }
 
-func TestCollectorExecuteWithConcurrencyCanceled(t *testing.T) {
+func TestCollectorExecuteWithConcurrencyLimit(t *testing.T) {
 	t.Parallel()
 
-	c := &Collector{batch: newTestBatcher(t, dest.Discard.Send)}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
+	tests := []struct {
+		name      string
+		canceled  bool // The scheduling context is canceled, i.e., the collector is shutting down.
+		semFull   bool // The concurrency limit was already reached.
+		wantCount int64
+	}{
+		{
+			name:      "executes_query",
+			wantCount: 1,
+		},
+		{
+			name:    "skips_at_concurrency_limit",
+			semFull: true,
+		},
+		{
+			name:     "skips_when_canceled",
+			canceled: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	ch := make(chan struct{}, 1)
-	ch <- struct{}{}
+			sched, err := cron.Parse("@once", nil)
+			if err != nil {
+				t.Fatalf("cron.Parse() error: %v", err)
+			}
+			var count atomic.Int64
+			base := &config.BaseCollector{
+				Type: config.CollectorTypeSQL, Schedule: sched,
+				Send: func(_ context.Context, chunk flow.Chunk, _ config.Format) { count.Add(int64(chunk.Len())) },
+			}
+			coll, err := NewCollector(base, map[string]any{
+				"type":       DriverTypeSQLite,
+				"connection": ":memory:",
+				"query":      "SELECT 1",
+			})
+			if err != nil {
+				t.Fatalf("NewCollector() error: %v", err)
+			}
+			coll.db, err = sql.Open(coll.driver, coll.conn)
+			if err != nil {
+				t.Fatalf("sql.Open() error: %v", err)
+			}
+			t.Cleanup(func() { _ = coll.db.Close() })
 
-	c.executeWithConcurrencyLimit(ctx, t.Context(), ch, time.Now())
+			schedCtx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.canceled {
+				cancel()
+			}
 
-	if len(ch) != 1 {
-		t.Errorf("len(ch) = %d, want 1", len(ch))
+			// The semaphore has a free slot unless the test case fills it, so skipping the query
+			// in the "canceled" test case is only possible because of the cancellation check.
+			sem := make(chan struct{}, 1)
+			if tt.semFull {
+				sem <- struct{}{}
+			}
+
+			coll.executeWithConcurrencyLimit(schedCtx, t.Context(), sem, time.Now())
+			coll.state.InProgress.Wait()
+
+			if got := count.Load(); got != tt.wantCount {
+				t.Errorf("sent rows = %d, want %d", got, tt.wantCount)
+			}
+			wantLen := 0
+			if tt.semFull {
+				wantLen = 1
+			}
+			if got := len(sem); got != wantLen {
+				t.Errorf("semaphore slots in use = %d, want %d", got, wantLen)
+			}
+		})
 	}
 }

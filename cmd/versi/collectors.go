@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"runtime"
 	"runtime/debug"
+	"sync"
 
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/http"
@@ -17,16 +18,11 @@ type collector interface {
 	Done() <-chan struct{}
 }
 
-type collectorInitResult struct {
-	done <-chan struct{}
-	ok   bool
-}
-
-// initCollectors initializes and starts all the collectors that are defined in the TOML configuration
-// file, and returns their done channels. It does not fail fast; it attempts to initialize all of them
-// before aborting if any of them failed. This provides a better experience for first-time users with multiple
+// initCollectors initializes, starts, and returns all the collectors that are defined in the
+// TOML configuration file. It does not fail fast; it attempts to initialize all of them before
+// aborting if any of them failed. This provides a better experience for first-time users with multiple
 // configuration mistakes, as they get feedback on all issues at once rather than encountering them one by one.
-func initCollectors(ctx context.Context, senders map[string]config.Sender, cfg map[string]any) ([]<-chan struct{}, bool) {
+func initCollectors(ctx context.Context, senders map[string]config.Sender, cfg map[string]any) ([]collector, bool) {
 	var collectors []collector
 	ok := true
 
@@ -57,12 +53,7 @@ func initCollectors(ctx context.Context, senders map[string]config.Sender, cfg m
 			c, err = http.NewCollector(base, innerCfg)
 		case config.CollectorTypeSQL:
 			c, err = sql.NewCollector(base, innerCfg)
-		default:
-			slog.Error("unhandled collector type", slog.String("name", base.Name), slog.String("type", base.Type))
-			ok = false
-			continue
 		}
-
 		if err != nil {
 			slog.Error("collector initialization error", slog.Any("error", err),
 				slog.String("name", base.Name), slog.String("type", base.Type),
@@ -70,68 +61,70 @@ func initCollectors(ctx context.Context, senders map[string]config.Sender, cfg m
 			ok = false
 			continue
 		}
+		if c == nil {
+			slog.Error("unhandled collector type", slog.String("name", base.Name), slog.String("type", base.Type))
+			ok = false
+			continue
+		}
+
 		collectors = append(collectors, c)
 	}
+
 	if !ok {
 		return nil, false
 	}
-
-	results := make(chan collectorInitResult, len(collectors))
-	startCollectorsAsync(ctx, collectors, results)
-	var done []<-chan struct{}
-	for range collectors {
-		if res := <-results; res.ok {
-			done = append(done, res.done)
-		} else {
-			ok = false
-		}
-	}
-
-	close(results)
-	if !ok {
-		return nil, false
-	}
-
-	return done, true
+	return startCollectorsAsync(ctx, collectors)
 }
 
-// startCollectorsAsync starts all the collectors concurrently, but without overwhelming the system or the data sources.
-func startCollectorsAsync(ctx context.Context, collectors []collector, results chan<- collectorInitResult) {
+// startCollectorsAsync starts all the collectors concurrently, but without overwhelming the system or
+// the data sources. It returns the collectors that started successfully, and whether all of them did.
+func startCollectorsAsync(ctx context.Context, collectors []collector) ([]collector, bool) {
 	limit := min(runtime.GOMAXPROCS(0), len(collectors))
 	workers := make(chan collector, limit)
+	var started []collector
+	var mu sync.Mutex
 
+	// Initialize worker pool.
+	var wg sync.WaitGroup
 	for range limit {
-		go func() {
+		wg.Go(func() {
 			for c := range workers {
-				startCollectorSafely(ctx, c, results)
+				if startCollectorSafely(ctx, c) {
+					mu.Lock()
+					started = append(started, c)
+					mu.Unlock()
+				}
 			}
-		}()
+		})
 	}
 
+	// Assign work (collector initialization) to the available workers.
 	for _, c := range collectors {
 		workers <- c // The buffered channel enforces reasonable throttling.
 	}
-	close(workers) // Signal all the goroutines above to terminate when they're done.
+
+	// Wait for all the worker goroutines to terminate when their initialization work is done.
+	close(workers)
+	wg.Wait()
+
+	return started, len(started) == len(collectors)
 }
 
-func startCollectorSafely(ctx context.Context, c collector, results chan<- collectorInitResult) {
+func startCollectorSafely(ctx context.Context, c collector) bool {
 	defer func() {
 		if r := recover(); r != nil {
 			b := c.Base()
-			slog.Error("panic during collector initialization",
-				slog.Any("details", r), slog.String("stack", string(debug.Stack())),
-				slog.String("name", b.Name), slog.String("type", b.Type),
+			slog.Error("panic during collector initialization", slog.Any("details", r),
+				slog.String("stack", string(debug.Stack())), slog.String("name", b.Name), slog.String("type", b.Type),
 			)
-			results <- collectorInitResult{}
 		}
 	}()
 
 	if c.Start(ctx) {
-		results <- collectorInitResult{done: c.Done(), ok: true}
-		return
+		return true
 	}
 
 	b := c.Base()
 	slog.Error("failed to start collector", slog.String("name", b.Name), slog.String("type", b.Type))
-	results <- collectorInitResult{}
+	return false
 }

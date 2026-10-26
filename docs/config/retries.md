@@ -11,6 +11,8 @@ It is entirely optional, but some fields may be required in some use-cases.
 
 > [!NOTE]
 > The default retry policy is: up to 3 attempts, with exponential-backoff delays between them, starting from 1 second (±10% jitter).
+>
+> When the last attempt fails, the data is diverted to the [Dead-Letter Queue (DLQ)](../dead_letter_queue.md).
 
 > [!IMPORTANT]
 > `PATCH` and `POST` requests do not have a default retry policy, they require an explicit configuration of retries, if desired. This is because these HTTP methods are not guaranteed to be stateless or idempotent, so retrying them by default could lead to data corruption or duplication or other undesirable side effects.

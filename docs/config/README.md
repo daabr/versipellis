@@ -58,3 +58,5 @@ What does a section "type" mean? Versipellis supports 0 or **more** instances of
   [[sender.http3]]
   key = "value D"
   ```
+
+Lastly, there's also an optional top-level section to customize the behavior of the [Dead-Letter Queue (DLQ)](./dead_letter_queue.md).

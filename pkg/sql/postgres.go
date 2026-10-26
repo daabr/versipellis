@@ -50,14 +50,18 @@ func (c *Collector) connectToPostgres(ctx context.Context) error {
 // Never called directly, only through [Collector.executeQuery] when the driver is PostgreSQL.
 // This means that these 2 functions do and return the same things, but in a different way.
 func (c *Collector) executePostgresQuery(execCtx, queryCtx context.Context) bool {
-	tx, err := c.pgPool.BeginTx(queryCtx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	tx, err := c.pgPool.BeginTx(queryCtx, pgx.TxOptions{})
 	if err != nil {
-		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err),
+		slog.Warn("failed to begin SQL transaction", slog.Any("error", err),
 			slog.String("driver", c.driver), slog.String("name", c.Name),
 		)
 		return false
 	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(execCtx)) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(execCtx, AbortTimeout)
+		defer cancel()
+		_ = tx.Rollback(ctx) // If execCtx timed out (i.e. graceful shutdown timed out), don't bother rolling back.
+	}()
 
 	start := time.Now()
 	rows, err := tx.Query(queryCtx, c.query)
@@ -72,9 +76,15 @@ func (c *Collector) executePostgresQuery(execCtx, queryCtx context.Context) bool
 	end := time.Now()
 	c.batch.Flush(execCtx)
 
+	// Commit only if all the results were processed (see [Collector.executeQuery]).
 	ok := err == nil
 	if !ok {
 		slog.Warn("error while processing SQL query results", slog.Any("error", err), slog.String("driver", c.driver),
+			slog.String("name", c.Name), slog.Int("successfully_processed_rows", count),
+		)
+	} else if err = tx.Commit(queryCtx); err != nil {
+		ok = false
+		slog.Warn("failed to commit SQL transaction", slog.Any("error", err), slog.String("driver", c.driver),
 			slog.String("name", c.Name), slog.Int("successfully_processed_rows", count),
 		)
 	} else {

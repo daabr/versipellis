@@ -5,7 +5,6 @@ import (
 	"errors"
 	"reflect"
 	"testing"
-	"testing/synctest"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -125,7 +124,7 @@ func TestCollectorExecutePostgresQuery(t *testing.T) {
 	}
 }
 
-func TestCollectorExecutePostgresQueryErrors(t *testing.T) {
+func TestCollectorExecutePostgresQueryOutcomes(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -133,7 +132,21 @@ func TestCollectorExecutePostgresQueryErrors(t *testing.T) {
 		pool           fakePGPool
 		wantOK         bool
 		wantCheckpoint bool
+		wantCommits    int
 	}{
+		{
+			name:           "success",
+			pool:           fakePGPool{cols: []string{"col"}, rows: [][]any{{1}}},
+			wantOK:         true,
+			wantCheckpoint: true,
+			wantCommits:    1,
+		},
+		{
+			name:           "commit_error",
+			pool:           fakePGPool{cols: []string{"col"}, rows: [][]any{{1}}, commitErr: errors.New("commit error")},
+			wantOK:         false,
+			wantCheckpoint: true,
+		},
 		{
 			name:   "begin_tx_error",
 			pool:   fakePGPool{beginErr: errors.New("begin tx error")},
@@ -168,6 +181,9 @@ func TestCollectorExecutePostgresQueryErrors(t *testing.T) {
 			}
 			if gotCheckpoint := !coll.prevStart.IsZero(); gotCheckpoint != tt.wantCheckpoint {
 				t.Errorf("Collector.executeQuery() checkpoint updated = %v, want %v", gotCheckpoint, tt.wantCheckpoint)
+			}
+			if tt.pool.commits != tt.wantCommits {
+				t.Errorf("Collector.executeQuery() commits = %d, want %d", tt.pool.commits, tt.wantCommits)
 			}
 		})
 	}
@@ -283,28 +299,27 @@ type fakePGPool struct {
 	cols []string
 	rows [][]any
 
-	closeTimeout bool
+	beginErr  error
+	queryErr  error
+	commitErr error
+	finalErr  error
 
-	beginErr error
-	queryErr error
-	finalErr error
+	commits int
 }
+
+func (p *fakePGPool) Close() {}
 
 func (p *fakePGPool) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
 	if p.beginErr != nil {
 		return nil, p.beginErr
 	}
-	return &fakePGTx{cols: p.cols, rows: p.rows, queryErr: p.queryErr, finalErr: p.finalErr}, nil
-}
-
-func (p *fakePGPool) Close() {
-	if p.closeTimeout {
-		synctest.Sleep(2 * CloseTimeout)
-	}
+	return &fakePGTx{pool: p, cols: p.cols, rows: p.rows, queryErr: p.queryErr, commitErr: p.commitErr, finalErr: p.finalErr}, nil
 }
 
 // Simple implementation of the [pgx.Tx] interface.
 type fakePGTx struct {
+	pool *fakePGPool // Counts commits, if it's non-nil.
+
 	cols []string
 	rows [][]any
 
@@ -323,7 +338,13 @@ func (t *fakePGTx) Begin(context.Context) (pgx.Tx, error) {
 // but is otherwise safe to call multiple times. If the commit fails with a rollback status (e.g., the transaction was
 // already in a broken state) then an error where [errors.Is]([pgx.ErrTxCommitRollback]) is true will be returned.
 func (t *fakePGTx) Commit(context.Context) error {
-	return t.commitErr
+	if t.commitErr != nil {
+		return t.commitErr
+	}
+	if t.pool != nil {
+		t.pool.commits++
+	}
+	return nil
 }
 
 // Rollback rolls back the transaction if this is a real transaction or rolls back to the savepoint if

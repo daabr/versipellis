@@ -27,17 +27,17 @@ Receivers (HTTP servers) ────┘
 
 ### Package Layout
 
-| Directory     | Purpose                                                                                      |
-| :------------ | :------------------------------------------------------------------------------------------- |
-| `cmd/versi/`  | CLI entry point, flag parsing, OS signal handling, lifecycle orchestration                   |
-| `pkg/config/` | TOML config parsing & validation, `BaseCollector` & `BaseReceiver` types, `Sender` interface |
-| `pkg/http/`   | Ingress and egress over HTTP/1.1, HTTP/2, and HTTP/3 with TLS/mTLS                           |
-| `pkg/sql/`    | SQL collectors supporting various relational databases                                       |
-| `pkg/flow/`   | Generic `Batcher` mechanism, using typed `Chunk`s of data                                    |
-| `pkg/codec/`  | Various data formatters and encoders                                                         |
-| `pkg/dest/`   | Default senders for local destinations: `discard`, `stdout`, `dead_letter_queue`             |
-| `pkg/cache/`  | Concurrency-safe in-memory caching mechanisms                                                |
-| `pkg/cron/`   | Cron schedule parsing and triggering for collectors                                          |
+| Directory | Purpose |
+| :-- | :-- |
+| `cmd/versi` | CLI entry point, flag parsing, OS signal handling, lifecycle orchestration |
+| `pkg/config` | TOML config parsing & validation, `BaseCollector`, `BaseReceiver`, `Sender`, `State` |
+| `pkg/http` | Ingress and egress over HTTP/1.1, HTTP/2, and HTTP/3 with TLS/mTLS |
+| `pkg/sql` | SQL collectors supporting various relational databases |
+| `pkg/flow` | Generic `Batcher` mechanism, using typed `Chunk`s of data |
+| `pkg/codec` | Various data formatters and encoders |
+| `pkg/dest` | Default senders for local destinations: `discard`, `stdout`, `dead_letter_queue` |
+| `pkg/cache` | Concurrency-safe in-memory caching mechanisms |
+| `pkg/cron` | Cron schedule parsing and triggering for collectors |
 
 ## Development & Coding Practices
 
@@ -45,9 +45,7 @@ Receivers (HTTP servers) ────┘
 
 ### Primary Language: [Go 1.27](./go.mod#L3)
 
-Ignore compatibility issues and behavior changes in older Go versions!
-
-Common examples:
+Use modern Go whenever possible, and ignore compatibility with older versions, e.g.:
 
 - `for range` over integers and iterators, `new(expr)`.
 - Promoted fields from embedded structs in struct literals.
@@ -96,7 +94,7 @@ golangci-lint fmt && golangci-lint run
 Contexts:
 
 - Structs may not contain `context.Context` fields.
-- Propagate and respect `context.Context` cancellation (except where a detached lifecycle applies, see below).
+- Propagate and respect `context.Context` cancellation (except where a [detached lifecycle](#concurrency) applies).
 
 Documentation:
 
@@ -127,18 +125,20 @@ Line length:
 - Code: 130 characters.
 - Doc comments: 120 characters.
 
-Logging:
-
-- Use only the `log/slog` package.
-- Attribute key names must be `snake_cased`.
-- Use only attribute functions (e.g., `slog.String("key", val)`), never bare `"key", value` pairs.
+Logging: see the [Logging](#logging) section.
 
 Testing:
 
 - Prefer table-driven tests with `t.Run()`; the `dupl` lint check flags duplicated test bodies.
 - Use `t.Parallel()` and `t.Helper()` where appropriate.
 
-## Patterns, Conventions, Design Details
+### Preventing Test Flakiness
+
+- Timing-dependent tests should use `testing/synctest` (`synctest.Test`, `synctest.Sleep`, `synctest.Wait`).
+- SQL tests use in-memory SQLite (`modernc.org/sqlite`, pure Go) and a fake `pgPool`, so no database server is needed.
+- `pkg/http/sys_test.go` runs end-to-end tests with local loopback servers and self-generated TLS certificates.
+
+## Design and Patterns
 
 ### Initialization
 
@@ -147,46 +147,73 @@ Testing:
   - Receivers are started sequentially, ordered by name (so conflicts produce consistent errors).
 - Doesn't fail fast:
   - Each stage validates all relevant components and logs all errors.
-  - The process exits if any stage fails, but only before moving to the next stage.
+  - The process exits if any stage fails, but only before moving to the next stage, and after shutting down the components that already started (in the normal [shutdown order](#lifecycle-and-shutdown)).
 
-### Lifecycle and Concurrency
+### Lifecycle and Shutdown
 
-- **Collectors** use two cancelable contexts:
-  - `schedCtx` is canceled when initiating shutdown, which stops scheduling and retries.
-  - `execCtx` is detached with `context.WithoutCancel()`, so in-flight data retrieval gets a grace period.
-    - Canceled only if `Close()` times out.
-- Collectors also have a `closed` channel which is closed at the end of `Close()`, and exposed to `main()` via `Done()` to signal completion.
+- **Shutdown signal**: SIGINT/SIGTERM cancels the root context and causes the app to enter "lame-duck" mode: graceful completion of work in progress without accepting new work.
+- **Shutdown order**: receivers close in parallel with collectors draining, then all senders close except the Dead-Letter Queue, and the DLQ closes **last**, so it's able to save data that other senders fail to deliver while they close (including the data of their aborted workers).
+
+#### `config.State`
+
+`config.State` (embedded by value) manages the lifecycle of collectors, receivers, and senders; its API is documented in [`state.go`](./pkg/config/state.go). Rules that aren't obvious from it:
+
+- Each component calls `StartWith(ctx)` (collectors, which also get `schedCtx` and `execCtx`) or `Start()` exactly once, and its `Close()` returns early if `!IsStarted()`, so it doesn't consume `CloseOnce` before startup.
+- `BeginClose()` and `FinishClose()` close channels, so they're **not** idempotent: call them only inside `CloseOnce.Do()`.
+- `IfClosingElseLock()` returns `false` **with the read lock still held**: the caller must call `CloseMu.RUnlock()`.
+- **`CloseMu` rules** (senders, receivers, and batcher `guard`s):
+  - `BeginClose()` takes the write lock, so it waits for all current readers before any close timeout starts. Senders and receivers register work in `InProgress` only under the read lock, so none can register after `BeginClose()`.
+  - **Nothing under the read lock may block**: it would delay `BeginClose()`, and a pending `Lock()` blocks new readers. Only check and register work under it; encode and serialize in the registered goroutines. HTTP bodies are fully buffered before `Send()`, so reading them is never network I/O.
+  - **Never acquire the read lock recursively** (e.g., in dispatch functions, which already run under that of `Send()` or `guard`): it may deadlock with a pending `Lock()`.
+
+#### `Close()` Sequences
+
+How each component rejects new work, and its `Close()` sequence (configurable timeouts are capped at `CloseTimeout`):
+
+| Component | Rejecting new work | `Close()` sequence | Max wait |
+| :-- | :-- | :-- | :-- |
+| Collectors | Scheduling stops once `schedCtx` is canceled (see [Collectors' Contexts](#collectors-contexts)) | `BeginClose()` → `InProgress.Wait()` up to the timeout → on timeout, `StopStragglers()` → wait up to `AbortTimeout` → `FinishClose()` | `CloseTimeout + AbortTimeout` |
+| HTTP receivers | `ServeHTTP()` responds with `503`; otherwise it releases the read lock before reading the body | `BeginClose()` → graceful server `Shutdown()` → `InProgress.Wait()` → `FinishClose()`, all within the timeout | `CloseTimeout` |
+| HTTP senders | `Send()` holds the read lock throughout, so each chunk is accepted or rejected as a whole; rejected data goes to the fallback | `BeginClose()` → `Batcher.Flush()` and `InProgress.Wait()` up to the timeout → `FinishClose()`, which also aborts in-flight requests after a timeout (their contexts are detached) → wait up to `AbortTimeout`, for aborted workers to divert their data to the DLQ | `CloseTimeout + AbortTimeout` |
+| DLQ | Like HTTP senders, but rejected data is discarded with a warning | `BeginClose()` → `InProgress.Wait()` up to 1 second → `FinishClose()` | 1 second |
+| `stdout` | Its own lame-duck flag (no `config.State`), then discards | Waits up to 1 second | 1 second |
+| `discard` | Never | No-op | None |
+
+- SQL collectors also close their connection pools if the first wait completed in time (see the [SQL](#sql) section).
+
+#### Collectors' Contexts
+
+- `schedCtx` derives from the root context, so the shutdown signal cancels it before the scheduler goroutine calls `Close()`. Therefore `schedCtx.Err() != nil` means "shutdown in progress": the scheduling loop checks it before acquiring a concurrency slot (a `select` may pick a ready timer over a canceled context), and workers check it to stop retrying.
+- `execCtx` is detached with `context.WithoutCancel()`, so in-flight data retrieval gets a grace period until `StopStragglers()`. Data retrieval loops check it right before each `Batcher.AddItem()`, with nothing that may block in between, so they stop adding data once it's canceled.
+- The scheduler goroutine calls `Close()` (deferred) after its loop ends; `main()` never calls it, it only waits for `Done()`.
+
+#### Batcher Guard
+
+The batcher `guard` (collectors and senders) holds `CloseMu.RLock()` during timed dispatches; synchronous dispatches by `Batcher.Add*()` are covered by the caller's read lock (e.g., `Send()`'s).
+
+- Senders' `guard` is `State.IfNotClosing()`, which also checks `IsClosing()`. Collectors' `guard` doesn't need to: `Flush()` invalidates the batch of any pending timer (generation check), so later timed dispatches find nothing to dispatch.
+- A timed dispatch may have already taken a batch when a collector's `Close()` calls `Batcher.Flush()`, so `Close()` holds `CloseMu.Lock()` across its final `Flush()` and `FinishClose()`: the dispatch reaches the sender before `Done()` lets `main()` close senders.
+
+#### Graceful Rejection
+
+Data that a sender accepted but can't deliver goes to its fallback sender via `deadLetter()`: the DLQ if it's available, otherwise `dest.Discard`, which safely releases resources (closes HTTP request and response bodies).
+
+- Use-cases:
+  - The DLQ, `stdout`, and `discard` senders always use `dest.Discard`.
+  - Structured batches with encoding errors.
+  - Operations still waiting for a concurrency slot when `Close()` begins (including batches that it flushes).
+  - HTTP deliveries that fail after the last retry attempt (`sendWithRetries()` calls its `reject` function).
+  - Data that reaches a sender after it started closing (e.g., from straggler collector workers after `Done()`, or HTTP receiver handlers after a forced server close): senders in lame-duck mode pass it to their fallback.
+  - Producers that call the DLQ's `Send()` after it closed (see the [Dead-Letter Queue](#dead-letter-queue) section).
+- Each rejection path must pass the data in a usable state: HTTP requests/responses get a fresh body from `GetBody`/the buffered copy, because the original may have been read or closed.
+
+### Concurrency
+
 - **Detached lifecycles**: when passing a context to a function that may outlive the caller's context (e.g., `Sender.Send()`, `Batcher.Add*()`, and `Batcher.Flush()` compared to their callers), the **target method** is responsible for replacing `ctx` with `context.WithoutCancel(ctx)`, when it keeps the context after returning.
 - **Concurrency limits**:
   - Collectors and senders should support this as a configurable option, with reasonable defaults and guardrails.
   - **Collectors skip** excess operations instead of catching up.
-  - **Senders queue** excess operations (without blocking), they never reject/drop operations (until shutdown, when pending operations are sent to the sender's fallback, see below).
-
-### Shutting Down
-
-- SIGINT/SIGTERM cancels the root context (the app enters "lame-duck" mode: graceful completion of work in progress without accepting new work).
-- Shutdown order: receivers close in parallel with collectors draining, then all senders close except the Dead-Letter Queue, and the DLQ closes **last**, so it's able to save data that other senders fail to deliver while they close.
-- **Senders** use `lameDuck atomic.Bool` plus a `closeMu sync.RWMutex`: `Send()` holds `closeMu.RLock()` for its entire duration, checks `lameDuck`, then registers work in a `sync.WaitGroup`, so each chunk is accepted or rejected as a whole. An extra `lameDuck` check before acquiring the lock is an optional fast path.
-  - **Nothing under `closeMu.RLock()` may block**: `Close()` waits for it before its timeout starts, and a pending `Lock()` blocks new readers. Only check and register work under the lock; encode and serialize in the registered goroutines. HTTP bodies must be fully buffered before `Send()`, so reading them is never network I/O.
-  - **Batching**: a full batch dispatched synchronously by `Batcher.Add*()` is covered by `Send()`'s read lock, and delayed dispatches are covered by the batcher's `guard`, which acquires the read lock and checks `lameDuck`. Dispatch functions must not acquire `closeMu.RLock()` again, because recursive read locking may deadlock with a pending `closeMu.Lock()`.
-  - `Close()`: `closeMu.Lock()` → `lameDuck = true` → unlock → `Batcher.Flush()` (if any) → `inProgress.Wait()` with a timeout. Holding the write lock ensures no `Send()` can register after the wait begins.
-  - Exceptions: `discard` and `stdout` address simpler use-cases.
-  - **Memory**: work registered for retries can live for many seconds, so after encoding a payload, release references to the original items (e.g., `data, encode = nil, nil` in captured variables) so only the encoded body stays in memory.
-- **Collectors with a batcher** use the same `guard` pattern: a timed dispatch may have already taken a batch from the buffer when `Close()` calls `Batcher.Flush()`, so `Close()` sets `closing` under `closingMu.Lock()` before flushing, to ensure the dispatch reaches the sender before `Done()` signals `main()` to close senders.
-- **Graceful rejection**: data that a sender accepted but can't deliver goes to its fallback sender via `deadLetter()`: the DLQ if it's available, otherwise `dest.Discard`, which safely releases resources (closes HTTP request and response bodies).
-  - Use-cases:
-    - The DLQ, `stdout`, and `discard` senders always use `dest.Discard`.
-    - Structured batches with encoding errors.
-    - Operations still waiting for a concurrency slot when `Close()` begins (including batches that it flushes).
-    - SQL collector workers after `abortTimeout`, or HTTP receiver handlers after a forced server close.
-  - Producers that outlive their own close timeouts are technically able to call `Send()` after `main()` has already started closing the DLQ.
-    - However, the closing duration of the DLQ is extremely short in practice, compared to its 1-second timeout:
-      - Writing a size-limited batch of size-limited files to a local disk almost never takes more than a few milliseconds.
-      - The process terminates as soon as the DLQ announces that it's closed.
-    - Anyway, if that happens, the only thing that the DLQ can do is discard the data with a warning.
-  - Each rejection path must pass the data in a usable state: HTTP requests/responses get a fresh body from `GetBody`/the buffered copy, because the original may have been read or closed.
-  - Not covered yet: delivery failures after retries are only logged (see roadmap).
-- `Close()` methods are idempotent and safe before startup. HTTP/SQL collectors wait at most `CloseTimeout + abortTimeout`; HTTP senders and receivers wait at most `CloseTimeout` (or an earlier context deadline). Local destination senders return immediately or use a fixed one-second timeout.
+  - **Senders queue** excess operations (without blocking), they never reject/drop operations (until shutdown, when pending operations are sent to the sender's fallback, see [Graceful Rejection](#graceful-rejection)).
 
 ### Data Flow (`pkg/flow`)
 
@@ -198,6 +225,15 @@ Testing:
   - `Batcher.AddChunk()` and `Sender.Send()` take ownership of both the chunk/slice and the items it contains.
   - Callers must never modify or reuse them afterwards.
 
+### Batching
+
+- Any collector, receiver, or sender *may* be integrated with a batcher, when it's meaningful and beneficial.
+- Batching occurs based on the amount of items/records or a time window - whichever comes first. `MaxBytes` exists in `flow.Limits`, but nothing implements `sizeOf` functions yet, so don't enable it.
+- Batch sizes count **items, never chunks or calls**; chunk boundaries carry no meaning: senders may split or merge them.
+- **Collectors** with a batcher should call `Flush()` at the end of each retrieval operation (e.g., SQL query): if there's remaining buffered data there's no point in waiting for the batch window timeout, and if there isn't then it's a no-op.
+- `Batcher` dispatches **synchronously**: in the caller's goroutine, or in the timer's goroutine via `guard`. Don't parallelize it. Owners rely on this for `IsClosing()`/`WaitGroup` correctness, so concurrency belongs in the dispatch function.
+- The **order of batches is non-deterministic**, both across components and at the destination.
+
 ### Formatting (`pkg/codec`)
 
 - `Format`s are meaningful only for structured data.
@@ -206,48 +242,9 @@ Testing:
 - Configuring a non-default format in HTTP collectors/receivers causes them to discard HTTP headers and pass only the body: as `Blobs` (`raw`) or parsed `JSON` objects (JSON formats); HTTP requests/responses with unparsable bodies go to their `Fallback` (the DLQ), and receivers respond with a `422` status code.
 - SQL collectors default to `ndjson`, and the HTTP sender falls back to `ndjson` when neither it nor the source sets a format.
 - `codec` encoders are strict and lossless: one unencodable value fails the entire payload, except non-finite floats, which become the strings `"NaN"`, `"Infinity"`, and `"-Infinity"` (`codec.NonFiniteFloats`, shared with `stdout`).
-- The DLQ falls back to the lossy readable NDJSON of `stdout` when strict encoding fails, skipping only unencodable items.
-- DLQ file extensions reflect their actual content: the resolved format (e.g., `.json`), `.lossy_ndjson`, `.http_req`/`.http_resp`, or none for blobs in the default format.
-- DLQ files don't record *why* they were written - yet (see roadmap).
 - `DecodeJSON` is zero-copy: each object aliases the payload (24 B per object, regardless of its size), so body buffers must never be modified or reused (e.g., pooled) afterwards.
   - Don't decode JSON into maps: each one costs hundreds of bytes, so untrusted payloads of tiny objects could amplify memory usage dozens of times.
 - `Rows` keep column names as-is; the `codec` formatters make duplicate/empty names unique only when encoding rows as JSON objects, and the `stdout` sender prints them as-is.
-
-### Batching
-
-- Any collector, receiver, or sender *may* be integrated with a batcher, when it's meaningful and beneficial.
-- Batching occurs based on the amount of items/records or a time window - whichever comes first. `MaxBytes` exists in `flow.Limits`, but nothing implements `sizeOf` functions yet, so don't enable it.
-- Batch sizes count **items, never chunks or calls**; chunk boundaries carry no meaning: senders may split or merge them.
-- **Collectors** with a batcher should call `Flush()` at the end of each retrieval operation (e.g., SQL query): if there's remaining buffered data there's no point in waiting for the batch window timeout, and if there isn't then it's a no-op.
-- `Batcher` dispatches **synchronously**: in the caller's goroutine, or in the timer's goroutine via `guard`. Don't parallelize it. Owners rely on this for `lameDuck`/`WaitGroup` correctness, so concurrency belongs in the dispatch function.
-- The **order of batches is non-deterministic**, both across components and at the destination.
-
-### HTTP
-
-- **HTTP transport caching**: via `pkg/cache.FastCache`, keyed by a composite `transportID` built from the TLS config checksum, max header size, and timeout.
-  - Any setting that affects transport behavior **must** be added to that key, or clients with different settings will silently share a transport.
-- **Retries**: POST and PATCH have no retries unless configured explicitly, because they may not be idempotent. Other methods default to exponential backoff (3 attempts, 1s interval, 20s cap).
-- **Body reuse for retries**: received requests get a `GetBody` function, and collected responses wrap their body in `reusableBody` (the `bodyProvider` interface), so retries don't copy large payloads. Keep this zero-copy path.
-- **Receiver responses**: `readRequest()` writes only error statuses; `ServeHTTP()` writes the success status (`202`) after processing the body, so it can still reject it.
-- Payload types that the HTTP sender supports: `[]byte` (with auto-detected MIME content type), `*http.Request` (from receivers), `*http.Response` (from collectors), and `JSON` objects and `Rows` (batched and encoded in the resolved format, see the Formatting section).
-
-### Logging
-
-- `Info`: Useful(!) status updates that convey more than just "time has passed".
-- `Warn`: Config/data/runtime issues that the user should be aware of (but the app is functioning as expected).
-- `Error`:
-  - Unexpected app issues, usually bugs (at least in the sense that they should be handled better in order to recover/ignore).
-  - Unrecoverable configuration issues that cause the app to abort on startup.
-- When recording an error, `slog.Any("error", err)` must always be the first attribute.
-- Security & privacy:
-  - If logging URLs, use `url.Redacted()` to prevent credential leakage.
-  - Never log SQL connection strings, HTTP headers, or TLS key material.
-
-### Preventing Test Flakiness
-
-- Timing-dependent tests should use `testing/synctest` (`synctest.Test`, `synctest.Sleep`, `synctest.Wait`).
-- SQL tests use in-memory SQLite (`modernc.org/sqlite`, pure Go) and a fake `pgPool`, so no database server is needed.
-- `pkg/http/sys_test.go` runs end-to-end tests with local loopback servers and self-generated TLS certificates.
 
 ### Configuration
 
@@ -257,3 +254,46 @@ Testing:
 - `pkg/config` decodes a TOML file into a raw `map[string]any`; each package parses its own sub-sections with the helpers `config.Value[T]` and `config.BoundedInt`.
 - TOML integers are `int64` and floats are `float64`; do not expect or provide `int` and `float` in config maps or tests.
 - Section names are TOML paths too: `ExtractSubmaps` finds a key (`collector`, `receiver`, `sender`) at any depth, e.g., `[collector]`, `[abc.collector]`, and `[[x.y.z.collector]]` all define collectors.
+  - Exception: the DLQ is governed by a single, optional top-level `[dead_letter_queue]` table (parsed by `parseDLQ()` in `pkg/dest/config.go`).
+
+### Logging
+
+- Lint-enforced: use only the `log/slog` package, with `snake_cased` attribute keys, and only attribute functions (e.g., `slog.String("key", val)`), never bare `"key", value` pairs.
+- When recording an error, `slog.Any("error", err)` must always be the first attribute.
+- `Info`: Useful(!) status updates that convey more than just "time has passed".
+- `Warn`: Config/data/runtime issues that the user should be aware of (but the app is functioning as expected).
+- `Error`:
+  - Unexpected app issues, usually bugs (at least in the sense that they should be handled better in order to recover/ignore).
+  - Unrecoverable configuration issues that cause the app to abort on startup.
+- Security & privacy:
+  - If logging URLs, use `url.Redacted()` to prevent credential leakage.
+  - Never log SQL connection strings, HTTP headers, or TLS key material.
+
+### HTTP
+
+- **HTTP transport caching**: via `pkg/cache.FastCache`, keyed by a composite `transportID` built from the TLS config checksum, max header size, and timeout.
+  - Any setting that affects transport behavior **must** be added to that key, or clients with different settings will silently share a transport.
+- **Retries**: POST and PATCH have no retries unless configured explicitly, because they may not be idempotent. Other methods default to exponential backoff (3 attempts, 1s interval, 20s cap). Once closing, senders stop retrying, and `State.Closing` interrupts their backoffs.
+- **Body reuse for retries**: received requests get a `GetBody` function, and collected responses wrap their body in `reusableBody` (the `bodyProvider` interface), so retries don't copy large payloads. Keep this zero-copy path.
+- **Memory**: work registered for retries can live for many seconds, so after encoding a payload, release references to the original items (e.g., `data, encode = nil, nil` in captured variables) so only the encoded body stays in memory.
+- **Receiver responses**: `readRequest()` writes only error statuses; `ServeHTTP()` writes the success status (`202`) after processing the body, so it can still reject it.
+- Payload types that the HTTP sender supports: `[]byte` (with auto-detected MIME content type), `*http.Request` (from receivers), `*http.Response` (from collectors), and `JSON` objects and `Rows` (batched and encoded in the resolved format, see the [Formatting](#formatting-pkgcodec) section).
+
+### SQL
+
+- SQL transactions are not read-only because some database drivers don't support read-only transactions, and it's better for other databases to have a consistent behavior.
+- Transactions are committed only after all the results are processed and flushed, otherwise the transactions are rolled back. Partial results were already dispatched, so they may be collected again next time, but never lost (i.e. "at least once" semantics).
+- PostgreSQL rollbacks use `execCtx` as well as a 1-second `AbortTimeout` to make sure they don't delay shutdowns. Generic rollbacks don't accept a context argument.
+- SQL collectors close their connection pools only if no queries are in progress when `Close()` begins waiting (e.g., `@once` collectors that finished on their own, while the process keeps running). Otherwise the pools stay open, because:
+  - Closing a pool blocks until all connections are released, so it could stall `Close()` before `FinishClose()`.
+  - It wouldn't abort hung queries anyway (canceling `execCtx` does).
+  - The process exits right after shutdown.
+
+### Dead-Letter Queue
+
+The DLQ is the last resort for data that a component accepted but can't deliver (see [Graceful Rejection](#graceful-rejection)). Its internals (write path, encoding, size accounting) are documented in `pkg/dest/dlq.go` and [`docs/dead_letter_queue.md`](./docs/dead_letter_queue.md). Rules for components that use it:
+
+- **Getting it**: `NewBaseCollector()` and `NewBaseReceiver()` set `Fallback` to the DLQ's `Send()`, and senders receive the DLQ in their constructor. It's `nil` when there's no DLQ (e.g., in tests), so always call it via `deadLetter()` (`pkg/http/format.go`), which falls back to `dest.Discard` and returns the name for the `fallback` log attribute.
+- **What to pass**: any `flow.Chunk`, with the component's format. Structured data is encoded in that format, blobs get it as their file extension, and HTTP requests/responses are written as-is (pass `codec.FormatDefault`). The DLQ takes ownership, closes HTTP bodies, and redacts sensitive headers and query parameters itself, so don't redact before passing data.
+- **Fire and forget**: `Send()` never blocks and never reports back. It may discard data (when `max_size` is reached, after a write's last retry, or after the DLQ closed), always with a log message. So producers log their own rejection (with the `fallback` attribute), which is also the only record of *why* data was dead-lettered (DLQ files don't record it yet, see roadmap), and never retry through the DLQ.
+- **Lifecycle**: it starts before, and closes after, every other component. Producers that outlive their own close timeouts may call `Send()` after it closed, which then discards the data with a warning. That's rare in practice: DLQ writes take milliseconds compared to its 1-second timeout, and the process exits as soon as the DLQ is closed.

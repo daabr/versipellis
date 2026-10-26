@@ -56,12 +56,14 @@ var validDriverTypes = []string{
 }
 
 const (
-	// CloseTimeout is the maximum amount of time to wait for SQL queries to finish before forcibly closing
-	// their connection pool. This is used during shutdown, so it's intentionally short and not configurable.
+	// CloseTimeout is the maximum amount of time to wait for SQL queries to finish before forcefully
+	// canceling them. This is used during shutdown, so it's intentionally short and not configurable.
 	CloseTimeout = 5 * time.Second
 
-	pingTimeout  = 5 * time.Second
-	abortTimeout = time.Second
+	// AbortTimeout is the maximum amount of time to wait for a SQL query to be aborted after [CloseTimeout].
+	AbortTimeout = time.Second
+
+	pingTimeout = 5 * time.Second
 
 	defaultQueryTimeout = time.Minute
 )
@@ -83,20 +85,13 @@ type Collector struct {
 	pgPool  pgPool
 	usingPG bool
 
+	state config.State
 	batch *flow.Batcher[flow.Row]
 
 	// For checkpointing: timestamps of the last (at least partially) successful query.
 	checkpointMu sync.Mutex
 	prevStart    time.Time
 	prevEnd      time.Time
-
-	cancelSched context.CancelFunc
-	cancelExec  context.CancelFunc
-	inProgress  sync.WaitGroup
-	closeOnce   sync.Once
-	closingMu   sync.RWMutex // Synchronizes delayed batch dispatches with [Collector.Close].
-	closing     bool         // Guarded by closingMu.
-	closed      chan struct{}
 }
 
 // Base returns a copy of the collector's static and generic configuration details.
@@ -196,13 +191,12 @@ func checkQuery(query string, err error) (string, error) {
 // guard synchronizes dispatches of delayed batches (see [flow.Options.Guard]) with [Collector.Close], so a timed
 // dispatch that has already taken a batch finishes passing it to the sender before Close flushes the batcher and
 // signals [Collector.Done]. Otherwise, the batch could reach the sender after it was closed, and be discarded.
+// Timed dispatches that acquire the lock after [Collector.Close] don't need to be skipped:
+// its flush invalidates their pending batch, so they find nothing to dispatch.
 func (c *Collector) guard(flush func()) {
-	c.closingMu.RLock()
-	defer c.closingMu.RUnlock()
-
-	if !c.closing {
-		flush() // Otherwise, the batch remains pending, and [Collector.Close] flushes it.
-	}
+	c.state.CloseMu.RLock()
+	defer c.state.CloseMu.RUnlock()
+	flush()
 }
 
 // sendRows is the dispatch function of [Collector.batch], so it passes the configured format through the
@@ -211,21 +205,11 @@ func (c *Collector) sendRows(ctx context.Context, rows []flow.Row) {
 	c.Send(ctx, flow.Rows(rows), c.format) // Free conversion: the sender takes ownership of the chunk.
 }
 
-// Start connects to the configured SQL-based database and starts sending queries to it. This
-// method returns immediately, and the collector runs asynchronously in the background. This method
-// is idempotent: only the first call will actually start a goroutine. However, it is not meant to
-// be safe for concurrency, initialize collectors only in the main goroutine. Lastly, the collector
-// obeys the cancellation of the provided context, but with a grace period of [Collector.timeout].
+// Start connects to the configured SQL-based database and starts sending queries to it. This method
+// returns immediately, and the collector runs asynchronously in the background. This method is not safe for
+// concurrency, initialize collectors only in the main goroutine. Lastly, the collector obeys the cancellation
+// of the provided context, but with a grace period for queries in progress (see [Collector.Close]).
 func (c *Collector) Start(ctx context.Context) bool {
-	if c == nil {
-		slog.Error("SQL collector is misconfigured")
-		return false
-	}
-	if c.cancelSched != nil {
-		slog.Error("SQL collector already started") // This is a programming error...
-		return true                                 // ...But a harmless one.
-	}
-
 	var err error
 	switch c.driver {
 	case DriverTypeCockroachDB, DriverTypePostgres, DriverTypePostgreSQL:
@@ -250,11 +234,7 @@ func (c *Collector) Start(ctx context.Context) bool {
 		return false
 	}
 
-	var schedCtx, execCtx context.Context
-	schedCtx, c.cancelSched = context.WithCancel(ctx)
-	execCtx, c.cancelExec = context.WithCancel(context.WithoutCancel(ctx))
-	c.closed = make(chan struct{})
-
+	schedCtx, execCtx := c.state.StartWith(ctx)
 	slog.Info("starting to execute SQL queries", slog.String("driver", c.driver),
 		slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
 	)
@@ -292,15 +272,15 @@ func (c *Collector) scheduleNext(schedCtx, execCtx context.Context, prev time.Ti
 				done := make(chan struct{})
 				go func() {
 					defer close(done)
-					c.inProgress.Wait()
+					c.state.InProgress.Wait()
 				}()
 				select {
 				case <-schedCtx.Done():
 				case <-done:
+					slog.Info("SQL collector finished one-time execution",
+						slog.String("driver", c.driver), slog.String("name", c.Name),
+					)
 				}
-				slog.Info("SQL collector finished one-time execution",
-					slog.String("driver", c.driver), slog.String("name", c.Name),
-				)
 			} else {
 				slog.Error("SQL collector stopped due to scheduler bug - no next instance",
 					slog.String("driver", c.driver), slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
@@ -327,13 +307,15 @@ func (c *Collector) scheduleNext(schedCtx, execCtx context.Context, prev time.Ti
 }
 
 func (c *Collector) executeWithConcurrencyLimit(schedCtx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
-	if schedCtx.Err() != nil { // Instead of schedCtx.Done() in the select block below - to check ctx before sem.
+	// Checking schedCtx.Err() here instead of using schedCtx.Done() in the select
+	// block below, to guarantee that we check the closing state before the semaphore.
+	if schedCtx.Err() != nil {
 		return
 	}
 
 	select {
 	case sem <- struct{}{}:
-		c.inProgress.Go(func() {
+		c.state.InProgress.Go(func() {
 			defer func() { <-sem }()
 			c.executeQuery(execCtx)
 		})
@@ -344,10 +326,10 @@ func (c *Collector) executeWithConcurrencyLimit(schedCtx, execCtx context.Contex
 	}
 }
 
-// executeQuery shouldn't be called directly, only through [Collector.scheduleNext]. Therefore, it's safe to assume
-// that either [Collector.db] or [Collector.pgPool] are non-nil, given that [Collector.Start] had to succeed first.
-// The provided context is an execution context (execCtx) detached from scheduler cancellation, allowing in-flight
-// queries to finish within [Collector.timeout] during graceful shutdown before being forcefully canceled.
+// executeQuery shouldn't be called directly, only through [Collector.scheduleNext]. Therefore, it's safe to
+// assume that either [Collector.db] or [Collector.pgPool] are non-nil, since [Collector.Start] had to succeed
+// first. The provided context is an execution context (execCtx) detached from scheduler cancellation, allowing
+// ongoing queries to finish even during graceful shutdown, until [Collector.Close] forcefully cancels them.
 func (c *Collector) executeQuery(ctx context.Context) bool {
 	queryCtx := ctx
 	var cancel context.CancelFunc
@@ -364,9 +346,9 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 		return c.executePostgresQuery(ctx, queryCtx)
 	}
 
-	tx, err := c.db.BeginTx(queryCtx, &sql.TxOptions{ReadOnly: true})
+	tx, err := c.db.BeginTx(queryCtx, nil)
 	if err != nil {
-		slog.Warn("failed to begin read-only SQL transaction", slog.Any("error", err),
+		slog.Warn("failed to begin SQL transaction", slog.Any("error", err),
 			slog.String("driver", c.driver), slog.String("name", c.Name),
 		)
 		return false
@@ -387,14 +369,22 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 	end := time.Now()
 	c.batch.Flush(ctx)
 
+	// Queries may modify data (e.g., "DELETE ... RETURNING"), so commit only if all the results were processed.
+	// Otherwise, roll back: partial results were already dispatched, but it's better to collect them again later
+	// than to lose the rest. [sql.Tx.Commit] waits for the rows to be closed, so close them first (if they aren't).
 	ok := err == nil
 	if !ok {
 		slog.Warn("error while processing SQL query results", slog.Any("error", err), slog.String("driver", c.driver),
 			slog.String("name", c.Name), slog.Int("successfully_processed_rows", count),
 		)
+	} else if err = errors.Join(rows.Close(), tx.Commit()); err != nil {
+		ok = false
+		slog.Warn("failed to commit SQL transaction", slog.Any("error", err), slog.String("driver", c.driver),
+			slog.String("name", c.Name), slog.Int("successfully_processed_rows", count),
+		)
 	} else {
 		stats := c.db.Stats()
-		slog.Debug("SQL query execution completed successfully", slog.String("driver", c.driver), slog.String("name", c.Name),
+		slog.Debug("SQL query completed successfully", slog.String("driver", c.driver), slog.String("name", c.Name),
 			slog.Int("rows", count), slog.Time("start_time", start), slog.Duration("duration", end.Sub(start)),
 			slog.Int("in_use_conns", stats.InUse), slog.Int("idle_conns", stats.Idle),
 		)
@@ -413,9 +403,9 @@ func (c *Collector) executeQuery(ctx context.Context) bool {
 }
 
 // processResults batches and dispatches partial results even when an error interrupts processing,
-// to prevent data loss. It supports multiple result-sets for multiple statements. The provided context
-// is tied to the query's lifecycle (because we read its results), not the collector's entire execution.
-// Either way it has a limited grace period to complete before being forcefully canceled.
+// to prevent data loss. It supports multiple result-sets for multiple statements. The provided
+// context is tied to the query's lifecycle, which is based on the collector's entire execution
+// lifecycle, so it has a limited grace period to complete before being forcefully canceled.
 func (c *Collector) processResults(ctx context.Context, rows *sql.Rows) (int, error) {
 	totalScanned := 0
 	for resultSet := 1; ctx.Err() == nil; resultSet++ {
@@ -429,14 +419,14 @@ func (c *Collector) processResults(ctx context.Context, rows *sql.Rows) (int, er
 
 		rsScanned := 0
 		for rows.Next() {
-			if err := ctx.Err(); err != nil {
-				return totalScanned, fmt.Errorf("query result processing canceled: %w", err)
-			}
 			row, err := scanRow(rows, cols)
 			if err != nil {
 				return totalScanned, fmt.Errorf("failed to scan row %d in result-set %d: %w", rsScanned+1, resultSet, err)
 			}
-			c.batch.AddItem(ctx, row) // Async I/O, but it doesn't matter which ctx we use (detached by batcher anyway).
+			if err := ctx.Err(); err != nil {
+				return totalScanned, fmt.Errorf("query result processing canceled: %w", err)
+			}
+			c.batch.AddItem(ctx, row) // Async I/O, it doesn't matter which ctx we use (it's detached by batcher anyway).
 			totalScanned++
 			rsScanned++
 		}
@@ -478,42 +468,26 @@ func scanRow(rows *sql.Rows, cols []string) (flow.Row, error) {
 
 // Done returns a channel that closes when shutdown completes or its grace period expires.
 func (c *Collector) Done() <-chan struct{} {
-	return c.closed
+	return c.state.Closed
 }
 
-// Close waits (up to [Collector.timeout]) for queries that are in progress to finish, after new ones
-// are no longer being scheduled. It is safe to call multiple times, even if [Collector.Start] wasn't
-// called, but it's meant to be called only at the end of the [Collector.scheduleNext] goroutine.
-// If there are still pending queries after the timeout, the collector will forcefully close their
-// connections. It then signals through the [Collector.Done] channel that it's ready to shut down.
+// Close waits (up to [CloseTimeout] + [AbortTimeout]) for queries that are in progress to finish, once new
+// ones can no longer be scheduled. It is safe to call multiple times, even if [Collector.Start] wasn't called,
+// but it's meant to be called only at the end of the [Collector.scheduleNext] goroutine. If there are still pending
+// queries after the timeout, the collector cancels their context, and waits a little longer for them to stop.
+// It then flushes any remaining rows, and signals through [Collector.Done] that it's ready to shut down.
 func (c *Collector) Close(ctx context.Context) {
-	if c == nil || c.cancelSched == nil {
+	if !c.state.IsStarted() {
 		return
 	}
 
-	c.closeOnce.Do(func() {
-		c.cancelSched()
+	c.state.CloseOnce.Do(func() {
+		c.state.BeginClose()
 
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-
-			c.inProgress.Wait()
-
-			// Wait for any timed dispatch that may be in progress,
-			// but prevent new ones from starting in [Collector.guard].
-			c.closingMu.Lock()
-			c.closing = true
-			c.closingMu.Unlock()
-
-			c.batch.Flush(ctx)
-
-			if c.db != nil {
-				_ = c.db.Close()
-			}
-			if c.usingPG && c.pgPool != nil {
-				c.pgPool.Close()
-			}
+			c.state.InProgress.Wait()
 		}()
 
 		timeout := c.timeout
@@ -523,29 +497,45 @@ func (c *Collector) Close(ctx context.Context) {
 
 		select {
 		case <-done:
-			// All done.
+			c.closePools() // All done, so closing the pools can't block.
 		case <-time.After(timeout):
-			slog.Warn("closing SQL connection pool forcefully", slog.String("driver", c.driver),
+			slog.Warn("closing SQL connection forcefully", slog.String("driver", c.driver),
 				slog.String("name", c.Name), slog.Duration("timeout", timeout),
 			)
-			if c.cancelExec != nil {
-				c.cancelExec()
-			}
+			c.state.StopStragglers()
 		}
 
-		// Wait for aborted workers to actually stop, if there are any.
+		// Wait for aborted workers to actually stop, if there are any,
+		// and dispatch any data they managed to collect, so we don't lose it.
 		select {
 		case <-done:
 			// Immediate if the previous select block didn't encounter a timeout,
-			// So no need to nest this select block inside the previous one.
-		case <-time.After(abortTimeout):
+			// so no need to nest this select block inside the previous one.
+		case <-time.After(AbortTimeout):
 			slog.Error("aborted SQL collector didn't stop immediately",
 				slog.String("driver", c.driver), slog.String("name", c.Name),
 			)
 		}
 
-		if c.closed != nil {
-			close(c.closed)
-		}
+		// Wait for any timed dispatch in progress (see [Collector.guard]), and
+		// flush before allowing senders to start closing - to prevent data loss.
+		c.state.CloseMu.Lock()
+		defer c.state.CloseMu.Unlock()
+
+		c.batch.Flush(ctx)
+		c.state.FinishClose()
 	})
+}
+
+// closePools releases the collector's idle database connections. It's called by [Collector.Close]
+// only when no queries are in progress, because closing the pools blocks until all connections
+// are released, and it doesn't abort hung queries (canceling "execCtx" does). This matters
+// for one-time collectors, which may finish long before the process exits.
+func (c *Collector) closePools() {
+	if c.db != nil {
+		_ = c.db.Close()
+	}
+	if c.usingPG && c.pgPool != nil {
+		c.pgPool.Close()
+	}
 }

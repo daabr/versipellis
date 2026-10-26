@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -130,9 +131,11 @@ func TestSenderSendWithRetries(t *testing.T) { //nolint:paralleltest // Don't sh
 			if err != nil {
 				t.Fatalf("NewSender() error: %v", err)
 			}
+			fallback, fallbackSent := recordSends(t)
+			sender.fallback = fallback
 
 			sender.Send(t.Context(), flow.Blobs{[]byte("payload")}, codec.FormatDefault)
-			sender.inProgress.Wait()
+			sender.state.InProgress.Wait()
 
 			wantRequests := 1
 			if tt.retryable {
@@ -140,6 +143,15 @@ func TestSenderSendWithRetries(t *testing.T) { //nolint:paralleltest // Don't sh
 			}
 			if got := int(requests.Load()); got != wantRequests {
 				t.Errorf("handler received %d requests, want %d", got, wantRequests)
+			}
+
+			// Non-retryable errors and too many retries must pass the data to the fallback sender (the DLQ).
+			var wantFallback []string
+			if tt.status > MaxSuccessfulStatusCode {
+				wantFallback = []string{"blobs: payload (raw)"}
+			}
+			if got := fallbackSent(); !slices.Equal(got, wantFallback) {
+				t.Errorf("sent to fallback = %q, want %q", got, wantFallback)
 			}
 		})
 	}
@@ -371,20 +383,20 @@ func TestCollectorRequestWithRetriesShutdown(t *testing.T) {
 			t.Cleanup(server.Close)
 
 			base := &config.BaseCollector{Type: config.CollectorTypeHTTP, Name: tt.name}
-			c, err := NewCollector(base, map[string]any{
+			coll, err := NewCollector(base, map[string]any{
 				"method": http.MethodGet, "url": server.URL,
 				"retries": map[string]any{"type": retryTypeStatic, "interval": "1ms"},
 			})
 			if err != nil {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
-			c.client = clientH2(&tls.Config{}, 0, 0, tt.name)
+			coll.client = clientH2(&tls.Config{}, 0, 0, tt.name)
 
 			if tt.before {
 				cancelExec() // Trigger cancellation of execution context immediately.
 			}
 
-			resp := c.requestWithRetries(schedCtx, execCtx)
+			resp := coll.requestWithRetries(schedCtx, execCtx)
 			_ = resp.Body.Close()
 
 			want := 0
@@ -451,7 +463,12 @@ func TestSenderSendWithRetriesShutdown(t *testing.T) {
 			getBody := func() (io.ReadCloser, error) {
 				return io.NopCloser(strings.NewReader("payload")), nil
 			}
-			sender.sendWithRetries(ctx, sender.url, sender.headers, getBody, int64(len("payload")))
+			var rejected int
+			reject := func() string {
+				rejected++
+				return config.SenderTypeDLQ
+			}
+			sender.sendWithRetries(ctx, sender.url, sender.headers, getBody, int64(len("payload")), reject)
 
 			want := 0
 			if tt.during {
@@ -459,6 +476,10 @@ func TestSenderSendWithRetriesShutdown(t *testing.T) {
 			}
 			if gotRequests := requests.Load(); gotRequests != int32(want) {
 				t.Errorf("Sender.sendWithRetries() sent %d requests, want %d", gotRequests, want)
+			}
+			// Requests or retries that were aborted by a shutdown must be rejected (i.e. sent to the DLQ).
+			if rejected != 1 {
+				t.Errorf("Sender.sendWithRetries() called reject %d times, want 1", rejected)
 			}
 		})
 	}

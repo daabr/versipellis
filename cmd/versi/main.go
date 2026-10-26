@@ -41,51 +41,31 @@ func main() {
 
 	initLog(debugLog, structured, info)
 	ctx, cancel := context.WithCancel(context.Background())
-
 	senders, ok := initSenders(cfg)
 	if !ok {
 		cancel()
 		os.Exit(1)
 	}
-	collectorsDone, ok := initCollectors(ctx, senders, cfg)
+	collectors, ok := initCollectors(ctx, senders, cfg)
 	if !ok {
 		cancel()
+		shutdown(context.Background(), collectors, nil, senders)
 		os.Exit(1)
 	}
 	receivers, ok := initReceivers(ctx, senders, cfg)
 	if !ok {
 		cancel()
+		shutdown(context.Background(), collectors, nil, senders)
 		os.Exit(1)
 	}
-	if len(collectorsDone)+len(receivers) == 0 {
+	if len(collectors)+len(receivers) == 0 {
 		slog.Error("no collectors or receivers initialized")
 		cancel()
 		os.Exit(1)
 	}
 
 	waitForInterrupt(cancel)
-
-	var wg sync.WaitGroup
-	ctx = context.Background()
-	for _, receiver := range receivers {
-		wg.Go(func() { receiver.Close(ctx) })
-	}
-	for _, done := range collectorsDone {
-		<-done
-	}
-	wg.Wait()
-
-	// Close the Dead-Letter Queue (DLQ) only after all other senders are closed, to
-	// ensure it can still handle undelivered data from them while they're being closed.
-	dlq := senders[config.SenderTypeDLQ]
-	delete(senders, config.SenderTypeDLQ)
-	for _, sender := range senders {
-		wg.Go(func() { sender.Close(ctx) })
-	}
-	wg.Wait()
-	dlq.Close(ctx)
-
-	slog.Info("shutting down")
+	shutdown(context.Background(), collectors, receivers, senders)
 }
 
 func initLog(debugLog, structured bool, info *debug.BuildInfo) {
@@ -131,4 +111,31 @@ func waitForInterrupt(cancel context.CancelFunc) {
 
 	slog.Warn("intercepted OS signal, entering lame-duck mode", slog.String("signal", sig.String()))
 	cancel()
+}
+
+// shutdown gracefully drains and closes all asynchronous components, in this order:
+//  1. Collectors and receivers, in parallel (each with its own timeout).
+//  2. All senders, except the Dead-Letter Queue (DLQ), in parallel.
+//  3. The DLQ (so it can save undelivered data from other senders).
+func shutdown(ctx context.Context, collectors []collector, receivers []receiver, senders map[string]config.Sender) {
+	var wg sync.WaitGroup
+	for _, r := range receivers {
+		wg.Go(func() { r.Close(ctx) })
+	}
+	for _, c := range collectors {
+		if ch := c.Done(); ch != nil {
+			<-ch
+		}
+	}
+	wg.Wait()
+
+	dlq := senders[config.SenderTypeDLQ]
+	delete(senders, config.SenderTypeDLQ)
+	for _, sender := range senders {
+		wg.Go(func() { sender.Close(ctx) })
+	}
+	wg.Wait()
+
+	dlq.Close(ctx)
+	slog.Info("shutting down")
 }

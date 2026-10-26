@@ -785,6 +785,67 @@ func TestSenderEncodingFailureFallback(t *testing.T) {
 	}
 }
 
+func TestSenderDeliveryFailureFallback(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		data     flow.Chunk
+		upstream config.Format
+		want     string
+	}{
+		{"json", testJSON(`{"key":"value"}`), codec.FormatJSONArray, `blobs: [{"key":"value"}] (json_array)`},
+		{"rows", testRow("a", "x"), codec.FormatDefault, "blobs: {\"a\":\"x\"}\n (ndjson)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// POST requests aren't retried by default, so the first failure is the last one.
+			s, err := NewSender(map[string]any{"url": "http://example.com"}, tt.name, config.SenderTypeHTTP, nil)
+			if err != nil {
+				t.Fatalf("NewSender() error: %v", err)
+			}
+			s.client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusInternalServerError,
+					Body:       http.NoBody,
+					Header:     make(http.Header),
+				}, nil
+			})
+			fallback, fallbackSent := recordSends(t)
+			s.fallback = fallback
+
+			// Structured data was already encoded when the delivery failed, so the
+			// fallback gets the encoded payload as a blob, in the resolved format.
+			s.Send(t.Context(), tt.data, tt.upstream)
+			s.Close(t.Context())
+
+			if got, want := fallbackSent(), []string{tt.want}; !slices.Equal(got, want) {
+				t.Errorf("sent to fallback = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestSenderCloseBeforeStart(t *testing.T) {
+	t.Parallel()
+
+	s := new(Sender)
+	s.Close(t.Context()) // Must not panic, or consume CloseOnce.
+	if s.state.IsStarted() {
+		t.Fatal("Sender.Close() before startup started the sender")
+	}
+
+	s.state.Start()
+	s.Close(t.Context())
+	select {
+	case <-s.state.Closed:
+	default:
+		t.Error("Sender.Close() after a Close() before startup didn't close State.Closed")
+	}
+}
+
 // closeTracker is an [io.ReadCloser] which records whether it was closed.
 type closeTracker struct {
 	io.Reader
@@ -909,6 +970,11 @@ func TestSenderClose(t *testing.T) {
 	if got := counter.Load(); got != 1 {
 		t.Errorf("server received %d requests, want 1", got)
 	}
+	select {
+	case <-s.state.Closed:
+	default:
+		t.Error("Sender.Close() without a timeout didn't close State.Closed")
+	}
 
 	// Calling Send after Close should be rejected.
 	s.Send(t.Context(), flow.Blobs{[]byte("another payload")}, codec.FormatDefault)
@@ -922,35 +988,84 @@ func TestSenderClose(t *testing.T) {
 func TestSenderCloseTimeout(t *testing.T) {
 	t.Parallel()
 
-	synctest.Test(t, func(t *testing.T) {
-		s, err := NewSender(
-			map[string]any{"url": "http://example.com", "timeout": "100ms"},
-			"TestSenderCloseTimeout",
-			config.SenderTypeHTTP,
-			nil,
-		)
-		if err != nil {
-			t.Fatalf("NewSender() error: %v", err)
-		}
+	tests := []struct {
+		name         string
+		timeout      string
+		ignoreAbort  bool // The request ignores the cancellation of its context.
+		want         time.Duration
+		wantCanceled bool // The request was aborted by [Sender.Close], not by its own timeout.
+	}{
+		{
+			name:         "no_request_timeout",
+			timeout:      "0s",
+			want:         CloseTimeout,
+			wantCanceled: true,
+		},
+		{
+			name:         "request_timeout_above_limit",
+			timeout:      "1m",
+			want:         CloseTimeout,
+			wantCanceled: true,
+		},
+		{
+			name:    "request_timeout_below_limit",
+			timeout: "2s",
+			want:    2 * time.Second,
+		},
+		{
+			name:        "unresponsive_request",
+			timeout:     "1m",
+			ignoreAbort: true,
+			want:        CloseTimeout + AbortTimeout,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-		s.client.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-			<-req.Context().Done()
-			return nil, req.Context().Err()
+			synctest.Test(t, func(t *testing.T) {
+				s, err := NewSender(
+					map[string]any{"url": "http://example.com", "timeout": tt.timeout},
+					"TestSenderCloseTimeout", config.SenderTypeHTTP, nil,
+				)
+				if err != nil {
+					t.Fatalf("NewSender() error: %v", err)
+				}
+
+				release := make(chan struct{})
+				var gotErr error
+				s.client.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+					if tt.ignoreAbort {
+						<-release
+						return nil, errors.New("released by the test")
+					}
+					<-req.Context().Done()
+					gotErr = req.Context().Err()
+					return nil, gotErr //nolint:wrapcheck // Unit tests don't need error wrapping.
+				})
+
+				s.Send(t.Context(), flow.Blobs{[]byte("payload")}, codec.FormatDefault)
+
+				start := time.Now()
+				s.Close(t.Context())
+				if got := time.Since(start); got != tt.want {
+					t.Errorf("Sender.Close() took %v, want %v", got, tt.want)
+				}
+				select {
+				case <-s.state.Closed:
+				default:
+					t.Error("Sender.Close() didn't close State.Closed")
+				}
+				// Safe to read: Close returned after the request's goroutine finished (except when ignoring the abort).
+				if tt.wantCanceled && !errors.Is(gotErr, context.Canceled) {
+					t.Errorf("request context error = %v, want %v", gotErr, context.Canceled)
+				}
+
+				close(release)
+				synctest.Wait()
+			})
 		})
-
-		s.Send(t.Context(), flow.Blobs{[]byte("payload")}, codec.FormatDefault)
-
-		want := 50 * time.Millisecond
-		ctx, cancel := context.WithTimeout(t.Context(), want)
-		t.Cleanup(cancel)
-
-		start := time.Now()
-		s.Close(ctx)
-
-		if got := time.Since(start); got != want {
-			t.Errorf("Sender.Close() timeout took %v, want %v", got, want)
-		}
-	})
+	}
 }
 
 func TestSenderCloseDuringRetryDelay(t *testing.T) {
