@@ -396,7 +396,10 @@ func (d *DeadLetterQueue) measureSizeLoop() {
 		return
 	}
 
-	prevSize, _ := d.measureSize()
+	prevSize, ok := d.measureSize()
+	if !ok && d.state.IsClosing() {
+		return // Interrupted by shutdown: pending writes must observe [config.State.Closing] instead.
+	}
 	if d.measured != nil {
 		// Release pending writes even if the measurement failed and logged an error, otherwise they'd wait in memory
 		// until shutdown and then be discarded, which is worse than accounting only for the DLQ's own writes.

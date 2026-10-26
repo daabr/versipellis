@@ -923,3 +923,24 @@ func TestDLQMaxSizeBeforeMeasurement(t *testing.T) {
 		})
 	}
 }
+
+// TestDLQMeasurementInterruptedByClose checks that a first measurement that was interrupted by
+// shutdown doesn't release pending writes, which would then bypass the maximum size.
+func TestDLQMeasurementInterruptedByClose(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "existing"), 100)
+
+	d := newTestDLQ(t, dir, 100, 0)
+	d.measured = make(chan struct{})
+	d.state.Start()
+	d.state.BeginClose()
+	d.measureSizeLoop() // Returns immediately because the DLQ is closing.
+
+	select {
+	case <-d.measured:
+		t.Error("measureSizeLoop() released pending writes after an interrupted measurement")
+	default:
+	}
+}
