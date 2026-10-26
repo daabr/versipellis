@@ -50,6 +50,8 @@ By default, it logs a warning when the size reaches 100 MiB, but it doesn't limi
 
 When the DLQ is full, new files are discarded, and each one is logged. If you limit the size, new files wait for the initial measurement to end before they're written, so a DLQ that's already full can't exceed the limit while it's being measured.
 
+If some subdirectories can't be read (e.g., due to their permissions), measurements skip them, so their contents don't count towards the size limit, and each measurement logs a warning until you fix their permissions.
+
 ## Replaying Data
 
 - **Duplicates**: the DLQ provides at-least-once semantics. A request that fails after it was sent (e.g., a timeout while waiting for a response) may have been processed by the destination anyway, so replaying it may duplicate it. In the future, Versipellis will annotate such failures with `delivery_uncertain=true`.
