@@ -868,3 +868,58 @@ func TestDeadLetterQueueMaxSizeConcurrency(t *testing.T) {
 		t.Errorf("DLQ size = %d, want %d", got, fileSize*maxFiles)
 	}
 }
+
+// TestDLQMaxSizeBeforeMeasurement checks that writes wait for the first measurement of the DLQ directory, so a
+// directory that's already full can't grow beyond the maximum size, and that they're discarded if the DLQ closes first.
+func TestDLQMaxSizeBeforeMeasurement(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		closeFirst bool
+	}{
+		{"measured_first", false},
+		{"closed_first", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			writeTestFile(t, filepath.Join(dir, "existing"), 100) // Already full.
+
+			synctest.Test(t, func(t *testing.T) {
+				d := newTestDLQ(t, dir, 100, 0)
+				d.measured = make(chan struct{})
+				d.state.Start()
+
+				d.Send(t.Context(), flow.Blobs{[]byte("new data")}, codec.FormatRaw)
+				synctest.Wait()
+				if got := lockedTotalSize(d); got != 0 {
+					t.Errorf("DLQ size before the first measurement = %d, want 0 (no reservations)", got)
+				}
+
+				start := time.Now()
+				if tt.closeFirst {
+					d.Close(t.Context())
+					if elapsed := time.Since(start); elapsed > 0 {
+						t.Errorf("Close() with a pending write took %v, want no wait", elapsed)
+					}
+				} else {
+					d.measureSize()
+					close(d.measured)
+					d.state.InProgress.Wait()
+					assertDLQSize(t, d, "after the first measurement", 100, false)
+				}
+			})
+
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("os.ReadDir() error = %v", err)
+			}
+			if len(entries) != 1 || entries[0].Name() != "existing" {
+				t.Errorf("DLQ directory entries = %v, want only the existing file", entries)
+			}
+		})
+	}
+}

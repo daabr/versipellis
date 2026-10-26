@@ -66,6 +66,11 @@ type DeadLetterQueue struct {
 	// The warned latch logs the warnSize warning only once, until a measurement shows that totalSize is under it.
 	warned bool
 
+	// If maxSize is configured, writes wait until [DeadLetterQueue.measureSizeLoop] closes this channel after its
+	// first measurement (even if it failed), so they can't exceed maxSize before the existing files are counted.
+	// It's nil when maxSize is 0, because then writes don't need the size of the existing files.
+	measured chan struct{}
+
 	// Successful writes signal to waitLess (without blocking), so
 	// [DeadLetterQueue.measureSizeLoop] reverts to [remeasureMinDelay].
 	waitLess chan struct{}
@@ -98,6 +103,9 @@ func InitDeadLetterQueue(rootDir string, rawCfg any) (*DeadLetterQueue, bool) {
 	}
 
 	dlq := &DeadLetterQueue{maxSize: maxSize, warnSize: warnSize, root: r, newFiles: make(map[string]newFile)}
+	if maxSize > 0 {
+		dlq.measured = make(chan struct{})
+	}
 	dlq.waitLess = make(chan struct{}, 1)
 	dlq.state.Start()
 	go dlq.measureSizeLoop()
@@ -124,7 +132,13 @@ func (d *DeadLetterQueue) Send(ctx context.Context, data flow.Chunk, format conf
 	now := time.Now().UTC()
 	defer d.state.CloseMu.RUnlock()
 
+	ctx = context.WithoutCancel(ctx)
 	d.state.InProgress.Go(func() {
+		if !d.waitForSize() {
+			discardAfterClose(ctx, data, format)
+			return
+		}
+
 		files, ext := encode(data, format)
 		for _, file := range files {
 			if len(file) == 0 {
@@ -137,6 +151,28 @@ func (d *DeadLetterQueue) Send(ctx context.Context, data flow.Chunk, format conf
 			}
 		}
 	})
+}
+
+// waitForSize waits until the first measurement of the DLQ directory's total size ends (see [DeadLetterQueue.measured]).
+// It returns false if the DLQ started closing first, so the caller must discard its data.
+func (d *DeadLetterQueue) waitForSize() bool {
+	if d.measured == nil {
+		return true
+	}
+
+	// Check first without waiting, because if the DLQ is closing too, the choice below is random.
+	select {
+	case <-d.measured:
+		return true
+	default:
+	}
+
+	select {
+	case <-d.measured:
+		return true
+	case <-d.state.Closing:
+		return false
+	}
 }
 
 // Close waits (up to 1 second) for disk writes which are currently in progress to complete,
@@ -361,6 +397,11 @@ func (d *DeadLetterQueue) measureSizeLoop() {
 	}
 
 	prevSize, _ := d.measureSize()
+	if d.measured != nil {
+		// Release pending writes even if the measurement failed and logged an error, otherwise they'd wait in memory
+		// until shutdown and then be discarded, which is worse than accounting only for the DLQ's own writes.
+		close(d.measured)
+	}
 	nextDelay := remeasureMinDelay
 	nextCheck := time.Now().Add(nextDelay)
 	timer := time.NewTimer(nextDelay)

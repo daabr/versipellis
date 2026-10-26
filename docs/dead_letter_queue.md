@@ -48,7 +48,7 @@ When Versipellis starts, it measures in the background the total size of all the
 
 By default, it logs a warning when the size reaches 100 MiB, but it doesn't limit the size. See the [configuration reference](./config/dead_letter_queue.md) for details.
 
-When the DLQ is full, new files are discarded, and each one is logged.
+When the DLQ is full, new files are discarded, and each one is logged. If you limit the size, new files wait for the initial measurement to end before they're written, so a DLQ that's already full can't exceed the limit while it's being measured.
 
 ## Replaying Data
 

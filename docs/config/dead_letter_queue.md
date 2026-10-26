@@ -32,4 +32,4 @@ For information about the DLQ itself, see [this page](../dead_letter_queue.md).
 - New content that would cause the DLQ to exceed this limit is logged and discarded
 
 > [!NOTE]
-> Initial and recurring measurements are all done in the background, so large directories won't delay any operation.
+> Initial and recurring measurements are all done in the background, so large directories won't delay any operation. However, when `max_size` is set, new files wait (in memory) until the initial measurement is done, to ensure they can't exceed it.
