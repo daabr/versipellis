@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/daabr/versipellis/pkg/codec"
@@ -35,12 +34,7 @@ type Collector struct {
 
 	transportID string
 	client      *http.Client
-
-	cancelSched context.CancelFunc
-	cancelExec  context.CancelFunc
-	inProgress  sync.WaitGroup
-	closeOnce   sync.Once
-	closed      chan struct{}
+	state       config.State
 }
 
 // Base returns a copy of the collector's static and generic configuration details.
@@ -137,21 +131,11 @@ func loadBody(cfg map[string]any, method string) ([]byte, error) {
 	return body, nil // Not trimming leading/trailing whitespaces because this payload may be binary.
 }
 
-// Start connects to the configured HTTP server and starts sending requests to it. This method
-// returns immediately, and the collector runs asynchronously in the background. This method is
-// idempotent: only the first call will actually start a goroutine. However, it is not meant to
-// be safe for concurrency, initialize collectors only in the main goroutine. Lastly, the collector
-// obeys the cancellation of the provided context, but with a grace period of [Collector.timeout].
+// Start connects to the configured HTTP server and starts sending requests to it. This method returns
+// immediately, and the collector runs asynchronously in the background. This method is not safe for
+// concurrency, initialize collectors only in the main goroutine. Lastly, the collector obeys the
+// cancellation of the provided context, but with a grace period of [Collector.timeout].
 func (c *Collector) Start(ctx context.Context) bool {
-	if c == nil {
-		slog.Error("HTTP collector is misconfigured")
-		return false
-	}
-	if c.cancelSched != nil {
-		slog.Error("HTTP collector already started") // This is a programming error...
-		return true                                  // ...But a harmless one.
-	}
-
 	switch c.Type {
 	case config.CollectorTypeHTTP:
 		c.client = clientH2(c.tls.Clone(), c.maxHeaderSize, c.timeout, c.transportID)
@@ -159,21 +143,15 @@ func (c *Collector) Start(ctx context.Context) bool {
 		c.client = clientH3(c.tls.Clone(), c.maxHeaderSize, c.timeout, c.transportID)
 	}
 
-	var schedCtx, execCtx context.Context
-	schedCtx, c.cancelSched = context.WithCancel(ctx)
-	execCtx, c.cancelExec = context.WithCancel(context.WithoutCancel(ctx))
-	c.closed = make(chan struct{})
-
-	slog.Info("starting to send HTTP requests",
-		slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
-	)
+	schedCtx, execCtx := c.state.StartWith(ctx)
+	slog.Info("starting to send HTTP requests", slog.String("name", c.Name), slog.String("schedule", c.Cronspec))
 	go c.scheduleNext(schedCtx, execCtx, time.Now())
 	return true
 }
 
 func (c *Collector) scheduleNext(schedCtx, execCtx context.Context, prev time.Time) {
 	sem := make(chan struct{}, max(c.Concurrency, 1))
-	defer c.Close()
+	defer c.Close(execCtx)
 
 	for {
 		nextStart := c.Schedule.Next(prev)
@@ -182,15 +160,15 @@ func (c *Collector) scheduleNext(schedCtx, execCtx context.Context, prev time.Ti
 				done := make(chan struct{})
 				go func() {
 					defer close(done)
-					c.inProgress.Wait()
+					c.state.InProgress.Wait()
 				}()
 				select {
 				case <-schedCtx.Done():
 				case <-done:
+					slog.Info("HTTP collector finished one-time execution",
+						slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
+					)
 				}
-				slog.Info("HTTP collector finished one-time execution",
-					slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
-				)
 			} else {
 				slog.Error("HTTP collector stopped due to scheduler bug - no next instance",
 					slog.String("name", c.Name), slog.String("schedule", c.Cronspec),
@@ -218,13 +196,15 @@ func (c *Collector) scheduleNext(schedCtx, execCtx context.Context, prev time.Ti
 }
 
 func (c *Collector) requestWithConcurrencyLimit(schedCtx, execCtx context.Context, sem chan struct{}, scheduled time.Time) {
-	if schedCtx.Err() != nil { // Instead of schedCtx.Done() in the select block below - to check ctx before sem.
+	// Checking schedCtx.Err() here instead of using schedCtx.Done() in the select
+	// block below, to guarantee that we check the closing state before the semaphore.
+	if schedCtx.Err() != nil {
 		return
 	}
 
 	select {
 	case sem <- struct{}{}:
-		c.inProgress.Go(func() {
+		c.state.InProgress.Go(func() {
 			defer func() { <-sem }()
 
 			resp := c.requestWithRetries(schedCtx, execCtx)
@@ -241,7 +221,7 @@ func (c *Collector) requestWithConcurrencyLimit(schedCtx, execCtx context.Contex
 
 // sendResponse passes a collected HTTP response to the collector's destination: as-is by default, or only
 // its body, in a specific format (when one is configured). If the body can't be converted to that format,
-// the entire HTTP response is routed to the Dead-Letter Queue. Either way, all I/O is asynchronous.
+// the entire HTTP response is sent to the Dead-Letter Queue. Either way, all I/O is asynchronous.
 func (c *Collector) sendResponse(ctx context.Context, resp *http.Response) {
 	if c.format == codec.FormatDefault {
 		c.Send(ctx, flow.HTTPResponses{resp}, c.format)
@@ -271,27 +251,26 @@ func (c *Collector) sendResponse(ctx context.Context, resp *http.Response) {
 
 // Done returns a channel that closes when shutdown completes or its grace period expires.
 func (c *Collector) Done() <-chan struct{} {
-	return c.closed
+	return c.state.Closed
 }
 
-// Close waits (up to [CloseTimeout]) for requests that are in progress to finish, after new ones
-// are no longer being scheduled. It is safe to call this multiple times, even if [Collector.Start]
-// wasn't called. However, it's meant to be called only once, at the end of the [Collector.scheduleNext]
-// goroutine. If there are still pending requests after the timeout, the collector will forcefully close
-// their connections. It then signals through the [Collector.Done] channel that it's ready to shut down.
-func (c *Collector) Close() {
-	if c == nil || c.cancelSched == nil {
+// Close waits (up to [CloseTimeout] + [AbortTimeout]) for ongoing requests to finish, once new ones can
+// no longer be scheduled. It is safe to call this multiple times, even if [Collector.Start] wasn't called.
+// However, it's meant to be called only once, at the end of the [Collector.scheduleNext] goroutine.
+// If there are still pending requests after the timeout, the collector will forcefully close their
+// connections. It then signals through the [Collector.Done] channel that it's ready to shut down.
+func (c *Collector) Close(context.Context) {
+	if !c.state.IsStarted() {
 		return
 	}
 
-	c.closeOnce.Do(func() {
-		c.cancelSched()
+	c.state.CloseOnce.Do(func() {
+		c.state.BeginClose()
 
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-
-			c.inProgress.Wait()
+			c.state.InProgress.Wait()
 		}()
 
 		timeout := c.timeout
@@ -303,25 +282,19 @@ func (c *Collector) Close() {
 		case <-done:
 			// All done.
 		case <-time.After(timeout):
-			slog.Warn("closing HTTP collector forcefully",
-				slog.String("name", c.Name), slog.Duration("timeout", timeout),
-			)
-			if c.cancelExec != nil {
-				c.cancelExec()
-			}
+			slog.Warn("closing HTTP collector forcefully", slog.String("name", c.Name), slog.Duration("timeout", timeout))
+			c.state.StopStragglers()
 		}
 
 		// Wait for aborted workers to actually stop, if there are any.
 		select {
 		case <-done:
 			// Immediate if the previous select block didn't encounter a timeout,
-			// So no need to nest this select block inside the previous one.
-		case <-time.After(abortTimeout):
+			// so no need to nest this select block inside the previous one.
+		case <-time.After(AbortTimeout):
 			slog.Error("aborted HTTP collector didn't stop immediately", slog.String("name", c.Name))
 		}
 
-		if c.closed != nil {
-			close(c.closed)
-		}
+		c.state.FinishClose()
 	})
 }

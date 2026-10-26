@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/daabr/versipellis/pkg/codec"
@@ -25,29 +24,73 @@ import (
 )
 
 const (
-	attempts = 3
-
+	attempts        = 3
 	dirPermissions  = 0o700
 	filePermissions = 0o600
 	fileFlags       = os.O_CREATE | os.O_EXCL | os.O_WRONLY
+	incompleteExt   = ".incomplete"
+)
+
+type writeResult int
+
+const (
+	writeOK writeResult = iota
+	writeRetry
+	writeAbort // The DLQ directory is full.
 )
 
 // DeadLetterQueue is an alternative destination for data that couldn't be delivered
 // successfully by other senders. It behaves similarly to [Stdout], but writes the
-// data into a local directory instead, specifically to a k-sortable filename.
+// data into a local directory instead, specifically to a k-sortable file path.
 type DeadLetterQueue struct {
-	root *os.Root
+	maxSize  int64
+	warnSize int64
 
-	inProgress sync.WaitGroup
-	lameDuck   atomic.Bool
-	closeMu    sync.RWMutex
-	closeOnce  sync.Once
+	root  *os.Root
+	state config.State
+
+	// Size accounting is disabled if both maxSize and warnSize are 0. Otherwise, [DeadLetterQueue.measureSizeLoop]
+	// measures all the files in the DLQ directory at startup and from time to time, to notice external changes.
+	// Between measurements, totalSize follows the DLQ's own writes: each write reserves its size before
+	// creating a file (so concurrent writes can't exceed maxSize), and releases it if the write fails.
+	sizeMu    sync.Mutex
+	totalSize int64
+
+	// Writes are tracked in newFiles by their slash-separated final paths, from their reservation until they
+	// end, or until the end of a concurrent measurement. Measurements skip tracked files (with or without their
+	// ".incomplete" suffix) and add their reserved sizes instead, so no file is counted twice or by a partial size.
+	newFiles  map[string]newFile
+	measuring bool
+
+	// The warned latch logs the warnSize warning only once, until a measurement shows that totalSize is under it.
+	warned bool
+
+	// If maxSize is configured, writes wait until [DeadLetterQueue.measureSizeLoop] closes this channel after its
+	// first measurement (even if it failed), so they can't exceed maxSize before the existing files are counted.
+	// It's nil when maxSize is 0, because then writes don't need the size of the existing files.
+	measured chan struct{}
+
+	// Successful writes signal to waitLess (without blocking), so
+	// [DeadLetterQueue.measureSizeLoop] reverts to [remeasureMinDelay].
+	waitLess chan struct{}
+}
+
+// newFile is a tracked write: its reserved size, and whether it ended during a measurement.
+type newFile struct {
+	size int64
+	done bool
 }
 
 // InitDeadLetterQueue initializes an alternative destination for data that couldn't be
 // delivered successfully by other senders. It behaves similarly to [Stdout], but writes
-// the data into a local directory instead, specifically to a k-sortable filename.
-func InitDeadLetterQueue(rootDir string) *DeadLetterQueue {
+// the data into a local directory instead, specifically to a k-sortable file path.
+func InitDeadLetterQueue(rootDir string, rawCfg any) (*DeadLetterQueue, bool) {
+	maxSize, warnSize, err := parseDLQ(rawCfg)
+	if err != nil {
+		slog.Error("invalid Dead-Letter Queue configuration", slog.Any("error", err))
+		return nil, false
+	}
+
 	// No need to check for errors here: if the directory creation fails
 	// for any reason, the subsequent file creation will fail as well.
 	_ = os.MkdirAll(rootDir, dirPermissions)
@@ -55,10 +98,17 @@ func InitDeadLetterQueue(rootDir string) *DeadLetterQueue {
 	r, err := os.OpenRoot(rootDir)
 	if err != nil {
 		slog.Error("Dead-Letter Queue directory initialization error", slog.Any("error", err))
-		return nil
+		return nil, false
 	}
 
-	return &DeadLetterQueue{root: r}
+	dlq := &DeadLetterQueue{maxSize: maxSize, warnSize: warnSize, root: r, newFiles: make(map[string]newFile)}
+	if maxSize > 0 {
+		dlq.measured = make(chan struct{})
+	}
+	dlq.waitLess = make(chan struct{}, 1)
+	dlq.state.Start()
+	go dlq.measureSizeLoop()
+	return dlq, true
 }
 
 // Send encodes and writes data into a file with a k-sortable name within the "data" directory in the process's
@@ -68,34 +118,33 @@ func InitDeadLetterQueue(rootDir string) *DeadLetterQueue {
 // The DLQ is the last [config.Sender] to be closed, after closing all the other configured I/O components has
 // already completed or timed out. This means that this function can be called after [DeadLetterQueue.Close] only
 // by a collector or receiver goroutine that outlived its own close timeout. If that happens, the provided data is
-// undeliverable anyway, so we can only warn about it and release it resources before the process terminates.
+// undeliverable anyway, so we can only warn about it and release its resources before the process terminates.
 func (d *DeadLetterQueue) Send(ctx context.Context, data flow.Chunk, format config.Format) {
 	if flow.IsEmpty(data) {
 		return
 	}
 
-	if d.lameDuck.Load() {
+	if d.state.IfClosingElseLock() {
 		discardAfterClose(ctx, data, format)
 		return
 	}
-
-	d.closeMu.RLock()
 	now := time.Now().UTC()
-	defer d.closeMu.RUnlock()
+	defer d.state.CloseMu.RUnlock()
 
-	if d.lameDuck.Load() {
-		discardAfterClose(ctx, data, format)
-		return
-	}
+	ctx = context.WithoutCancel(ctx)
+	d.state.InProgress.Go(func() {
+		if !d.waitForSize() {
+			discardAfterClose(ctx, data, format)
+			return
+		}
 
-	d.inProgress.Go(func() {
 		files, ext := encode(data, format)
 		for _, file := range files {
 			if len(file) == 0 {
 				continue
 			}
 			for range attempts {
-				if d.asyncWriteFile(file, ext, now, dirPermissions, filePermissions) {
+				if d.asyncWriteFile(file, ext, now, dirPermissions, filePermissions) != writeRetry {
 					break
 				}
 			}
@@ -103,33 +152,51 @@ func (d *DeadLetterQueue) Send(ctx context.Context, data flow.Chunk, format conf
 	})
 }
 
+// waitForSize waits until the first measurement of the DLQ directory's total size ends (see [DeadLetterQueue.measured]).
+// It returns false if the DLQ started closing first, so the caller must discard its data.
+func (d *DeadLetterQueue) waitForSize() bool {
+	if d.measured == nil {
+		return true
+	}
+
+	// Check first without waiting, because if the DLQ is closing too, the choice below is random.
+	select {
+	case <-d.measured:
+		return true
+	default:
+	}
+
+	select {
+	case <-d.measured:
+		return true
+	case <-d.state.Closing:
+		return false
+	}
+}
+
 // Close waits (up to 1 second) for disk writes which are currently in progress to complete,
 // and prevents new files from being created. This is the last step before process termination.
-func (d *DeadLetterQueue) Close(ctx context.Context) {
-	d.closeOnce.Do(func() {
-		d.closeMu.Lock()
-		d.lameDuck.Store(true)
-		d.closeMu.Unlock()
-
-		shutdownCtx, cancel := context.WithTimeout(ctx, time.Second)
-		defer cancel()
+func (d *DeadLetterQueue) Close(context.Context) {
+	d.state.CloseOnce.Do(func() {
+		d.state.BeginClose()
 
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			d.inProgress.Wait()
+			d.state.InProgress.Wait()
 			_ = d.root.Close()
 		}()
 
 		select {
 		case <-done:
 			// All done.
-		case <-shutdownCtx.Done():
-			slog.Warn("closing Dead-Letter Queue writer forcefully", slog.Any("error", shutdownCtx.Err()))
+		case <-time.After(time.Second):
+			slog.Warn("closing Dead-Letter Queue writer forcefully")
 			// Not *really* stopping disk writes, but the next step in
 			// main() is process termination, which does achieve this.
-			return
 		}
+
+		d.state.FinishClose()
 	})
 }
 
@@ -252,30 +319,48 @@ func encodeHTTPResponse(resp *http.Response) []byte {
 	return buf.Bytes()
 }
 
-func (d *DeadLetterQueue) asyncWriteFile(data []byte, ext string, now time.Time, dirPerms, filePerms os.FileMode) bool {
+func (d *DeadLetterQueue) asyncWriteFile(data []byte, ext string, now time.Time, dirPerms, filePerms os.FileMode) writeResult {
 	dir, file := uniqueKSortablePath(now)
-	path := filepath.Join(dir, file+ext)
+	finalPath := filepath.Join(dir, file+ext)
+	tempPath := finalPath + incompleteExt
+
+	size := int64(len(data))
+	if !d.reserve(finalPath, size) {
+		return writeAbort
+	}
+	written := false
+	defer func() { d.release(finalPath, written) }()
 
 	if err := d.root.Mkdir(dir, dirPerms); err != nil && !errors.Is(err, os.ErrExist) {
 		slog.Error("failed to create DLQ subdirectory", slog.Any("error", err), slog.String("dir", dir))
-		return false
+		return writeRetry
 	}
 
-	f, err := d.root.OpenFile(path, fileFlags, filePerms)
+	f, err := d.root.OpenFile(tempPath, fileFlags, filePerms)
 	if err != nil {
-		slog.Error("failed to create DLQ file", slog.Any("error", err), slog.String("path", path))
-		return false
+		slog.Error("failed to create DLQ file", slog.Any("error", err), slog.String("path", tempPath))
+		return writeRetry
 	}
-	defer f.Close()
 
 	if err := writeAndSync(f, data); err != nil {
-		slog.Error("failed to write DLQ file", slog.Any("error", err), slog.String("path", path))
-		_ = f.Close()
-		_ = d.root.Remove(path) // Cleanup in case the file was created but writing to it failed.
-		return false
+		slog.Error("failed to write DLQ file", slog.Any("error", err), slog.String("path", tempPath))
+		_ = d.root.Remove(tempPath)
+		return writeRetry
 	}
 
-	return true
+	written = true
+	select {
+	case d.waitLess <- struct{}{}:
+	default: // A signal is already pending, or size accounting is disabled (nil channel in tests).
+	}
+
+	if err := d.root.Rename(tempPath, finalPath); err != nil {
+		slog.Error("failed to rename DLQ file", slog.Any("error", err), slog.String("path", tempPath))
+		// Don't remove the temporary file, its contents are correct and the name is easy to fix later
+		// upon review. Also don't report a failure, retrying would only duplicate the file.
+	}
+
+	return writeOK
 }
 
 func uniqueKSortablePath(now time.Time) (dir, file string) {
@@ -298,5 +383,5 @@ func uniqueKSortablePath(now time.Time) (dir, file string) {
 
 func writeAndSync(f *os.File, data []byte) error {
 	_, err := f.Write(data)
-	return errors.Join(err, f.Sync())
+	return errors.Join(err, f.Sync(), f.Close())
 }

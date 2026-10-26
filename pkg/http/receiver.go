@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
@@ -32,10 +31,9 @@ type Receiver struct {
 	format        config.Format
 	tls           *tls.Config
 
-	tcp *http.Server
-	udp *http3.Server
-
-	closeOnce sync.Once
+	tcp   *http.Server
+	udp   *http3.Server
+	state config.State
 }
 
 // Base returns a copy of the receiver's static and generic configuration details.
@@ -102,9 +100,10 @@ func parseAddress(addr, protoVer string) (string, error) {
 }
 
 // Start listens for incoming HTTP/1.1, HTTP/2, and HTTP/3 requests on the configured local TCP or UDP
-// address. This method returns immediately, and the server runs asynchronously in the background.
-// The input context is used only for starting them, not to control their entire lifecycle.
+// address. This method returns immediately, and the servers run asynchronously in the background.
+// The input context is used only when starting them, not to control their entire lifecycle.
 func (r *Receiver) Start(ctx context.Context) bool {
+	r.state.Start()
 	handler := http.Handler(r)
 	if r.timeout > 0 {
 		handler = http.TimeoutHandler(r, r.timeout, "")
@@ -149,11 +148,19 @@ func (r *Receiver) Start(ctx context.Context) bool {
 func (r *Receiver) ServeHTTP(w http.ResponseWriter, inReq *http.Request) {
 	start := time.Now()
 
+	if r.state.IfClosingElseLock() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	r.state.InProgress.Add(1)
+	r.state.CloseMu.RUnlock()
+	defer r.state.InProgress.Done()
+
 	// Reminder: need special handling for "multipart/form-data" requests, using [http.Request.MultipartReader],
 	// to stream multi-gigabyte files efficiently instead of buffering them naively.
 	body, ok := readRequest(w, inReq, r.Name, r.maxBodySize)
 	if !ok {
-		return // [readRequest] called [w.WriteHeader] internally.
+		return // [readRequest] already called [w.WriteHeader] internally.
 	}
 
 	if r.Send != nil && !r.sendRequest(inReq, body) {
@@ -240,4 +247,72 @@ func readRequest(w http.ResponseWriter, r *http.Request, name string, maxBytes i
 	}
 
 	return body, true // The caller will write the response status, after processing the body.
+}
+
+// Close waits (up to [CloseTimeout]) to allow ongoing requests to finish before it gracefully
+// shuts down the server. It is safe to call multiple times, even if [Receiver.Start] wasn't called.
+// However, it's meant to be called only once, within the main goroutine that called [Receiver.Start].
+func (r *Receiver) Close(ctx context.Context) {
+	if !r.state.IsStarted() {
+		return
+	}
+
+	r.state.CloseOnce.Do(func() {
+		r.state.BeginClose()
+
+		timeout := r.timeout
+		if timeout <= 0 || timeout > CloseTimeout {
+			timeout = CloseTimeout // Ensure the timeout is within acceptable bounds.
+		}
+		shutdownCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+
+		if r.tcp != nil {
+			slog.Debug("shutting down HTTP server", slog.String("name", r.Name), slog.String("tcp_addr", r.address))
+			err := r.tcp.Shutdown(shutdownCtx) // Blocking up to timeout.
+			if err != nil && !isAnyError(err, http.ErrServerClosed, context.Canceled, context.DeadlineExceeded) {
+				slog.Error("HTTP server shutdown error", slog.Any("error", err),
+					slog.String("name", r.Name), slog.String("tcp_addr", r.address),
+				)
+			}
+			_ = r.tcp.Close() // In case of a [context.DeadlineExceeded] (redundant but harmless otherwise).
+			r.tcp = nil
+		}
+
+		if r.udp != nil {
+			slog.Debug("shutting down HTTP/3 server", slog.String("name", r.Name), slog.String("udp_addr", r.address))
+			err := r.udp.Shutdown(shutdownCtx) // Blocking up to timeout.
+			if err != nil && !isAnyError(err, context.Canceled, context.DeadlineExceeded) {
+				slog.Error("HTTP/3 server shutdown error", slog.Any("error", err),
+					slog.String("name", r.Name), slog.String("udp_addr", r.address),
+				)
+			}
+			_ = r.udp.Close() // In case of a [context.DeadlineExceeded] (redundant but harmless otherwise).
+			r.udp = nil
+		}
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			r.state.InProgress.Wait()
+		}()
+
+		select {
+		case <-done:
+			// All done.
+		case <-shutdownCtx.Done():
+			slog.Warn("closing HTTP receiver forcefully", slog.String("name", r.Name), slog.Duration("timeout", timeout))
+		}
+
+		r.state.FinishClose()
+	})
+}
+
+func isAnyError(err error, targets ...error) bool {
+	for _, target := range targets {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
 }

@@ -109,7 +109,7 @@ func TestNewCollector(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			c, gotErr := NewCollector(tt.base, tt.cfg)
+			coll, gotErr := NewCollector(tt.base, tt.cfg)
 			if (gotErr != nil) != tt.wantErr {
 				t.Fatalf("NewCollector() error = %v, wantErr %v", gotErr, tt.wantErr)
 			}
@@ -117,20 +117,20 @@ func TestNewCollector(t *testing.T) {
 				return
 			}
 
-			if b := c.Base(); !reflect.DeepEqual(b, tt.base) {
+			if b := coll.Base(); !reflect.DeepEqual(b, tt.base) {
 				t.Errorf("Collector.Base() = %+v, want %+v", b, tt.base)
 			}
-			if got := c.url.String(); got != tt.wantURL {
+			if got := coll.url.String(); got != tt.wantURL {
 				t.Errorf("Collector.url = %q, want %q", got, tt.wantURL)
 			}
-			if c.method != tt.wantMethod {
-				t.Errorf("Collector.method = %q, want %q", c.method, tt.wantMethod)
+			if coll.method != tt.wantMethod {
+				t.Errorf("Collector.method = %q, want %q", coll.method, tt.wantMethod)
 			}
-			if !reflect.DeepEqual(c.headers, tt.wantHeaders) {
-				t.Errorf("Collector.headers = %+v, want %+v", c.headers, tt.wantHeaders)
+			if !reflect.DeepEqual(coll.headers, tt.wantHeaders) {
+				t.Errorf("Collector.headers = %+v, want %+v", coll.headers, tt.wantHeaders)
 			}
-			if c.timeout != tt.wantTimeout {
-				t.Errorf("Collector.timeout = %v, want %v", c.timeout, tt.wantTimeout)
+			if coll.timeout != tt.wantTimeout {
+				t.Errorf("Collector.timeout = %v, want %v", coll.timeout, tt.wantTimeout)
 			}
 		})
 	}
@@ -223,15 +223,6 @@ func TestLoadBody(t *testing.T) {
 	}
 }
 
-func TestCollectorStartNilGuard(t *testing.T) {
-	t.Parallel()
-
-	var nilCollector *Collector
-	if ok := nilCollector.Start(t.Context()); ok {
-		t.Error("nil Collector.Start() = true, want false")
-	}
-}
-
 func TestCollectorStart(t *testing.T) {
 	t.Parallel()
 
@@ -287,7 +278,7 @@ func TestCollectorStart(t *testing.T) {
 				t.Fatalf("config.NewBaseCollector() error: %v", err)
 			}
 
-			c, err := NewCollector(base, map[string]any{
+			coll, err := NewCollector(base, map[string]any{
 				"method": http.MethodGet, "url": server.URL, "timeout": "100ms",
 				"retries": map[string]any{"type": retryTypeStatic, "max_attempts": int64(2), "interval": "1ms"},
 			})
@@ -295,19 +286,16 @@ func TestCollectorStart(t *testing.T) {
 				t.Fatalf("NewCollector() error: %v", err)
 			}
 
-			c.transportID += tt.name
+			coll.transportID += tt.name
 			fakeClient := server.Client()
 			fakeTransport, _ := fakeClient.Transport.(*http.Transport)
-			transportH2.Set(c.transportID, fakeTransport)
+			transportH2.Set(coll.transportID, fakeTransport)
 
-			if !c.Start(t.Context()) {
-				t.Fatal("Collector.Start(1) = false, want true")
-			}
-			if !c.Start(t.Context()) {
-				t.Fatal("second Collector.Start(2) failed (should be idempotent)")
+			if !coll.Start(t.Context()) {
+				t.Fatal("Collector.Start() = false, want true")
 			}
 
-			<-c.Done() // Wait for the collector's goroutine to finish its work.
+			<-coll.Done() // Wait for the collector's goroutine to finish its work.
 		})
 	}
 }
@@ -345,14 +333,18 @@ func TestScheduleNextRequest(t *testing.T) {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
 				}
 
-				c, err := NewCollector(base, map[string]any{"method": http.MethodGet, "url": "https://example.com"})
+				coll, err := NewCollector(base, map[string]any{"method": http.MethodGet, "url": "https://example.com"})
 				if err != nil {
 					t.Fatalf("NewCollector() error: %v", err)
 				}
 
-				c.client = clientH2(&tls.Config{}, 0, c.timeout, tt.name)
+				// A real client would send a real request, which would fail and leave a retry pending when the test ends.
+				transport := &fakeBlockingTransport{started: make(chan struct{}, 10), unblock: make(chan struct{})}
+				close(transport.unblock) // Respond immediately.
+				coll.client = &http.Client{Transport: transport}
+
 				ctx, cancel := context.WithCancel(t.Context())
-				c.cancelSched = cancel
+				schedCtx, execCtx := coll.state.StartWith(ctx)
 				if tt.cancel {
 					cancel()
 				} else {
@@ -360,14 +352,14 @@ func TestScheduleNextRequest(t *testing.T) {
 				}
 
 				if !tt.isAsync {
-					c.scheduleNext(ctx, ctx, time.Now())
+					coll.scheduleNext(schedCtx, execCtx, time.Now())
 					return
 				}
 
-				go c.scheduleNext(ctx, ctx, time.Now().Add(-5*time.Second))
+				go coll.scheduleNext(schedCtx, execCtx, time.Now().Add(-5*time.Second))
 				synctest.Wait()
 				cancel()
-				synctest.Wait()
+				<-coll.Done()
 			})
 		})
 	}
@@ -376,7 +368,7 @@ func TestScheduleNextRequest(t *testing.T) {
 func TestCollectorCloseTimeout(t *testing.T) {
 	t.Parallel()
 
-	testTimeout := CloseTimeout + abortTimeout
+	testTimeout := CloseTimeout + AbortTimeout
 
 	tests := []struct {
 		name    string
@@ -409,7 +401,7 @@ func TestCollectorCloseTimeout(t *testing.T) {
 
 			synctest.Test(t, func(t *testing.T) {
 				base := &config.BaseCollector{Type: config.CollectorTypeHTTP}
-				c, err := NewCollector(base, map[string]any{
+				coll, err := NewCollector(base, map[string]any{
 					"method":  http.MethodGet,
 					"url":     "https://example.com",
 					"timeout": tt.timeout.String(),
@@ -420,22 +412,22 @@ func TestCollectorCloseTimeout(t *testing.T) {
 
 				// Test case 1: Close() before Start() should return immediately and have no effect.
 				start := time.Now()
-				c.Close()
+				coll.Close(t.Context())
 				if got := time.Since(start); got != 0 {
 					t.Fatalf("Collector.Close(1) timeout behaved unexpectedly: got %v, want %v", got, 0)
 				}
 
 				// Test case 2: Close() after Start() should block until current request is done / the timeout expires.
-				_, c.cancelSched = context.WithCancel(t.Context())
+				coll.state.StartWith(t.Context())
 				if tt.start {
-					c.client = clientH2(&tls.Config{}, 0, c.timeout, tt.name)
-					c.inProgress.Go(func() {
+					coll.client = clientH2(&tls.Config{}, 0, coll.timeout, tt.name)
+					coll.state.InProgress.Go(func() {
 						synctest.Sleep(testTimeout * 2)
 					})
 				}
 
 				start = time.Now()
-				c.Close()
+				coll.Close(t.Context())
 				if got := time.Since(start); got != tt.want {
 					t.Errorf("Collector.Close(2) timeout behaved unexpectedly: got %v, want %v", got, tt.want)
 				}
@@ -502,7 +494,7 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 					t.Fatalf("config.NewBaseCollector() error: %v", err)
 				}
 
-				c, err := NewCollector(base, map[string]any{"method": http.MethodGet, "url": "https://example.com"})
+				coll, err := NewCollector(base, map[string]any{"method": http.MethodGet, "url": "https://example.com"})
 				if err != nil {
 					t.Fatalf("NewCollector() error: %v", err)
 				}
@@ -511,11 +503,12 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 					started: make(chan struct{}, 10),
 					unblock: make(chan struct{}),
 				}
-				c.client = &http.Client{Transport: transport}
+				coll.client = &http.Client{Transport: transport}
 				ctx, cancel := context.WithCancel(t.Context())
-				c.cancelSched = cancel
+				t.Cleanup(cancel)
+				schedCtx, execCtx := coll.state.StartWith(ctx)
 
-				go c.scheduleNext(ctx, ctx, time.Now())
+				go coll.scheduleNext(schedCtx, execCtx, time.Now())
 
 				// Advance to 1st tick.
 				synctest.Sleep(time.Second)
@@ -527,7 +520,7 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 					<-transport.started
 				}
 
-				// Unblock in-flight requests and let them finish.
+				// Unblock ongoing requests and let them finish.
 				close(transport.unblock)
 				synctest.Sleep(10 * time.Millisecond)
 
@@ -542,19 +535,75 @@ func TestCollectorConcurrencyLimit(t *testing.T) {
 	}
 }
 
-func TestCollectorCheckConcurrencyCanceled(t *testing.T) {
+func TestCollectorRequestWithConcurrencyLimit(t *testing.T) {
 	t.Parallel()
 
-	c := &Collector{}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
+	tests := []struct {
+		name      string
+		canceled  bool // The scheduling context is canceled, i.e., the collector is shutting down.
+		semFull   bool // The concurrency limit was already reached.
+		wantCount int32
+	}{
+		{
+			name:      "sends_request",
+			wantCount: 1,
+		},
+		{
+			name:    "skips_at_concurrency_limit",
+			semFull: true,
+		},
+		{
+			name:     "skips_when_canceled",
+			canceled: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	ch := make(chan struct{}, 1)
-	ch <- struct{}{}
+			base, err := config.NewBaseCollector(
+				map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once"},
+				tt.name, map[string]config.Sender{"": dest.Discard},
+			)
+			if err != nil {
+				t.Fatalf("config.NewBaseCollector() error: %v", err)
+			}
+			coll, err := NewCollector(base, map[string]any{"method": http.MethodGet, "url": "https://example.com"})
+			if err != nil {
+				t.Fatalf("NewCollector() error: %v", err)
+			}
 
-	c.requestWithConcurrencyLimit(ctx, t.Context(), ch, time.Now())
+			transport := &fakeBlockingTransport{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+			close(transport.unblock) // Respond immediately.
+			coll.client = &http.Client{Transport: transport}
 
-	if len(ch) != 1 {
-		t.Errorf("len(ch) = %d, want 1", len(ch))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			schedCtx, execCtx := coll.state.StartWith(ctx)
+			if tt.canceled {
+				cancel()
+			}
+
+			// The semaphore has a free slot unless the test case fills it, so skipping the request
+			// in the "canceled" test case is only possible because of the cancellation check.
+			sem := make(chan struct{}, 1)
+			if tt.semFull {
+				sem <- struct{}{}
+			}
+
+			coll.requestWithConcurrencyLimit(schedCtx, execCtx, sem, time.Now())
+			coll.state.InProgress.Wait()
+
+			if got := transport.count.Load(); got != tt.wantCount {
+				t.Errorf("sent requests = %d, want %d", got, tt.wantCount)
+			}
+			wantLen := 0
+			if tt.semFull {
+				wantLen = 1
+			}
+			if got := len(sem); got != wantLen {
+				t.Errorf("semaphore slots in use = %d, want %d", got, wantLen)
+			}
+		})
 	}
 }

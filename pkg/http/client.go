@@ -120,17 +120,15 @@ func clientH3(cfg *tls.Config, maxHeaderSize int64, timeout time.Duration, trans
 }
 
 // requestWithRetries sends an HTTP request, retrying on transient errors based on [Collector.retries].
-// In-flight execution is governed by execCtx, giving attempt 0 a [Collector.timeout] grace period to
-// complete during shutdown. Subsequent retries (i > 0) also check schedCtx: if collector shutdown has
-// already been initiated, retrying against a failing service is aborted to ensure prompt termination.
+// Ongoing execution is governed by execCtx, giving attempt 0 a [Collector.timeout] grace period to complete
+// even during shutdown. However, if collector shutdown has been initiated (i.e. schedCtx is canceled),
+// further retrying is aborted, and so is waiting between attempts, to ensure prompt termination.
 func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.Response {
 	resp := newErrorResponse(http.StatusServiceUnavailable)
 	start := time.Now()
 
 	for i := range c.retries.MaxAttempts {
-		// Attempt 0 was already scheduled and runs under execCtx (up to [Collector.timeout]).
-		// Retries (i > 0) abort if either execCtx or schedCtx (shutdown requested) is done.
-		if execCtx.Err() != nil || (i > 0 && schedCtx.Err() != nil) {
+		if (i > 0 && schedCtx.Err() != nil) || execCtx.Err() != nil {
 			return resp
 		}
 
@@ -148,20 +146,23 @@ func (c *Collector) requestWithRetries(schedCtx, execCtx context.Context) *http.
 			break
 		}
 
-		c.retries.waitBeforeRetry(schedCtx, execCtx, nil, i)
+		c.retries.waitBeforeRetry(execCtx, schedCtx.Done(), i)
 	}
 	return resp
 }
 
-// sendWithRetries sends an HTTP request, retrying on transient errors based on [Sender.retries].
-// It runs asynchronously in a separate goroutine and does not return any error to the caller. The
-// request parameters were either cloned or constructed by the caller in order to prevent data races.
-func (s *Sender) sendWithRetries(ctx context.Context, u *url.URL, h http.Header, getBody getBodyFunc, size int64) {
+// sendWithRetries sends an HTTP request, retrying on transient errors based on [Sender.retries]. It runs
+// asynchronously in a separate goroutine and does not return any error to the caller. The request parameters
+// were either cloned or constructed by the caller in order to prevent data races. The reject function is called
+// if the request wasn't successful: a non-retryable error, too many retries, or preemption due to a shutdown.
+func (s *Sender) sendWithRetries(
+	ctx context.Context, u *url.URL, h http.Header, getBody getBodyFunc, size int64, reject func() string,
+) {
 	resp := newErrorResponse(http.StatusServiceUnavailable)
 	start := time.Now()
 
 	for i := range s.retries.MaxAttempts {
-		if ctx.Err() != nil || (i > 0 && s.lameDuck.Load()) {
+		if ctx.Err() != nil || (i > 0 && s.state.IsClosing()) {
 			break
 		}
 
@@ -178,14 +179,16 @@ func (s *Sender) sendWithRetries(ctx context.Context, u *url.URL, h http.Header,
 			break
 		}
 
-		s.retries.waitBeforeRetry(ctx, ctx, s.closing, i)
+		s.retries.waitBeforeRetry(ctx, s.state.Closing, i)
 	}
 
-	if resp.StatusCode > MaxSuccessfulStatusCode {
-		slog.Warn("failed to send HTTP request", slog.String("name", s.Name), slog.String("status", resp.Status),
-			slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
-		)
+	if resp.StatusCode <= MaxSuccessfulStatusCode {
+		return
 	}
+	sender := reject()
+	slog.Warn("failed to send HTTP request", slog.String("name", s.Name), slog.String("status", resp.Status),
+		slog.String("fallback", sender), slog.Time("start_time", start), slog.Duration("duration", time.Since(start)),
+	)
 }
 
 // The returned [http.Response] is guaranteed to be non-nil, with a non-nil [http.Response.Body],
@@ -255,8 +258,9 @@ func (s *Sender) sendOnce(ctx context.Context, u *url.URL, h http.Header, fn get
 	go func() {
 		select {
 		case <-ctx.Done():
-		case <-s.stop:
-			cancel()
+			// Request timed out.
+		case <-s.state.Closed:
+			cancel() // Sender shutting down.
 		}
 	}()
 

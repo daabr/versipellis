@@ -16,11 +16,12 @@ import (
 )
 
 const (
-	// CloseTimeout is the maximum amount of time to wait for HTTP requests to finish before forcibly closing
+	// CloseTimeout is the maximum amount of time to wait for HTTP requests to finish before forcefully closing
 	// the connection. This is used during shutdown, so it's intentionally short and not configurable.
 	CloseTimeout = 5 * time.Second
 
-	abortTimeout = time.Second
+	// AbortTimeout is the maximum amount of time to wait for an HTTP request to be aborted after [CloseTimeout].
+	AbortTimeout = time.Second
 
 	httpScheme  = "http"
 	httpsScheme = "https"

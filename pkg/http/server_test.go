@@ -1,9 +1,7 @@
 package http
 
 import (
-	"context"
 	"crypto/tls"
-	"errors"
 	"net/http"
 	"testing"
 )
@@ -67,67 +65,5 @@ func TestReceiverServeUDPError(t *testing.T) {
 
 	if r.serveUDP(r.udp, conn) {
 		t.Errorf("Receiver.serveUDP() ok = true, want false")
-	}
-}
-
-func TestReceiverClose(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		receiver *Receiver
-		wantOK   bool
-	}{
-		{
-			name:     "adjust_timeout",
-			receiver: &Receiver{},
-			wantOK:   true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			tt.receiver.Close(t.Context())
-			// No panic = success.
-		})
-	}
-}
-
-func TestIsAnyError(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		err     error
-		targets []error
-		want    bool
-	}{
-		{
-			name:    "nil_error",
-			err:     nil,
-			targets: []error{nil},
-			want:    true,
-		},
-		{
-			name:    "non_nil_error_matches_target",
-			err:     http.ErrServerClosed,
-			targets: []error{context.DeadlineExceeded, http.ErrServerClosed},
-			want:    true,
-		},
-		{
-			name:    "non_nil_error_does_not_match_target",
-			err:     errors.New("some error"),
-			targets: []error{errors.New("another error")},
-			want:    false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := isAnyError(tt.err, tt.targets...); got != tt.want {
-				t.Errorf("isAnyError() = %v, want %v", got, tt.want)
-			}
-		})
 	}
 }

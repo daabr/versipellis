@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"reflect"
 	"testing"
@@ -261,11 +262,12 @@ func TestRetriesWaitBeforeRetry(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		retries    *retries
-		attempt    int
-		stopClosed bool
-		wantSleep  time.Duration
+		name        string
+		retries     *retries
+		attempt     int
+		stopClosed  bool
+		ctxCanceled bool
+		wantSleep   time.Duration
 	}{
 		{
 			name:      "no_retries",
@@ -279,6 +281,13 @@ func TestRetriesWaitBeforeRetry(t *testing.T) {
 			attempt:    0,
 			stopClosed: true,
 			wantSleep:  0,
+		},
+		{
+			name:        "context_canceled",
+			retries:     &retries{Coefficient: retryCoeffStatic, MaxAttempts: 3, Interval: time.Second},
+			attempt:     0,
+			ctxCanceled: true,
+			wantSleep:   0,
 		},
 		{
 			name:      "static_attempt_1",
@@ -400,8 +409,14 @@ func TestRetriesWaitBeforeRetry(t *testing.T) {
 					close(stop)
 				}
 
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				if tt.ctxCanceled {
+					cancel()
+				}
+
 				start := time.Now()
-				tt.retries.waitBeforeRetry(t.Context(), t.Context(), stop, tt.attempt)
+				tt.retries.waitBeforeRetry(ctx, stop, tt.attempt)
 				got := time.Since(start)
 
 				if tt.retries.Coefficient != retryCoeffBackoff && got != tt.wantSleep {

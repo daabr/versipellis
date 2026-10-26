@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -8,8 +9,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"testing/iotest"
+	"time"
 
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/dest"
@@ -188,6 +191,64 @@ func TestReceiverServeHTTPAndClose(t *testing.T) { //nolint:paralleltest // [par
 	}
 }
 
+func TestReceiverServeHTTPWhileClosing(t *testing.T) { //nolint:paralleltest // [parseAddress] requires network access.
+	base := &config.BaseReceiver{Type: config.ReceiverTypeHTTP, Name: "TestReceiverServeHTTPWhileClosing"}
+	rcv, err := NewReceiver(base, map[string]any{"address": "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("NewReceiver() error = %v", err)
+	}
+	rcv.state.Start() // Without listening: this test calls [Receiver.ServeHTTP] directly.
+
+	serve := func() int {
+		w := httptest.NewRecorder()
+		body := slowReader{strings.NewReader("x")}
+		rcv.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", body))
+		return w.Code
+	}
+
+	// Requests during [Receiver.Close] must be either served or rejected, and registering them must not race with
+	// waiting for them (the race detector flags [sync.WaitGroup.Add] calls that race with [sync.WaitGroup.Wait]).
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for range 8 {
+		wg.Go(func() {
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if code := serve(); code != http.StatusAccepted && code != http.StatusServiceUnavailable {
+					t.Errorf("ServeHTTP() during Close status = %d, want %d or %d",
+						code, http.StatusAccepted, http.StatusServiceUnavailable)
+				}
+			}
+		})
+	}
+
+	// Ensure that requests are in progress when Close begins. Not using atomics or channels to wait for them,
+	// because synchronizing with the requests would hide races from the race detector.
+	time.Sleep(20 * time.Millisecond)
+	rcv.Close(t.Context())
+	close(stop)
+	wg.Wait()
+
+	if code := serve(); code != http.StatusServiceUnavailable {
+		t.Errorf("ServeHTTP() after Close status = %d, want %d", code, http.StatusServiceUnavailable)
+	}
+}
+
+// slowReader delays every read, so requests that read it are still in progress when [Receiver.Close] begins
+// waiting for them (the race detector checks [sync.WaitGroup] misuse only when [sync.WaitGroup.Wait] blocks).
+type slowReader struct {
+	io.Reader
+}
+
+func (r slowReader) Read(p []byte) (int, error) {
+	time.Sleep(time.Millisecond)
+	return r.Reader.Read(p) //nolint:wrapcheck // Unit tests don't need error wrapping.
+}
+
 func TestReceiverServeHTTPFormat(t *testing.T) {
 	t.Parallel()
 
@@ -300,6 +361,68 @@ func TestReadRequest(t *testing.T) {
 			}
 			if gotStatus := w.Result().StatusCode; gotStatus != tt.wantStatus {
 				t.Errorf("readRequest() status = %v, want %v", gotStatus, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestReceiverClose(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		receiver *Receiver
+		wantOK   bool
+	}{
+		{
+			name:     "adjust_timeout",
+			receiver: &Receiver{},
+			wantOK:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.receiver.Close(t.Context())
+			// No panic = success.
+		})
+	}
+}
+
+func TestIsAnyError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		err     error
+		targets []error
+		want    bool
+	}{
+		{
+			name:    "nil_error",
+			err:     nil,
+			targets: []error{nil},
+			want:    true,
+		},
+		{
+			name:    "non_nil_error_matches_target",
+			err:     http.ErrServerClosed,
+			targets: []error{context.DeadlineExceeded, http.ErrServerClosed},
+			want:    true,
+		},
+		{
+			name:    "non_nil_error_does_not_match_target",
+			err:     errors.New("some error"),
+			targets: []error{errors.New("another error")},
+			want:    false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isAnyError(tt.err, tt.targets...); got != tt.want {
+				t.Errorf("isAnyError() = %v, want %v", got, tt.want)
 			}
 		})
 	}

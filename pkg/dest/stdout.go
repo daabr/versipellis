@@ -24,9 +24,12 @@ import (
 var (
 	// Stdout prints any input data to [os.Stdout]. Simple data types are printed as-is, complex
 	// structures are encoded as readable NDJSON, if possible, regardless of the requested format.
-	// Some types (e.g., HTTP requests and responses) have specific logic. Because this is intended
-	// for demo and testing purposes, it is guaranteed to be concurrency-safe, but not necessarily
-	// performant. For the same reason, JSON encoding errors are logged, but not exposed.
+	// Some types (e.g., HTTP requests and responses) have specific logic.
+	//
+	// Because this is intended primarily for demos and testing, it is concurrency-safe, but not necessarily
+	// robust or performant. For the same reason, JSON encoding errors are logged, but not exposed. Unlike other
+	// [config.Sender]s, Send() writes inline, so a stalled pipe can block its callers, including batcher guards
+	// and collector shutdowns. That's acceptable here, and logs that share stdout would block them anyway.
 	Stdout = new(stdoutSender{writer: os.Stdout})
 
 	newline = []byte{'\n'}

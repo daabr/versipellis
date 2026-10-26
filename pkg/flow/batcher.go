@@ -172,7 +172,7 @@ func (b *Batcher[T]) dispatchBatches(ctx context.Context, ready [][]T) {
 
 // Flush dispatches all pending data immediately, if there is any. Collectors should call it after each retrieval
 // operation (e.g., SQL query) because there's no point in waiting for more items at that point. Senders should call
-// it within their Close method (i.e. while already in lame-duck mode, but before waiting for work that is in progress)
+// it within their Close method (i.e. while already in lame-duck mode, but before waiting for work that's in progress)
 // to avoid data loss. Like the Add* methods, the dispatch function operates with a context that is detached from the
 // caller's lifecycle, so owners must abort dispatched work by their own means (e.g., after a shutdown timeout).
 func (b *Batcher[T]) Flush(ctx context.Context) {

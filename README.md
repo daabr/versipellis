@@ -43,7 +43,7 @@ docker run -d --name my-versi-container \
 - Platforms: Linux (amd64/arm64)
 - Volumes / mount points:
   - `/app/config` - app and database configuration files, TLS certificates
-  - `/app/data` - dead-letter queue (data that was received but not sent)
+  - `/app/data` - [dead-letter queue](./docs/dead_letter_queue.md) (data that was received but not delivered)
 - Already bundled and tested with:
   - Oracle Instant Client
   - unixODBC
@@ -109,7 +109,7 @@ Supported SQL-based databases:
 ### Zero Config
 
 - Stdout
-- Local filesystem (dead-letter queue)
+- Local filesystem ([dead-letter queue](./docs/dead_letter_queue.md))
 
 ### HTTP Output
 

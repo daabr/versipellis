@@ -27,7 +27,7 @@ func TestDeadLetterQueue(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		lameDuck    bool
+		closeFirst  bool
 		data        flow.Chunk
 		format      config.Format
 		wantFiles   int
@@ -45,10 +45,10 @@ func TestDeadLetterQueue(t *testing.T) {
 			wantFiles: 0,
 		},
 		{
-			name:      "send_during_close",
-			lameDuck:  true,
-			data:      flow.Blobs([][]byte{[]byte("payload")}),
-			wantFiles: 0,
+			name:       "send_during_close",
+			closeFirst: true,
+			data:       flow.Blobs([][]byte{[]byte("payload")}),
+			wantFiles:  0,
 		},
 		{
 			name:        "byte_slice",
@@ -291,15 +291,20 @@ func TestDeadLetterQueue(t *testing.T) {
 			t.Parallel()
 
 			tempDir := t.TempDir()
-			dlq := InitDeadLetterQueue(tempDir)
-			if dlq == nil {
+			dlq, ok := InitDeadLetterQueue(tempDir, nil)
+			if !ok {
 				t.Fatalf("failed to initialize DeadLetterQueue")
 			}
-			if tt.lameDuck {
-				dlq.lameDuck.Store(true)
+			if tt.closeFirst {
+				dlq.Close(t.Context()) // The second call below is a no-op.
 			}
 			dlq.Send(t.Context(), tt.data, cmp.Or(tt.format, codec.FormatDefault))
 			dlq.Close(t.Context())
+			select {
+			case <-dlq.state.Closed:
+			default:
+				t.Error("DeadLetterQueue.Close() didn't close State.Closed")
+			}
 
 			gotFiles := 0
 			var gotContent strings.Builder
@@ -339,8 +344,8 @@ func TestDeadLetterQueueConcurrency(t *testing.T) {
 	t.Parallel()
 
 	tempDir := t.TempDir()
-	dlq := InitDeadLetterQueue(tempDir)
-	if dlq == nil {
+	dlq, ok := InitDeadLetterQueue(tempDir, nil)
+	if !ok {
 		t.Fatalf("failed to initialize DeadLetterQueue")
 	}
 	t.Cleanup(func() { dlq.Close(t.Context()) })
@@ -357,7 +362,7 @@ func TestDeadLetterQueueConcurrency(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	dlq.inProgress.Wait()
+	dlq.state.InProgress.Wait()
 
 	seen := [concurrencyFactor][concurrencyFactor]int{}
 	gotFiles := 0
@@ -414,9 +419,17 @@ func TestInitDeadLetterQueueError(t *testing.T) {
 	if err := os.WriteFile(file, nil, filePermissions); err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
+	if dlq, ok := InitDeadLetterQueue(file, nil); ok || dlq != nil {
+		t.Errorf("InitDeadLetterQueue(file, nil) = %v, %v, want nil, false", dlq, ok)
+	}
 
-	if dlq := InitDeadLetterQueue(file); dlq != nil {
-		t.Errorf("InitDeadLetterQueue(file) = %v, want nil", dlq)
+	// An invalid configuration fails before creating the directory.
+	dir := filepath.Join(t.TempDir(), "dlq")
+	if dlq, ok := InitDeadLetterQueue(dir, "invalid"); ok || dlq != nil {
+		t.Errorf("InitDeadLetterQueue(dir, \"invalid\") = %v, %v, want nil, false", dlq, ok)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("InitDeadLetterQueue() with an invalid configuration created the directory: %v", err)
 	}
 }
 
@@ -431,30 +444,65 @@ func TestEncodeNil(t *testing.T) {
 func TestAsyncWriteFileErrors(t *testing.T) {
 	t.Parallel()
 
+	disabledSizeLimits := map[string]any{"max_size": int64(0), "warning_size": int64(0)}
+
 	tests := []struct {
 		name      string
+		cfg       map[string]any
 		dirPerms  os.FileMode
 		filePerms os.FileMode
-		wantOK    bool
+		want      writeResult
+		wantSize  int64
 	}{
-		{"valid_perms", dirPermissions, filePermissions, true},
-		{"invalid_dir_perms", os.FileMode(math.MaxUint32), filePermissions, false},
-		{"invalid_file_perms", dirPermissions, os.FileMode(math.MaxUint32), false},
+		{"valid_perms", nil, dirPermissions, filePermissions, writeOK, 4},
+		{"invalid_dir_perms", nil, os.FileMode(math.MaxUint32), filePermissions, writeRetry, 0},
+		{"invalid_file_perms", nil, dirPermissions, os.FileMode(math.MaxUint32), writeRetry, 0},
+		{"max_size_reached", map[string]any{"max_size": int64(4)}, dirPermissions, filePermissions, writeOK, 4},
+		{"max_size_exceeded", map[string]any{"max_size": int64(3)}, dirPermissions, filePermissions, writeAbort, 0},
+		{"size_limits_disabled", disabledSizeLimits, dirPermissions, filePermissions, writeOK, 0}, // Not accounted at all.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			tempDir := t.TempDir()
-			dlq := InitDeadLetterQueue(tempDir)
-			if dlq == nil {
+			dlq, ok := InitDeadLetterQueue(tempDir, tt.cfg)
+			if !ok {
 				t.Fatalf("failed to initialize DeadLetterQueue")
 			}
 			t.Cleanup(func() { dlq.Close(t.Context()) })
 
-			gotOK := dlq.asyncWriteFile([]byte("data"), "", time.Now().UTC(), tt.dirPerms, tt.filePerms)
-			if gotOK != tt.wantOK {
-				t.Errorf("asyncWriteFile() = %v, want %v", gotOK, tt.wantOK)
+			data := []byte("data")
+			got := dlq.asyncWriteFile(data, ".ext", time.Now().UTC(), tt.dirPerms, tt.filePerms)
+			if got != tt.want {
+				t.Errorf("asyncWriteFile() = %v, want %v", got, tt.want)
+			}
+
+			// Only successful writes are accounted for, even if a measurement runs concurrently.
+			if gotSize := lockedTotalSize(dlq); gotSize != tt.wantSize {
+				t.Errorf("asyncWriteFile() accounted size = %d, want %d", gotSize, tt.wantSize)
+			}
+
+			// Successful writes leave only the renamed file, failed writes don't leave temporary files.
+			var gotFiles []string
+			err := filepath.WalkDir(tempDir, func(path string, d fs.DirEntry, err error) error {
+				if err == nil && !d.IsDir() {
+					gotFiles = append(gotFiles, filepath.Base(path))
+				}
+				return err
+			})
+			if err != nil {
+				t.Fatalf("filepath.WalkDir(%s) error = %v", tt.name, err)
+			}
+			wantFiles := 0
+			if tt.want == writeOK {
+				wantFiles = 1
+			}
+			if len(gotFiles) != wantFiles {
+				t.Fatalf("asyncWriteFile() files = %q, want %d files", gotFiles, wantFiles)
+			}
+			if wantFiles > 0 && filepath.Ext(gotFiles[0]) != ".ext" {
+				t.Errorf("asyncWriteFile() file name = %q, want extension %q", gotFiles[0], ".ext")
 			}
 		})
 	}

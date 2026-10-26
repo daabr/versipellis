@@ -106,16 +106,16 @@
 `max_body_size` - maximum byte size of a server response's whole body
 
 - Optional
-- Default: `10485760` (10,485,760 bytes = 10 MiB)
-- Valid range: any positive integer up to `104857600` (100 MiB)
+- Default: `10_485_760` (10 MiB)
+- Valid range: any positive integer up to `104_857_600` (100 MiB)
 - `0` and negative integers are normalized to the default
 - Integers greater than the maximum are normalized to the maximum
 
 `max_headers_size` - maximum byte size of a server response's headers (as a whole, not each key-value pair)
 
 - Optional
-- Default: `1048576` (1,048,576 bytes = 1 MiB)
-- Valid range: any positive integer up to `104857600` (100 MiB)
+- Default: `1_048_576` (1 MiB)
+- Valid range: any positive integer up to `104_857_600` (100 MiB)
 - `0` and negative integers are normalized to the default
 - Integers greater than the maximum are normalized to the maximum
 
@@ -138,7 +138,7 @@
 - This format is a downstream preference...
   - It does not have to be identical to the body's own content type, for example: you can receive JSON and pass it as NDJSON, and vice versa
   - Either way, the configured [sender](../sender/README.md) may override this
-- If the body can't be parsed in the configured format, the entire HTTP response is moved to the Dead-Letter Queue (DLQ)
+- If the body can't be parsed in the configured format, the entire HTTP response is sent to the [Dead-Letter Queue (DLQ)](../../dead_letter_queue.md)
 
 ## `[collector.http.tls]` Sub-Section
 

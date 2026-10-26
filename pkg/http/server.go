@@ -106,54 +106,6 @@ func (r *Receiver) serveUDP(udp *http3.Server, conn net.PacketConn) bool {
 	return true
 }
 
-// Close waits (up to [CloseTimeout]) to allow requests that are in progress to finish before gracefully
-// shutting down the server. It is safe to call multiple times, even if [Receiver.Start] wasn't called.
-// However, it's meant to be called only once, within the main goroutine that called [Receiver.Start].
-func (r *Receiver) Close(ctx context.Context) {
-	r.closeOnce.Do(func() {
-		timeout := r.timeout
-		if timeout <= 0 || timeout > CloseTimeout {
-			timeout = CloseTimeout // Ensure the timeout is within acceptable bounds.
-		}
-
-		shutdownCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-
-		if r.tcp != nil {
-			slog.Debug("shutting down HTTP server", slog.String("name", r.Name), slog.String("tcp_addr", r.address))
-			err := r.tcp.Shutdown(shutdownCtx) // Blocking up to timeout.
-			if err != nil && !isAnyError(err, http.ErrServerClosed, context.Canceled, context.DeadlineExceeded) {
-				slog.Error("HTTP server shutdown error", slog.Any("error", err),
-					slog.String("name", r.Name), slog.String("tcp_addr", r.address),
-				)
-			}
-			_ = r.tcp.Close() // In case of a [context.DeadlineExceeded] (redundant but harmless otherwise).
-			r.tcp = nil
-		}
-
-		if r.udp != nil {
-			slog.Debug("shutting down HTTP/3 server", slog.String("name", r.Name), slog.String("udp_addr", r.address))
-			err := r.udp.Shutdown(shutdownCtx) // Blocking up to timeout.
-			if err != nil && !isAnyError(err, context.Canceled, context.DeadlineExceeded) {
-				slog.Error("HTTP/3 server shutdown error", slog.Any("error", err),
-					slog.String("name", r.Name), slog.String("udp_addr", r.address),
-				)
-			}
-			_ = r.udp.Close() // In case of a [context.DeadlineExceeded] (redundant but harmless otherwise).
-			r.udp = nil
-		}
-	})
-}
-
 func (r *Receiver) connState(_ net.Conn, state http.ConnState) {
 	slog.Debug("HTTP server connection state change", slog.String("name", r.Name), slog.String("state", state.String()))
-}
-
-func isAnyError(err error, targets ...error) bool {
-	for _, target := range targets {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-	return false
 }

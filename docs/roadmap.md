@@ -4,9 +4,7 @@ This is the high-level plan for features that are expected to be released within
 
 ## 0-3 Months
 
-1. Send data to the DLQ after HTTP delivery failures (currently only logged)
-
-2. Configurable HTTP authentication & authorization
+1. Configurable HTTP authentication & authorization
 
    - None
    - Basic (RFC 7617)
@@ -19,9 +17,9 @@ This is the high-level plan for features that are expected to be released within
      - Workload Identity Federation (WIF)
      - Session cookie (RFC 6265)
 
-3. Respect rate-limiting responses from HTTP servers
+2. Respect rate-limiting responses from HTTP servers
 
-4. Data collection from MongoDB (+ general support for BSON)
+3. Data collection from MongoDB (+ general support for BSON)
 
 ## 3-6 Months
 
