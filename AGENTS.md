@@ -163,7 +163,8 @@ Testing:
 - `IfClosingElseLock()` returns `false` **with the read lock still held**: the caller must call `CloseMu.RUnlock()`.
 - **`CloseMu` rules** (senders, receivers, and batcher `guard`s):
   - `BeginClose()` takes the write lock, so it waits for all current readers before any close timeout starts. Senders and receivers register work in `InProgress` only under the read lock, so none can register after `BeginClose()`.
-  - **Nothing under the read lock may block**: it would delay `BeginClose()`, and a pending `Lock()` blocks new readers. Only check and register work under it; encode and serialize in the registered goroutines. HTTP bodies are fully buffered before `Send()`, so reading them is never network I/O.
+  - **Nothing under the read lock should block**: it would delay `BeginClose()`, and a pending `Lock()` blocks new readers. Only check and register work under it; encode and serialize in the registered goroutines. HTTP bodies are fully buffered before `Send()`, so reading them is never network I/O.
+  - The one exception is `stdout`, which writes inline (it's only for demos and manual testing, and logs share the same stream anyway), so a stalled stdout pipe may block collectors and their shutdown.
   - **Never acquire the read lock recursively** (e.g., in dispatch functions, which already run under that of `Send()` or `guard`): it may deadlock with a pending `Lock()`.
 
 #### `Close()` Sequences
