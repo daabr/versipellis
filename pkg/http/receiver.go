@@ -47,15 +47,11 @@ func (r *Receiver) Base() *config.BaseReceiver {
 // is semantically invalid, but the caller is responsible for providing usable input.
 func NewReceiver(base *config.BaseReceiver, cfg map[string]any) (*Receiver, error) {
 	r := &Receiver{BaseReceiver: *base}
-
 	var err error
+
 	if r.address, err = parseAddress(config.Value(cfg, "address", ""), base.Type); err != nil {
 		return nil, err
 	}
-	if r.format, err = codec.ParseFormat(cfg); err != nil {
-		return nil, fmt.Errorf("format setting: %w", err)
-	}
-
 	r.maxBodySize = parseByteSize(cfg, "max_body_size", r.Name, defaultMaxBodySize)
 	r.maxHeaderSize = parseByteSize(cfg, "max_headers_size", r.Name, defaultMaxHeaderSize)
 
@@ -65,6 +61,10 @@ func NewReceiver(base *config.BaseReceiver, cfg map[string]any) (*Receiver, erro
 	// For us, 0 is the same as negative values, but not in Go.
 	// This normalization simplifies HTTP server construction.
 	r.timeout = max(r.timeout, 0)
+
+	if r.format, err = codec.ParseFormat(cfg); err != nil {
+		return nil, fmt.Errorf("format setting: %w", err)
+	}
 
 	if r.tls, err = loadServerTLSConfig(cfg["tls"], r.Type); err != nil {
 		return nil, err
@@ -81,7 +81,7 @@ func NewReceiver(base *config.BaseReceiver, cfg map[string]any) (*Receiver, erro
 func parseAddress(addr, protoVer string) (string, error) {
 	switch {
 	case addr == "":
-		return "", errors.New("address field required but not found")
+		return "", errors.New("address field is required but not found")
 	case protoVer == config.ReceiverTypeHTTP:
 		tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 		if err != nil {

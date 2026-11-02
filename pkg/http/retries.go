@@ -109,13 +109,13 @@ func parseRetryInterval(value string, minInterval, maxInterval time.Duration, na
 	}
 
 	if d < minInterval {
-		slog.Warn("forcing lower bound on retry interval", slog.String("name", name),
+		slog.Warn("clamping retry interval to lower bound", slog.String("name", name),
 			slog.Duration("below_min", d), slog.Duration("new_value", minInterval),
 		)
 		d = minInterval
 	}
 	if d > maxInterval {
-		slog.Warn("forcing upper bound on retry interval", slog.String("name", name),
+		slog.Warn("clamping retry interval to upper bound", slog.String("name", name),
 			slog.Duration("above_max", d), slog.Duration("new_value", maxInterval),
 		)
 		d = maxInterval

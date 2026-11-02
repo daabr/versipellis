@@ -8,7 +8,7 @@
 - If the host is an IPv6 address, it must be enclosed in square brackets, e.g., `[fe80::1]`
 - Query parameters may be specified here as a suffix (e.g., `?param1=value1&param2=value2`), but it's recommended to specify them in `query` (see the notes there)
 
-`method` - HTTP request method, a.k.a. verb, for sending data
+`method` - HTTP request method, a.k.a. verb, for transmitting data
 
 - Optional
 - Default: `"POST"`
@@ -130,9 +130,14 @@
 > - Data that is still blocked when a shutdown begins is moved to the [Dead-Letter Queue (DLQ)](../../dead_letter_queue.md), like all delivery failures, instead of delaying the shutdown
 > - Data that doesn't exceed the concurrency limit, including the last pending batch, is still sent
 
+## `[sender.http.auth]` Sub-Section
+
+- Optional
+- [See this page](../auth.md)
+
 ## `[sender.http.tls]` Sub-Section
 
-- Optional for HTTP/1.1, required for HTTP/2
+- Optional in HTTP/1.1, required in HTTP/2
 - [See this page](../tls.md)
 
 ## `[sender.http.retries]` Sub-Section

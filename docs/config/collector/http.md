@@ -140,9 +140,14 @@
   - Either way, the configured [sender](../sender/README.md) may override this
 - If the body can't be parsed in the configured format, the entire HTTP response is sent to the [Dead-Letter Queue (DLQ)](../../dead_letter_queue.md)
 
+## `[collector.http.auth]` Sub-Section
+
+- Optional
+- [See this page](../auth.md)
+
 ## `[collector.http.tls]` Sub-Section
 
-- Optional for HTTP/1.1, required for HTTP/2
+- Optional in HTTP/1.1, required in HTTP/2
 - [See this page](../tls.md)
 
 ## `[collector.http.retries]` Sub-Section

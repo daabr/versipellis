@@ -141,6 +141,11 @@
   - Either way, the configured [sender](../sender/README.md) may override this
 - If the body can't be parsed in the configured format, the entire HTTP response is sent to the [Dead-Letter Queue (DLQ)](../../dead_letter_queue.md)
 
+## `[collector.http3.auth]` Sub-Section
+
+- Optional
+- [See this page](../auth.md)
+
 ## `[collector.http3.tls]` Sub-Section
 
 - Required
