@@ -6,7 +6,7 @@ import (
 	"github.com/daabr/versipellis/pkg/flow"
 )
 
-// SenderType* constants represent all the available types of "sender" sections in the TOML file.
+// SenderType* constants represent all the available configuration modes of "sender" sections in the TOML file.
 const (
 	SenderTypeDiscard = "discard"
 	SenderTypeNone    = "none"
@@ -17,7 +17,7 @@ const (
 	SenderTypeHTTP3 = "http3"
 )
 
-// Format is the common Go type of all "Format*" constants in the "codec" package.
+// Format is a shared Go type of all Format* constants in the "codec" package.
 type Format string
 
 // Sender is an interface to send arbitrary data to some kind of destination.

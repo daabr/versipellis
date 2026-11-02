@@ -11,7 +11,7 @@ import (
 	"github.com/daabr/versipellis/pkg/flow"
 )
 
-// Format* constants represent all the available types of "format" settings in the TOML file.
+// Format* constants represent all the available "format" settings in the TOML file.
 const (
 	FormatDefault   config.Format = "default"
 	FormatJSON      config.Format = "json"       // JSON object or array, depending on the number of elements.
@@ -41,11 +41,11 @@ var (
 // ParseFormat returns the normalized [config.Format] setting from the given TOML-based configuration map of a single
 // collector, receiver, or sender. It returns [FormatDefault] if the setting is missing, and an error if it's invalid.
 func ParseFormat(cfg map[string]any) (config.Format, error) {
-	format := strings.ToLower(strings.TrimSpace(config.Value(cfg, "format", string(FormatDefault))))
-	if !slices.Contains(validFormats, config.Format(format)) {
+	format := config.Format(strings.ToLower(strings.TrimSpace(config.Value(cfg, "format", string(FormatDefault)))))
+	if !slices.Contains(validFormats, format) {
 		return "", fmt.Errorf("unrecognized value %q", format)
 	}
-	return config.Format(format), nil
+	return format, nil
 }
 
 // ParseStructuredFormat is like [ParseFormat], but for components that handle only structured data (e.g., JSON

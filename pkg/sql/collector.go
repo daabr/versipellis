@@ -24,7 +24,7 @@ import (
 	"github.com/daabr/versipellis/pkg/flow"
 )
 
-// DriverType* constants represent all the available SQL database drivers for configurations in the TOML file.
+// DriverType* constants represent all the available database drivers for SQL collector configurations in the TOML file.
 const (
 	DriverTypeCockroachDB = "cockroachdb"
 	DriverTypeMariaDB     = "mariadb"
@@ -122,7 +122,7 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	case !slices.Contains(validDriverTypes, c.driver):
 		return nil, fmt.Errorf("unrecognized SQL driver type %q", c.driver)
 	case c.conn == "":
-		return nil, errors.New("connection field required but not found")
+		return nil, errors.New("connection field is required but not found")
 	}
 
 	var err error
@@ -161,9 +161,9 @@ func loadQuery(cfg map[string]any) (string, error) {
 
 	switch {
 	case query == "" && path == "":
-		return "", errors.New("query or query_file field required but not found")
+		return "", errors.New("either query or query_file field is required but not found")
 	case query != "" && path != "":
-		return "", errors.New("both query and query_file fields provided, specify only one")
+		return "", errors.New("both query and query_file fields are provided, specify only one")
 	case query != "" && path == "":
 		return query, nil
 	}

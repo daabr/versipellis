@@ -49,5 +49,5 @@
 
 ## `[receiver.http.tls]` Sub-Section
 
-- Optional for HTTP/1.1, required for HTTP/2
+- Optional in HTTP/1.1, required in HTTP/2
 - [See this page](../tls.md)

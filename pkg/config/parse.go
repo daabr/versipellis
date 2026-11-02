@@ -1,12 +1,15 @@
 package config
 
 import (
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -141,13 +144,13 @@ func Value[T any](cfg map[string]any, key string, defaultValue T) T {
 // BoundedInt ensures that the given integer value falls within the specified bounds.
 func BoundedInt(value, minValue, maxValue int64, name, description string) int {
 	if value < minValue {
-		slog.Warn("forcing lower bound on "+description, slog.String("name", name),
+		slog.Warn(fmt.Sprintf("clamping %s to lower bound", description), slog.String("name", name),
 			slog.Int64("below_min", value), slog.Int64("new_value", minValue),
 		)
 		value = minValue
 	}
 	if value > maxValue {
-		slog.Warn("forcing upper bound on "+description, slog.String("name", name),
+		slog.Warn(fmt.Sprintf("clamping %s to upper bound", description), slog.String("name", name),
 			slog.Int64("above_max", value), slog.Int64("new_value", maxValue),
 		)
 		value = maxValue
@@ -197,4 +200,75 @@ func BatchLimits(rawCfg any, name string, defaults flow.Limits) (flow.Limits, er
 		MaxBytes: BoundedInt(b, noBatching, maxBatchBytes, name, "maximum batch byte size"),
 		Window:   max(d, noBatching),
 	}, nil
+}
+
+// Convenience constants for the HTTP and HTTPS URL schemes.
+const (
+	URLSchemeHTTP  = "http"
+	URLSchemeHTTPS = "https"
+)
+
+// ParseURL parses, normalizes, and validates the given raw URL string. When the HTTP version is "http3", the URL
+// must have an HTTPS scheme. When the URL isn't required, it's allowed to be empty (in which case we return nil).
+func ParseURL(rawURL, httpVersion string, required bool) (*url.URL, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	switch {
+	case rawURL == "" && !required:
+		return nil, nil
+	case rawURL == "" && required:
+		return nil, errors.New("url field is required but not found")
+	}
+	u, err := url.Parse(rawURL)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("invalid URL: %w", err)
+	case !u.IsAbs():
+		return nil, errors.New("URL must be absolute (start with a scheme)")
+	}
+
+	u.Scheme = strings.ToLower(u.Scheme)
+	switch {
+	case u.Scheme != URLSchemeHTTPS && (httpVersion == CollectorTypeHTTP3 || httpVersion == SenderTypeHTTP3):
+		return nil, errors.New("HTTP/3 URL must have an HTTPS scheme")
+	case u.Scheme != URLSchemeHTTPS && u.Scheme != URLSchemeHTTP:
+		return nil, errors.New("URL must have an HTTP/S scheme")
+	case u.Opaque != "":
+		return nil, fmt.Errorf(`URL must have "//" after the "%s:" scheme`, u.Scheme)
+	case u.Hostname() == "":
+		return nil, errors.New("URL must have a host address")
+	case u.Port() != "":
+		// [url.Parse] returns an error for negative and non-numeric values, but not out-of-range numbers.
+		if port, err := strconv.Atoi(u.Port()); err != nil || port < 1 || port > 65535 {
+			return nil, fmt.Errorf("URL has an invalid port number: %q", u.Port())
+		}
+	}
+
+	return u, nil
+}
+
+// LoadPEMFile reads and parses a PEM-encoded file from the given path. If
+// the file is optional and a path is not provided, this function returns nil.
+func LoadPEMFile(path, description string, required bool) ([]byte, error) {
+	path = strings.TrimSpace(path)
+	if required && path == "" {
+		return nil, errors.New(description + " file is required but not provided")
+	}
+	if path == "" {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(path) //gosec:disable G304 // Path is configurable by design.
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s file: %w", description, err)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("%s file is empty: %s", description, path)
+	}
+
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("failed to parse PEM block for %s from: %s", description, path)
+	}
+
+	return data, nil
 }

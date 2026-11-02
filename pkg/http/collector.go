@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/daabr/versipellis/pkg/auth"
 	"github.com/daabr/versipellis/pkg/codec"
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/flow"
@@ -29,6 +30,7 @@ type Collector struct {
 	maxHeaderSize int64
 	timeout       time.Duration
 	format        config.Format
+	auth          auth.Config
 	tls           *tls.Config
 	retries       *retries
 
@@ -58,8 +60,8 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	c := &Collector{BaseCollector: *base}
 	var err error
 
-	if c.url, err = parseURL(config.Value(cfg, "url", ""), c.Type); err != nil {
-		return nil, err
+	if c.url, err = config.ParseURL(config.Value(cfg, "url", ""), c.Type, true); err != nil {
+		return nil, err //nolint:wrapcheck // No need to contextualize a sibling error.
 	}
 	if c.method, err = parseMethod(config.Value(cfg, "method", http.MethodGet), "collection"); err != nil {
 		return nil, err
@@ -73,9 +75,6 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	if c.body, err = loadBody(cfg, c.method); err != nil {
 		return nil, err
 	}
-	if c.format, err = codec.ParseFormat(cfg); err != nil {
-		return nil, fmt.Errorf("format setting: %w", err)
-	}
 	c.maxBodySize = parseByteSize(cfg, "max_body_size", c.Name, defaultMaxBodySize)
 	c.maxHeaderSize = parseByteSize(cfg, "max_headers_size", c.Name, defaultMaxHeaderSize)
 
@@ -85,10 +84,17 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 	// For us, 0 is the same as negative values, but not in Go. This normalization simplifies HTTP client construction.
 	c.timeout = max(c.timeout, 0)
 
+	if c.format, err = codec.ParseFormat(cfg); err != nil {
+		return nil, fmt.Errorf("format setting: %w", err)
+	}
+
+	if c.auth, err = auth.ParseConfig(cfg["auth"], c.Name); err != nil {
+		return nil, fmt.Errorf("auth: %w", err)
+	}
 	if c.tls, c.transportID, err = loadClientTLSConfig(cfg["tls"], c.Type); err != nil {
 		return nil, err
 	}
-	if c.url.Scheme == httpScheme && cfg["tls"] != nil {
+	if c.url.Scheme == config.URLSchemeHTTP && cfg["tls"] != nil {
 		if m, ok := cfg["tls"].(map[string]any); ok && len(m) > 0 {
 			slog.Warn("TLS config details are ineffective because URL scheme is unencrypted HTTP",
 				slog.String("name", c.Name), slog.String("url", c.url.Redacted()),
@@ -116,7 +122,7 @@ func loadBody(cfg map[string]any, method string) ([]byte, error) {
 	case method == http.MethodGet:
 		return nil, errors.New("HTTP GET requests cannot have a body")
 	case inline != "" && path != "":
-		return nil, errors.New("both HTTP body string and HTTP body file provided, specify only one")
+		return nil, errors.New("both HTTP body string and HTTP body file are provided, specify only one")
 	case inline != "" && path == "":
 		return []byte(inline), nil
 	}

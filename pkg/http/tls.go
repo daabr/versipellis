@@ -5,11 +5,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 
 	"github.com/quic-go/quic-go/http3"
@@ -160,35 +158,10 @@ func parseTLSDontVerifyForServers(cfg map[string]any, t *tls.Config) tls.ClientA
 	return tls.RequireAndVerifyClientCert // Regular, secure mTLS.
 }
 
-func loadPEM(path, description string, required bool) ([]byte, error) {
-	path = strings.TrimSpace(path)
-	if required && path == "" {
-		return nil, errors.New(description + " file is required but not provided")
-	}
-	if path == "" {
-		return nil, nil
-	}
-
-	data, err := os.ReadFile(path) //gosec:disable G304 // Path is configurable by design.
-	if err != nil {
-		return nil, fmt.Errorf("failed to read %s file: %w", description, err)
-	}
-	if len(data) == 0 {
-		return nil, fmt.Errorf("%s file is empty: %s", description, path)
-	}
-
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, fmt.Errorf("failed to parse PEM block for %s from: %s", description, path)
-	}
-
-	return data, nil
-}
-
 func loadCertPool(path, description string) (*x509.CertPool, []byte, error) {
-	cert, err := loadPEM(path, description, false)
+	cert, err := config.LoadPEMFile(path, description, false)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, err //nolint:wrapcheck // No need to contextualize a sibling error.
 	}
 
 	// If [tls.Config.RootCAs] is nil, the client uses [x509.SystemCertPool].
@@ -205,14 +178,14 @@ func loadCertPool(path, description string) (*x509.CertPool, []byte, error) {
 }
 
 func loadKeyPair(cfg map[string]any, certField, keyField, description string, required bool) ([]tls.Certificate, error) {
-	cert, err := loadPEM(config.Value(cfg, certField, ""), description+" certificate", required)
+	cert, err := config.LoadPEMFile(config.Value(cfg, certField, ""), description+" certificate", required)
 	if err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // No need to contextualize a sibling error.
 	}
 
-	key, err := loadPEM(config.Value(cfg, keyField, ""), description+" private key", required)
+	key, err := config.LoadPEMFile(config.Value(cfg, keyField, ""), description+" private key", required)
 	if err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // No need to contextualize a sibling error.
 	}
 
 	switch {

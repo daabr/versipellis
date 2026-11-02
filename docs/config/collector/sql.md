@@ -2,7 +2,7 @@
 
 ## `[collector.sql]` Sub-Section
 
-`type` - driver type of the SQL-based database to connect to
+`type` - which SQL database driver to use
 
 - Required
 - Options (case insensitive):

@@ -10,7 +10,7 @@ import (
 	"github.com/daabr/versipellis/pkg/cron"
 )
 
-// CollectorType* constants represent all the available types of "collector" sections in the TOML file.
+// CollectorType* constants represent all the available configuration modes of "collector" sections in the TOML file.
 const (
 	CollectorTypeHTTP  = "http"
 	CollectorTypeHTTP3 = "http3"
@@ -57,7 +57,7 @@ func NewBaseCollector(cfg map[string]any, name string, senders map[string]Sender
 
 	switch {
 	case c.Type == "":
-		return nil, errors.New("type field required but not found")
+		return nil, errors.New("type field is required but not found")
 	case !slices.Contains(validCollectorTypes, c.Type):
 		return nil, fmt.Errorf("unrecognized type %q", c.Type)
 	case c.Send == nil:

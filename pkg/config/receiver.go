@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// ReceiverType* constants represent all the available types of "receiver" sections in the TOML file.
+// ReceiverType* constants represent all the available configuration modes of "receiver" sections in the TOML file.
 const (
 	ReceiverTypeHTTP  = "http"
 	ReceiverTypeHTTP3 = "http3"
@@ -43,7 +43,7 @@ func NewBaseReceiver(cfg map[string]any, name string, senders map[string]Sender)
 
 	switch {
 	case r.Type == "":
-		return nil, errors.New("type field required but not found")
+		return nil, errors.New("type field is required but not found")
 	case !slices.Contains(validReceiverTypes, r.Type):
 		return nil, fmt.Errorf("unrecognized type %q", r.Type)
 	case r.Send == nil:

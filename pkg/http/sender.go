@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/daabr/versipellis/pkg/auth"
 	"github.com/daabr/versipellis/pkg/codec"
 	"github.com/daabr/versipellis/pkg/config"
 	"github.com/daabr/versipellis/pkg/flow"
@@ -41,6 +42,7 @@ type Sender struct {
 	headers http.Header
 	timeout time.Duration
 	format  config.Format
+	auth    auth.Config
 	tls     *tls.Config
 	retries *retries
 
@@ -59,32 +61,39 @@ type Sender struct {
 // from a TOML file. It checks the details and returns an error if any of them is invalid.
 func NewSender(cfg map[string]any, name, baseType string, dlq config.Sender) (*Sender, error) {
 	s := &Sender{Name: name, Type: baseType}
+	if dlq != nil {
+		s.fallback = dlq.Send
+	}
 	s.state.Start()
 	var err error
 
-	if s.url, err = parseURL(config.Value(cfg, "url", ""), s.Type); err != nil {
-		return nil, err
+	if s.url, err = config.ParseURL(config.Value(cfg, "url", ""), s.Type, true); err != nil {
+		return nil, err //nolint:wrapcheck // No need to contextualize a sibling error.
 	}
+
 	if s.method, err = parseMethod(config.Value(cfg, "method", http.MethodPost), "sending"); err != nil {
 		return nil, err
 	}
 	if s.method == http.MethodGet {
 		return nil, fmt.Errorf("HTTP method %q not supported for sending data", s.method)
 	}
+
 	if err := parseQuery(s.url, cfg["query"], "sender"); err != nil {
 		return nil, err
 	}
 	if s.headers, err = parseHeaders(cfg["headers"], "sender"); err != nil {
 		return nil, err
 	}
-	if s.retries, err = parseRetries(cfg["retries"], s.method, s.Name); err != nil {
-		return nil, err
+
+	if s.timeout, err = time.ParseDuration(config.Value(cfg, "timeout", defaultRequestTimeout.String())); err != nil {
+		return nil, fmt.Errorf("invalid timeout duration: %w", err)
 	}
+	// For us, 0 is the same as negative values, but not in Go.
+	// This normalization simplifies HTTP client construction.
+	s.timeout = max(s.timeout, 0)
+
 	if s.format, err = codec.ParseStructuredFormat(cfg); err != nil {
 		return nil, fmt.Errorf("format setting: %w", err)
-	}
-	if dlq != nil {
-		s.fallback = dlq.Send
 	}
 
 	concurrency := config.Value(cfg, "concurrency_limit", defaultConcurrencyLimit)
@@ -97,22 +106,19 @@ func NewSender(cfg map[string]any, name, baseType string, dlq config.Sender) (*S
 	concurrencyLimit := config.BoundedInt(concurrency, 1, maxConcurrencyLimit, s.Name, "sender concurrency limit")
 	s.slots = make(chan struct{}, concurrencyLimit)
 
+	if s.auth, err = auth.ParseConfig(cfg["auth"], s.Name); err != nil {
+		return nil, fmt.Errorf("auth: %w", err)
+	}
 	if s.tls, s.transportID, err = loadClientTLSConfig(cfg["tls"], s.Type); err != nil {
 		return nil, err
 	}
-	if s.url.Scheme == httpScheme && cfg["tls"] != nil {
+	if s.url.Scheme == config.URLSchemeHTTP && cfg["tls"] != nil {
 		if m, ok := cfg["tls"].(map[string]any); ok && len(m) > 0 {
 			slog.Warn("TLS config details are ineffective because URL scheme is unencrypted HTTP",
 				slog.String("name", s.Name), slog.String("url", s.url.Redacted()),
 			)
 		}
 	}
-	if s.timeout, err = time.ParseDuration(config.Value(cfg, "timeout", defaultRequestTimeout.String())); err != nil {
-		return nil, fmt.Errorf("invalid timeout duration: %w", err)
-	}
-	// For us, 0 is the same as negative values, but not in Go.
-	// This normalization simplifies HTTP client construction.
-	s.timeout = max(s.timeout, 0)
 	// HTTP transport configuration is affected by TLS, maximum header size, and timeout
 	// settings, so this prevents clients with different configurations from sharing transports.
 	s.transportID = fmt.Sprintf("%s,%d,%s", s.transportID, defaultMaxHeaderSize, s.timeout)
@@ -124,6 +130,10 @@ func NewSender(cfg map[string]any, name, baseType string, dlq config.Sender) (*S
 		s.client = clientH3(s.tls.Clone(), defaultMaxHeaderSize, s.timeout, s.transportID)
 	default:
 		return nil, fmt.Errorf("unexpected sender type %q", s.Type)
+	}
+
+	if s.retries, err = parseRetries(cfg["retries"], s.method, s.Name); err != nil {
+		return nil, err
 	}
 
 	var limits flow.Limits

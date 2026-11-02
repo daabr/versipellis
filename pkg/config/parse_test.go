@@ -2,7 +2,15 @@ package config_test
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	_ "embed"
+	"encoding/pem"
+	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -548,5 +556,284 @@ func TestBatchLimits(t *testing.T) {
 				t.Errorf("BatchLimits() = %+v, want = %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		rawURL   string
+		httpVer  string
+		required bool
+		want     string
+		wantErr  bool
+	}{
+		{
+			name:   "valid_empty_url",
+			rawURL: "",
+			want:   "",
+		},
+		{
+			name:     "invalid_empty_url",
+			rawURL:   "",
+			httpVer:  config.CollectorTypeHTTP,
+			required: true,
+			wantErr:  true,
+		},
+		{
+			name:   "valid_whitespace_url",
+			rawURL: " \t ",
+			want:   "",
+		},
+		{
+			name:     "invalid_whitespace_url",
+			rawURL:   " \t ",
+			required: true,
+			wantErr:  true,
+		},
+		{
+			name:     "url_with_surrounding_whitespace",
+			rawURL:   " https://example.com/path ",
+			required: true,
+			want:     "https://example.com/path",
+		},
+		{
+			name:    "invalid_url",
+			rawURL:  "://invalid-url",
+			wantErr: true,
+		},
+		{
+			name:    "relative_url",
+			rawURL:  "/relative/path",
+			wantErr: true,
+		},
+		{
+			name:    "http3_with_http_scheme",
+			rawURL:  "http://example.com",
+			httpVer: config.CollectorTypeHTTP3,
+			wantErr: true,
+		},
+		{
+			name:    "http3_with_https_scheme",
+			rawURL:  "https://example.com",
+			httpVer: config.CollectorTypeHTTP3,
+			want:    "https://example.com",
+		},
+		{
+			name:    "http_with_http_scheme",
+			rawURL:  "http://example.com",
+			httpVer: config.CollectorTypeHTTP,
+			want:    "http://example.com",
+		},
+		{
+			name:    "http_with_https_scheme",
+			rawURL:  "https://example.com/",
+			httpVer: config.CollectorTypeHTTP,
+			want:    "https://example.com/",
+		},
+		{
+			name:    "invalid_scheme",
+			rawURL:  "invalid://example.com/",
+			httpVer: config.CollectorTypeHTTP,
+			wantErr: true,
+		},
+		{
+			name:    "url_with_opaque_part",
+			rawURL:  "https:opaque-part",
+			wantErr: true,
+		},
+		{
+			name:    "url_without_host",
+			rawURL:  "https://",
+			wantErr: true,
+		},
+		{
+			name:    "url_with_invalid_port_number_1",
+			rawURL:  "https://example.com:99999",
+			wantErr: true,
+		},
+		{
+			name:    "url_with_invalid_port_number_2",
+			rawURL:  "https://example.com:0",
+			wantErr: true,
+		},
+		{
+			name:    "url_with_invalid_port_number_3",
+			rawURL:  "https://example.com:-1",
+			wantErr: true,
+		},
+		{
+			name:    "url_with_non_numeric_port",
+			rawURL:  "https://example.com:port",
+			wantErr: true,
+		},
+		{
+			name:   "url_with_query_and_fragment",
+			rawURL: "https://example.com/path?query=1&param2=value2#fragment",
+			want:   "https://example.com/path?query=1&param2=value2#fragment",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, gotErr := config.ParseURL(tt.rawURL, tt.httpVer, tt.required)
+			switch {
+			case (gotErr != nil) != tt.wantErr:
+				t.Fatalf("ParseURL() error = %v, wantErr %v", gotErr, tt.wantErr)
+			case got != nil && (tt.wantErr || got.String() != tt.want):
+				t.Errorf("ParseURL() = %v, want %q", got, tt.want)
+			case got == nil && !tt.wantErr && tt.want != "":
+				t.Errorf("ParseURL() = %v, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadPEMFile(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+
+	certPEM := generateTestCert(t)
+	validCertFile := filepath.Join(tempDir, "cert.pem")
+	writeTestFile(t, validCertFile, certPEM)
+
+	emptyFile := filepath.Join(tempDir, "empty.pem")
+	writeTestFile(t, emptyFile, []byte(""))
+
+	invalidFile := filepath.Join(tempDir, "invalid.pem")
+	writeTestFile(t, invalidFile, []byte("NOT A PEM"))
+
+	tests := []struct {
+		name        string
+		path        string
+		description string
+		required    bool
+		wantNil     bool
+		wantErr     bool
+	}{
+		{
+			name:        "empty_path_optional",
+			path:        "",
+			description: "test cert",
+			required:    false,
+			wantNil:     true,
+			wantErr:     false,
+		},
+		{
+			name:        "whitespace_path_optional",
+			path:        "   ",
+			description: "test cert",
+			required:    false,
+			wantNil:     true,
+			wantErr:     false,
+		},
+		{
+			name:        "empty_path_required",
+			path:        "",
+			description: "test cert",
+			required:    true,
+			wantErr:     true,
+		},
+		{
+			name:        "whitespace_path_required",
+			path:        "   ",
+			description: "test cert",
+			required:    true,
+			wantErr:     true,
+		},
+		{
+			name:        "valid_pem_file",
+			path:        validCertFile,
+			description: "test cert",
+			required:    true,
+			wantNil:     false,
+			wantErr:     false,
+		},
+		{
+			name:        "nonexistent_file",
+			path:        filepath.Join(tempDir, "nonexistent.pem"),
+			description: "test cert",
+			required:    false,
+			wantErr:     true,
+		},
+		{
+			name:        "empty_file",
+			path:        emptyFile,
+			description: "test cert",
+			required:    false,
+			wantErr:     true,
+		},
+		{
+			name:        "invalid_pem_content",
+			path:        invalidFile,
+			description: "test cert",
+			required:    false,
+			wantErr:     true,
+		},
+		{
+			name:        "directory_instead_of_file",
+			path:        tempDir,
+			description: "test cert",
+			required:    false,
+			wantErr:     true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			data, gotErr := config.LoadPEMFile(tt.path, tt.description, tt.required)
+			if (gotErr != nil) != tt.wantErr {
+				t.Fatalf("LoadPEMFile() error = %v, wantErr %v", gotErr, tt.wantErr)
+			}
+			if !tt.wantErr && (data == nil) != tt.wantNil {
+				t.Errorf("LoadPEMFile() data is nil = %v, wantNil %v", data == nil, tt.wantNil)
+			}
+		})
+	}
+}
+
+func generateTestCert(t *testing.T) []byte {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), nil)
+	if err != nil {
+		t.Fatalf("failed to generate private key: %v", err)
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("failed to generate serial number: %v", err)
+	}
+
+	cert := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject:      pkix.Name{Organization: []string{"Versipellis Test"}, CommonName: "localhost"},
+		NotBefore:    time.Now().Add(-1 * time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:     []string{"localhost"},
+
+		BasicConstraintsValid: true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, cert, cert, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("failed to create certificate: %v", err)
+	}
+
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+func writeTestFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("failed to write test file %s: %v", path, err)
 	}
 }
