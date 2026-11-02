@@ -221,7 +221,7 @@ func ParseURL(rawURL, httpVersion string, required bool) (*url.URL, error) {
 	u, err := url.Parse(rawURL)
 	switch {
 	case err != nil:
-		return nil, fmt.Errorf("invalid URL: %w", err)
+		return nil, errors.New("invalid URL") // Don't expose the underlying error for security reasons.
 	case !u.IsAbs():
 		return nil, errors.New("URL must be absolute (start with a scheme)")
 	}
