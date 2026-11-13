@@ -31,6 +31,7 @@ Receivers (HTTP servers) ────┘
 | :-- | :-- |
 | `cmd/versi` | CLI entry point, flag parsing, OS signal handling, lifecycle orchestration |
 | `pkg/config` | TOML config parsing & validation, `BaseCollector`, `BaseReceiver`, `Sender`, `State` |
+| `pkg/auth` | Configurable HTTP authentication and authorization for collectors and senders |
 | `pkg/http` | Ingress and egress over HTTP/1.1, HTTP/2, and HTTP/3 with TLS/mTLS |
 | `pkg/sql` | SQL collectors supporting various relational databases |
 | `pkg/flow` | Generic `Batcher` mechanism, using typed `Chunk`s of data |
@@ -279,6 +280,18 @@ Data that a sender accepted but can't deliver goes to its fallback sender via `d
 - **Memory**: work registered for retries can live for many seconds, so after encoding a payload, release references to the original items (e.g., `data, encode = nil, nil` in captured variables) so only the encoded body stays in memory.
 - **Receiver responses**: `readRequest()` writes only error statuses; `ServeHTTP()` writes the success status (`202`) after processing the body, so it can still reject it.
 - Payload types that the HTTP sender supports: `[]byte` (with auto-detected MIME content type), `*http.Request` (from receivers), `*http.Response` (from collectors), and `JSON` objects and `Rows` (batched and encoded in the resolved format, see the [Formatting](#formatting-pkgcodec) section).
+
+### Authentication (`pkg/auth`)
+
+- **Initial OAuth flow**: `Config.DoInitialOAuthFlow()` runs once, during `Collector.Start()` and `NewSender()` (a no-op for non-OAuth configs). A failure fails the component's startup. It then clears the parsed configuration and keeps only the runtime token state.
+  - **Intended**: the flow blocks (up to the OAuth client's timeout) and makes network calls while senders are initialized sequentially. This is acceptable because OAuth senders are expected to be very few, and a failed initial flow is deliberately fatal rather than lazy.
+  - **Intended**: `initSenders()`, `initCollectors()`, and `initReceivers()` run before `waitForInterrupt()` installs the signal handler, so Ctrl-C during initialization uses Go's default behavior and kills the process immediately. That's why a blocked initial flow needs no cancellation of its own.
+- **Token requests**: they use a long-running context detached from request and shutdown cancellation (`execCtx` for collectors, `context.WithoutCancel` for senders), so they're bounded only by the OAuth HTTP client's timeout (never 0, at most `CloseTimeout`).
+  - `NewSender()` wraps its context in `context.WithoutCancel()` on purpose: the token source keeps the context for later refreshes, so it must outlive the caller (see [Concurrency](#concurrency)).
+- **`oauthClient()`**: it deliberately ignores the component's own TLS settings (system CAs, no mTLS, no HTTP/3), because identity providers are usually unrelated to the destination server, and it refuses redirects that downgrade the scheme, change the host, or that aren't 307/308 for POST.
+- **`SetHeader()`**: it clones the headers and injects the auth header per request. Its errors are converted into retryable error responses by `authErrorResponse()` (before anything is sent), subject to the component's configured retries. When the request's own context ends first, callers stop waiting but the token request continues in the background.
+  - **Intended**: POST and PATCH have no retries unless configured explicitly (see [HTTP](#http)), and that applies to token failures too, even though nothing was sent. Such requests aren't retried at the HTTP layer; senders pass their data to the fallback (DLQ), and collectors wait for their next scheduled run.
+- **`sharedTokenSource`**: it shares one in-flight token request (`singleflight`) and its error among all concurrent callers, and serves valid tokens lock-free. Don't replace it with a bare `oauth2.TokenSource`, which serializes callers behind its lock and doesn't cache errors.
 
 ### SQL
 

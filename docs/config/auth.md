@@ -36,17 +36,19 @@ It is entirely optional, but some fields may be required in some use-cases.
 - Optional
 - Default: `"Authorization"`
 - Case insensitive by definition
+- Also affects `"oauth"`-type configurations
 
 `static_prefix` - constant prefix in the HTTP header value before `static_secret`
 
 - Optional
 - Default: `"Bearer"`
 - Options: any string, including an empty one (`""`)
-- If the value isn't empty and doesn't end in a space, we automatically append one
+- If the value isn't empty and doesn't end in a space, we automatically append one to it
+- Also affects `"oauth"`-type configurations (appears before the access token)
 
 `static_secret` - the static key or token to use
 
-- Required when `type = "static"`
+- Required (only) when `type = "static"`
 
 **Example 1:** static bearer token (based on [RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750), but without any OAuth flow)
 
@@ -80,7 +82,7 @@ It is entirely optional, but some fields may be required in some use-cases.
   - [`"authorization_code"`](https://oauth.net/2/grant-types/authorization-code/) (3-legged flow requiring one-time user interaction via a local browser)
   - [`"client_credentials"`](https://oauth.net/2/grant-types/client-credentials/)
   - [`"refresh_token"`](https://oauth.net/2/grant-types/refresh-token/)
-  - [`"jwt_bearer"`](https://oauth.net/2/jwt/) or `"urn:ietf:params:oauth:grant-type:jwt-bearer"`
+  - [`"jwt_bearer"`](https://oauth.net/2/jwt/) (normalized to `"urn:ietf:params:oauth:grant-type:jwt-bearer"`)
 
 `oauth_client_id` - client ID for most OAuth flows
 
@@ -94,14 +96,20 @@ It is entirely optional, but some fields may be required in some use-cases.
 `oauth_auth_url` - authorization endpoint URL for interactive OAuth flows
 
 - Required when `oauth_grant_type = "authorization_code"`
+- Must start with `"https://"` (per [RFC 6749 § 3.1](https://datatracker.ietf.org/doc/html/rfc6749#section-3.1)),\
+  unless the host is loopback (`localhost`, `127.0.0.0/8`, or `[::1]`)
 
 `oauth_callback_url` - redirection URL back to the client in interactive OAuth flows
 
 - Required when `oauth_grant_type = "authorization_code"`
+- Must start with `"https://"` (per [RFC 6749 § 3.1.2.1](https://datatracker.ietf.org/doc/html/rfc6749#section-3.1.2.1)),\
+  unless the host is loopback (`localhost`, `127.0.0.0/8`, or `[::1]`)
 
 `oauth_token_url` - token endpoint URL for all OAuth flows
 
 - Required when `type = "oauth"`
+- Must start with `"https://"` (per [RFC 6749 § 3.2](https://datatracker.ietf.org/doc/html/rfc6749#section-3.2)),\
+  unless the host is loopback (`localhost`, `127.0.0.0/8`, or `[::1]`)
 
 `oauth_refresh_token` - static refresh token
 
@@ -127,6 +135,21 @@ It is entirely optional, but some fields may be required in some use-cases.
   oauth_scopes = [ "one", "two", ... ]
   ```
 
+`oauth_auth_params` - additional query parameters in `oauth_auth_url`
+
+- Optional, effective only when `oauth_grant_type = "authorization_code"`
+- Format: table of string key-value pairs (see also the last note under `jwt_claims` regarding TOML syntax)
+- Parameter values must not contain control characters, but may contain spaces (e.g., `prompt = "login consent"`)
+- Reserved parameters, which are set by other fields or auto-generated, are rejected: `client_id`, `code_challenge`, `code_challenge_method`, `redirect_uri`, `response_type`, `scope`, and `state`
+
+`oauth_token_params` - additional form parameters in requests to `oauth_token_url`
+
+- Optional, effective only when `oauth_grant_type = "client_credentials"`
+- Format: table of string key-value pairs (see also the last note under `jwt_claims` regarding TOML syntax)
+- Parameter values must not contain control characters, but may contain spaces
+- Reserved parameters, which are set by other fields, are rejected: `client_id`, `client_secret`, and `scope`
+- `grant_type` may be overridden, for non-compliant servers
+
 ### OAuth 2 - JWT Bearer ([RFC 7523](https://datatracker.ietf.org/doc/html/rfc7523))
 
 `jwt_private_key_file` - relative or absolute path to the private key to sign generated tokens
@@ -146,9 +169,13 @@ It is entirely optional, but some fields may be required in some use-cases.
 - Valid range: between `"60s"` (1 minute) and `"1h"` (1 hour)
 - Out-of-bounds values are clamped to the nearest limit
 
-`jwt_claims` - static string claims in each generated token
+`jwt_claims` - static claims in each generated token
 
 - Required when `oauth_grant_type = "jwt_bearer"`
+- Values may be of any TOML type; TOML date-times are converted to Unix timestamps (whole seconds)
+  - Local date-times and dates (without a time zone offset) are in the host's local time zone, dates at midnight
+  - `exp`, `nbf`, and `iat` must be numbers or date-times, which may also be quoted strings in the same formats
+- `exp` and `iat` are ignored, because they're set automatically in each generated token (see `jwt_expiration`)
 - The TOML file format supports multiple representation options for key-value pairs:
 
   ```toml

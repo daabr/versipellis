@@ -185,7 +185,7 @@ func BatchLimits(rawCfg any, name string, defaults flow.Limits) (flow.Limits, er
 	}
 	cfg, ok := rawCfg.(map[string]any)
 	if !ok {
-		return flow.Limits{}, fmt.Errorf("%q must be a table of key-value pairs, got %T", "batch", rawCfg)
+		return flow.Limits{}, fmt.Errorf("'batch' must be a table of key-value pairs, got %T", rawCfg)
 	}
 
 	n := Value(cfg, "max_items", int64(defaults.MaxItems))
@@ -233,7 +233,7 @@ func ParseURL(rawURL, httpVersion string, required bool) (*url.URL, error) {
 	case u.Scheme != URLSchemeHTTPS && u.Scheme != URLSchemeHTTP:
 		return nil, errors.New("URL must have an HTTP/S scheme")
 	case u.Opaque != "":
-		return nil, fmt.Errorf(`URL must have "//" after the "%s:" scheme`, u.Scheme)
+		return nil, fmt.Errorf("URL must have '//' after the '%s:' scheme", u.Scheme)
 	case u.Hostname() == "":
 		return nil, errors.New("URL must have a host address")
 	case u.Port() != "":
