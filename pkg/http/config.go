@@ -33,7 +33,7 @@ func parseMethod(rawMethod, action string) (string, error) {
 	case http.MethodGet, http.MethodPatch, http.MethodPost, http.MethodPut:
 		return m, nil
 	case http.MethodConnect, http.MethodDelete, http.MethodHead, http.MethodOptions, http.MethodTrace:
-		return "", fmt.Errorf("HTTP method %q not supported for data %s", m, action)
+		return "", fmt.Errorf("HTTP method %q is not supported for data %s", m, action)
 	default:
 		return "", fmt.Errorf("invalid HTTP method %q", rawMethod)
 	}
@@ -48,7 +48,7 @@ func parseQuery(u *url.URL, rawCfg any, role string) error {
 	}
 	cfg, ok := rawCfg.(map[string]any)
 	if !ok {
-		return fmt.Errorf(`HTTP %s "query" must be a table of string key-value pairs, got %T`, role, rawCfg)
+		return fmt.Errorf("HTTP %s 'query' must be a table of string key-value pairs, got %T", role, rawCfg)
 	}
 	if len(cfg) == 0 {
 		return nil
@@ -73,7 +73,7 @@ func parseHeaders(rawCfg any, role string) (http.Header, error) {
 	}
 	cfg, ok := rawCfg.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf(`HTTP %s "headers" must be a table of string key-value pairs, got %T`, role, rawCfg)
+		return nil, fmt.Errorf("HTTP %s 'headers' must be a table of string key-value pairs, got %T", role, rawCfg)
 	}
 
 	headers := make(http.Header, len(cfg))

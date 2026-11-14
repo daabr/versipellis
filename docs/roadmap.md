@@ -4,22 +4,15 @@ This is the high-level plan for features that are expected to be released within
 
 ## 0-3 Months
 
-1. Configurable HTTP authentication & authorization
+1. Finish implementing the OAuth authorization code and JWT bearer flows
 
-   - None
-   - Basic (RFC 7617)
-   - Static key/token
-   - OAuth 2
-     - Interactive authorization
-     - Client credentials
-     - Refresh
-     - JWT (RFC 7523)
-     - Workload Identity Federation (WIF)
-     - Session cookie (RFC 6265)
+2. Data collection from MongoDB (+ general support for BSON)
 
-2. Respect rate-limiting responses from HTTP servers
+3. Respect rate-limiting responses from HTTP servers
 
-3. Data collection from MongoDB (+ general support for BSON)
+4. Support session cookies (RFC 6265) in OAuth-based HTTP authentication and authorization
+
+5. Sharing and single-flight initialization of identical OAuth configurations across clients
 
 ## 3-6 Months
 
@@ -32,7 +25,9 @@ This is the high-level plan for features that are expected to be released within
    - Automatic decoding of incoming client requests and server responses
    - Configurable encoding of outgoing collector/sender requests
 
-4. Additional auth options, e.g., AWS, Azure, GCP, CyberArk
+4. Support TLS configurations in `auth` sections
+
+5. Additional auth options, e.g., AWS, Azure, GCP, CyberArk, Workload Identity Federation (WIF)
 
 ## 6-12 Months
 

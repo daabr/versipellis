@@ -300,6 +300,65 @@ func TestCollectorStart(t *testing.T) {
 	}
 }
 
+func TestCollectorStartWithFailedOAuthFlow(t *testing.T) {
+	t.Parallel()
+
+	var tokenRequests, dataRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/token" {
+			dataRequests.Add(1)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		tokenRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	base, err := config.NewBaseCollector(
+		map[string]any{"type": config.CollectorTypeHTTP, "schedule": "@once", "destination": "test"},
+		t.Name(), map[string]config.Sender{"": nil, "test": dest.Discard},
+	)
+	if err != nil {
+		t.Fatalf("config.NewBaseCollector() error: %v", err)
+	}
+	coll, err := NewCollector(base, map[string]any{
+		"method": http.MethodGet, "url": server.URL + "/data", "timeout": "1s",
+		"auth": map[string]any{
+			"type":                "oauth",
+			"oauth_client_id":     "id",
+			"oauth_client_secret": "secret",
+			"oauth_token_url":     server.URL + "/token", // Plain HTTP is allowed for loopback hosts.
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewCollector() error: %v", err)
+	}
+
+	if coll.Start(t.Context()) {
+		t.Fatal("Collector.Start() = true, want false")
+	}
+
+	// A failed start must still close the collector, so nothing waiting for it hangs.
+	select {
+	case <-coll.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Collector.Done() isn't closed after a failed start")
+	}
+	coll.Close(t.Context()) // Must be a no-op after the collector already closed itself.
+
+	// With the default [oauth2.AuthStyleAutoDetect], after the first failure, oauth2
+	// tries again with the client credentials in the form, instead of the header.
+	if got := tokenRequests.Load(); got != 2 {
+		t.Errorf("token endpoint got %d requests, want 2", got)
+	}
+	if got := dataRequests.Load(); got != 0 {
+		t.Errorf("data endpoint got %d requests, want 0", got)
+	}
+}
+
 func TestScheduleNextRequest(t *testing.T) {
 	t.Parallel()
 

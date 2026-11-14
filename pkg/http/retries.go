@@ -53,7 +53,7 @@ func parseRetries(rawCfg any, method, name string) (*retries, error) {
 	}
 	cfg, ok := rawCfg.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("%q must be a table of key-value pairs, got %T", "retries", rawCfg)
+		return nil, fmt.Errorf("'retries' must be a table of key-value pairs, got %T", rawCfg)
 	}
 
 	// Some HTTP methods do not get a default retry policy, they require an explicit
