@@ -3,10 +3,10 @@ module github.com/daabr/versipellis
 go 1.27
 
 require (
-	github.com/SAP/go-hdb v1.21.0
+	github.com/SAP/go-hdb v1.21.1
 	github.com/alexbrainman/odbc v0.0.0-20250601004241-49e6b2bc0cf0
 	github.com/go-sql-driver/mysql v1.10.1
-	github.com/godror/godror v0.51.5
+	github.com/godror/godror v0.51.6
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/lmittmann/tint v1.2.1
@@ -15,7 +15,7 @@ require (
 	github.com/quic-go/quic-go v0.65.0
 	github.com/snowflakedb/gosnowflake/v2 v2.4.0
 	golang.org/x/net v0.62.0
-	modernc.org/sqlite v1.61.1
+	modernc.org/sqlite v1.62.0
 )
 
 require (
@@ -81,12 +81,12 @@ require (
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
-	modernc.org/libc v1.80.0 // indirect
+	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
