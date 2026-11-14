@@ -90,7 +90,7 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 		return nil, fmt.Errorf("format setting: %w", err)
 	}
 
-	if c.auth, err = auth.ParseConfig(cfg["auth"], c.Name); err != nil {
+	if c.auth, err = auth.ParseConfig(cfg["auth"], c.url, c.Name); err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 	if c.tls, c.transportID, err = loadClientTLSConfig(cfg["tls"], c.Type); err != nil {

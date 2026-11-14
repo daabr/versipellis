@@ -3,6 +3,8 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -48,7 +50,7 @@ type Config struct {
 }
 
 // ParseConfig parses the provided "auth" section when initializing a new collector or sender.
-func ParseConfig(rawCfg any, name string) (*Config, error) {
+func ParseConfig(rawCfg any, forURL *url.URL, name string) (*Config, error) {
 	if rawCfg == nil {
 		rawCfg = map[string]any{}
 	}
@@ -74,6 +76,9 @@ func ParseConfig(rawCfg any, name string) (*Config, error) {
 
 	if err != nil {
 		return nil, err
+	}
+	if parsed.authType != configTypeNone && forURL.Scheme == config.URLSchemeHTTP && !isLoopback(forURL.Hostname()) {
+		slog.Info("configuring auth for use over unencrypted HTTP is valid but risky", slog.String("name", name))
 	}
 	if parsed.authType != configTypeOAuth {
 		return parsed, nil

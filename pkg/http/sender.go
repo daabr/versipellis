@@ -108,7 +108,7 @@ func NewSender(ctx context.Context, cfg map[string]any, name, baseType string, d
 	concurrencyLimit := config.BoundedInt(concurrency, 1, maxConcurrencyLimit, s.Name, "sender concurrency limit")
 	s.slots = make(chan struct{}, concurrencyLimit)
 
-	if s.auth, err = auth.ParseConfig(cfg["auth"], s.Name); err != nil {
+	if s.auth, err = auth.ParseConfig(cfg["auth"], s.url, s.Name); err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 	if s.tls, s.transportID, err = loadClientTLSConfig(cfg["tls"], s.Type); err != nil {

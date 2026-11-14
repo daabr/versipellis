@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"cmp"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -149,6 +150,7 @@ func TestParseConfig(t *testing.T) {
 	tests := []struct {
 		name    string
 		cfg     any
+		url     *url.URL
 		want    Config
 		wantErr bool
 	}{
@@ -200,6 +202,18 @@ func TestParseConfig(t *testing.T) {
 				headerName:  "Authorization",
 				headerValue: "Bearer s3cr3t",
 			},
+		},
+		{
+			name: "static_over_unencrypted_http",
+			cfg:  map[string]any{"type": "static", "static_secret": "s3cr3t"},
+			url:  &url.URL{Scheme: "http", Host: "example.com:8080"},
+			want: Config{authType: configTypeStatic, headerName: "Authorization", headerValue: "Bearer s3cr3t"},
+		},
+		{
+			name: "static_over_unencrypted_http_loopback",
+			cfg:  map[string]any{"type": "static", "static_secret": "s3cr3t"},
+			url:  &url.URL{Scheme: "http", Host: "127.0.0.1:8080"},
+			want: Config{authType: configTypeStatic, headerName: "Authorization", headerValue: "Bearer s3cr3t"},
 		},
 		{
 			name: "static_with_canonicalized_header_and_custom_prefix",
@@ -1094,7 +1108,7 @@ func TestParseConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := ParseConfig(tt.cfg, tt.name)
+			got, err := ParseConfig(tt.cfg, cmp.Or(tt.url, &url.URL{Scheme: "https", Host: "example.com"}), tt.name)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ParseConfig() error = %v, wantErr %v", err, tt.wantErr)
 			}

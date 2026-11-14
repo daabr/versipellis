@@ -175,7 +175,7 @@ func TestConfigDoInitialOAuthFlow(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			c, err := ParseConfig(tt.cfg, tt.name)
+			c, err := ParseConfig(tt.cfg, &url.URL{Scheme: "https", Host: "example.com"}, tt.name)
 			if err != nil {
 				t.Fatalf("ParseConfig() error = %v", err)
 			}
@@ -254,7 +254,7 @@ func TestConfigOAuthAuthCodeURL(t *testing.T) {
 				"oauth_callback_url":  testCallbackURL,
 				"oauth_token_url":     testTokenURL,
 				"oauth_auth_params":   map[string]any{"access_type": "offline"},
-			}, tt.name)
+			}, &url.URL{Scheme: "https", Host: "example.com"}, tt.name)
 			if err != nil {
 				t.Fatalf("ParseConfig() error = %v", err)
 			}
