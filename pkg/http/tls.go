@@ -30,7 +30,7 @@ func loadClientTLSConfig(rawCfg any, httpVer string) (*tls.Config, string, error
 	}
 	cfg, ok := rawCfg.(map[string]any)
 	if !ok {
-		return nil, "", fmt.Errorf("%q must be a table of key-value pairs, got %T", "tls", rawCfg)
+		return nil, "", fmt.Errorf("'tls' must be a table of key-value pairs, got %T", rawCfg)
 	}
 	for _, serverKey := range []string{"server_cert_file", "server_key_file", "mtls_client_ca_cert_file"} {
 		if _, found := cfg[serverKey]; found {
@@ -81,7 +81,7 @@ func loadServerTLSConfig(rawCfg any, httpVer string) (*tls.Config, error) {
 	}
 	cfg, ok := rawCfg.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("%q must be a table of key-value pairs, got %T", "tls", rawCfg)
+		return nil, fmt.Errorf("'tls' must be a table of key-value pairs, got %T", rawCfg)
 	}
 	for _, clientKey := range []string{"server_ca_cert_file", "mtls_client_cert_file", "mtls_client_key_file"} {
 		if _, found := cfg[clientKey]; found {

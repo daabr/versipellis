@@ -165,7 +165,7 @@ func TestNewSender(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, gotErr := NewSender(tt.cfg, tt.name, tt.baseType, nil)
+			_, gotErr := NewSender(t.Context(), tt.cfg, tt.name, tt.baseType, nil)
 			if (gotErr != nil) != tt.wantErr {
 				t.Errorf("NewSender() error = %v, wantErr %v", gotErr, tt.wantErr)
 			}
@@ -188,7 +188,9 @@ func TestNewSenderFallback(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			s, err := NewSender(map[string]any{"url": "https://example.com"}, tt.name, config.SenderTypeHTTP, tt.dlq)
+			s, err := NewSender(
+				t.Context(), map[string]any{"url": "https://example.com"}, tt.name, config.SenderTypeHTTP, tt.dlq,
+			)
 			if err != nil {
 				t.Fatalf("NewSender() error: %v", err)
 			}
@@ -251,7 +253,7 @@ func TestNewSenderConcurrencyLimit(t *testing.T) {
 			if tt.limit != nil {
 				cfg["concurrency_limit"] = tt.limit
 			}
-			s, err := NewSender(cfg, tt.name, config.SenderTypeHTTP, nil)
+			s, err := NewSender(t.Context(), cfg, tt.name, config.SenderTypeHTTP, nil)
 			if err != nil {
 				t.Fatalf("NewSender() error: %v", err)
 			}
@@ -265,7 +267,9 @@ func TestNewSenderConcurrencyLimit(t *testing.T) {
 func TestNewSenderHTTP3(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewSender(map[string]any{"url": "https://example.com"}, "TestNewSenderHTTP3", config.SenderTypeHTTP3, nil)
+	_, err := NewSender(
+		t.Context(), map[string]any{"url": "https://example.com"}, "TestNewSenderHTTP3", config.SenderTypeHTTP3, nil,
+	)
 	if err != nil {
 		t.Fatalf("NewSender() error = %v, wantErr %v", err, false)
 	}
@@ -283,7 +287,7 @@ type sentRequest struct {
 func newRecordingSender(t *testing.T, cfg map[string]any) (*Sender, func() []sentRequest) {
 	t.Helper()
 
-	s, err := NewSender(cfg, t.Name(), config.SenderTypeHTTP, nil)
+	s, err := NewSender(t.Context(), cfg, t.Name(), config.SenderTypeHTTP, nil)
 	if err != nil {
 		t.Fatalf("NewSender() error = %v", err)
 	}
@@ -802,7 +806,9 @@ func TestSenderDeliveryFailureFallback(t *testing.T) {
 			t.Parallel()
 
 			// POST requests aren't retried by default, so the first failure is the last one.
-			s, err := NewSender(map[string]any{"url": "http://example.com"}, tt.name, config.SenderTypeHTTP, nil)
+			s, err := NewSender(
+				t.Context(), map[string]any{"url": "http://example.com"}, tt.name, config.SenderTypeHTTP, nil,
+			)
 			if err != nil {
 				t.Fatalf("NewSender() error: %v", err)
 			}
@@ -949,7 +955,9 @@ func TestSenderClose(t *testing.T) {
 	t.Parallel()
 
 	var counter atomic.Int64
-	s, err := NewSender(map[string]any{"url": "http://example.com"}, "TestSenderClose", config.SenderTypeHTTP, nil)
+	s, err := NewSender(
+		t.Context(), map[string]any{"url": "http://example.com"}, "TestSenderClose", config.SenderTypeHTTP, nil,
+	)
 	if err != nil {
 		t.Fatalf("NewSender() error: %v", err)
 	}
@@ -1025,7 +1033,7 @@ func TestSenderCloseTimeout(t *testing.T) {
 
 			synctest.Test(t, func(t *testing.T) {
 				s, err := NewSender(
-					map[string]any{"url": "http://example.com", "timeout": tt.timeout},
+					t.Context(), map[string]any{"url": "http://example.com", "timeout": tt.timeout},
 					"TestSenderCloseTimeout", config.SenderTypeHTTP, nil,
 				)
 				if err != nil {
@@ -1072,14 +1080,16 @@ func TestSenderCloseDuringRetryDelay(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		s, err := NewSender(map[string]any{
-			"url":     "http://example.com",
-			"timeout": "5s",
-			"retries": map[string]any{
-				"type":     retryTypeStatic,
-				"interval": "1m",
-			},
-		}, "TestSenderCloseDuringRetryDelay", config.SenderTypeHTTP, nil)
+		s, err := NewSender(t.Context(),
+			map[string]any{
+				"url":     "http://example.com",
+				"timeout": "5s",
+				"retries": map[string]any{
+					"type":     retryTypeStatic,
+					"interval": "1m",
+				},
+			}, "TestSenderCloseDuringRetryDelay", config.SenderTypeHTTP, nil,
+		)
 		if err != nil {
 			t.Fatalf("NewSender() error: %v", err)
 		}
@@ -1130,11 +1140,12 @@ func TestSenderConcurrencyLimit(t *testing.T) {
 			t.Parallel()
 
 			synctest.Test(t, func(t *testing.T) {
-				s, err := NewSender(map[string]any{
-					"url":               "http://example.com",
-					"concurrency_limit": int64(limit),
-					"batch":             map[string]any{"max_items": int64(1)},
-				}, tt.name, config.SenderTypeHTTP, nil)
+				s, err := NewSender(t.Context(),
+					map[string]any{
+						"url":               "http://example.com",
+						"concurrency_limit": int64(limit),
+						"batch":             map[string]any{"max_items": int64(1)},
+					}, tt.name, config.SenderTypeHTTP, nil)
 				if err != nil {
 					t.Fatalf("NewSender() error: %v", err)
 				}
@@ -1187,7 +1198,7 @@ func TestSenderCloseDropsWaitingRequests(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		s, err := NewSender(
-			map[string]any{"url": "http://example.com", "concurrency_limit": int64(1)},
+			t.Context(), map[string]any{"url": "http://example.com", "concurrency_limit": int64(1)},
 			"TestSenderCloseDropsWaitingRequests", config.SenderTypeHTTP, nil,
 		)
 		if err != nil {
@@ -1298,7 +1309,7 @@ func TestSenderCloseRejectsWaitingDataToFallback(t *testing.T) {
 				if tt.senderFormat != "" {
 					cfg["format"] = tt.senderFormat
 				}
-				s, err := NewSender(cfg, tt.name, config.SenderTypeHTTP, nil)
+				s, err := NewSender(t.Context(), cfg, tt.name, config.SenderTypeHTTP, nil)
 				if err != nil {
 					t.Fatalf("NewSender() error: %v", err)
 				}

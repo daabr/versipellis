@@ -41,7 +41,7 @@ func main() {
 
 	initLog(debugLog, structured, info)
 	ctx, cancel := context.WithCancel(context.Background())
-	senders, ok := initSenders(cfg)
+	senders, ok := initSenders(ctx, cfg)
 	if !ok {
 		cancel()
 		os.Exit(1)

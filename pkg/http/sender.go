@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/daabr/versipellis/pkg/auth"
 	"github.com/daabr/versipellis/pkg/codec"
 	"github.com/daabr/versipellis/pkg/config"
@@ -42,7 +44,7 @@ type Sender struct {
 	headers http.Header
 	timeout time.Duration
 	format  config.Format
-	auth    auth.Config
+	auth    *auth.Config
 	tls     *tls.Config
 	retries *retries
 
@@ -59,7 +61,7 @@ type Sender struct {
 
 // NewSender creates a new [config.Sender] with the provided configuration, which was read
 // from a TOML file. It checks the details and returns an error if any of them is invalid.
-func NewSender(cfg map[string]any, name, baseType string, dlq config.Sender) (*Sender, error) {
+func NewSender(ctx context.Context, cfg map[string]any, name, baseType string, dlq config.Sender) (*Sender, error) {
 	s := &Sender{Name: name, Type: baseType}
 	if dlq != nil {
 		s.fallback = dlq.Send
@@ -75,7 +77,7 @@ func NewSender(cfg map[string]any, name, baseType string, dlq config.Sender) (*S
 		return nil, err
 	}
 	if s.method == http.MethodGet {
-		return nil, fmt.Errorf("HTTP method %q not supported for sending data", s.method)
+		return nil, fmt.Errorf("HTTP method %q is not supported for sending data", s.method)
 	}
 
 	if err := parseQuery(s.url, cfg["query"], "sender"); err != nil {
@@ -106,7 +108,7 @@ func NewSender(cfg map[string]any, name, baseType string, dlq config.Sender) (*S
 	concurrencyLimit := config.BoundedInt(concurrency, 1, maxConcurrencyLimit, s.Name, "sender concurrency limit")
 	s.slots = make(chan struct{}, concurrencyLimit)
 
-	if s.auth, err = auth.ParseConfig(cfg["auth"], s.Name); err != nil {
+	if s.auth, err = auth.ParseConfig(cfg["auth"], s.url, s.Name); err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 	if s.tls, s.transportID, err = loadClientTLSConfig(cfg["tls"], s.Type); err != nil {
@@ -129,8 +131,9 @@ func NewSender(cfg map[string]any, name, baseType string, dlq config.Sender) (*S
 	case config.SenderTypeHTTP3:
 		s.client = clientH3(s.tls.Clone(), defaultMaxHeaderSize, s.timeout, s.transportID)
 	default:
-		return nil, fmt.Errorf("unexpected sender type %q", s.Type)
+		return nil, fmt.Errorf("unhandled sender type %q", s.Type)
 	}
+	s.client.CheckRedirect = checkRedirect(s.auth.HeaderName())
 
 	if s.retries, err = parseRetries(cfg["retries"], s.method, s.Name); err != nil {
 		return nil, err
@@ -146,6 +149,12 @@ func NewSender(cfg map[string]any, name, baseType string, dlq config.Sender) (*S
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	// No-op in non-OAuth modes. Either way, [Sender.auth] and [Sender.tls] are guaranteed to be non-nil.
+	ctx = context.WithValue(context.WithoutCancel(ctx), oauth2.HTTPClient, oauthClient(s.tls.MinVersion, s.timeout))
+	if err := s.auth.DoInitialOAuthFlow(ctx); err != nil {
+		return nil, fmt.Errorf("runtime error in initial OAuth flow: %w", err)
 	}
 
 	return s, nil

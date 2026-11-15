@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/daabr/versipellis/pkg/auth"
 	"github.com/daabr/versipellis/pkg/codec"
 	"github.com/daabr/versipellis/pkg/config"
@@ -30,7 +32,7 @@ type Collector struct {
 	maxHeaderSize int64
 	timeout       time.Duration
 	format        config.Format
-	auth          auth.Config
+	auth          *auth.Config
 	tls           *tls.Config
 	retries       *retries
 
@@ -88,7 +90,7 @@ func NewCollector(base *config.BaseCollector, cfg map[string]any) (*Collector, e
 		return nil, fmt.Errorf("format setting: %w", err)
 	}
 
-	if c.auth, err = auth.ParseConfig(cfg["auth"], c.Name); err != nil {
+	if c.auth, err = auth.ParseConfig(cfg["auth"], c.url, c.Name); err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 	if c.tls, c.transportID, err = loadClientTLSConfig(cfg["tls"], c.Type); err != nil {
@@ -137,10 +139,11 @@ func loadBody(cfg map[string]any, method string) ([]byte, error) {
 	return body, nil // Not trimming leading/trailing whitespaces because this payload may be binary.
 }
 
-// Start connects to the configured HTTP server and starts sending requests to it. This method returns
-// immediately, and the collector runs asynchronously in the background. This method is not safe for
-// concurrency, initialize collectors only in the main goroutine. Lastly, the collector obeys the
-// cancellation of the provided context, but with a grace period of [Collector.timeout].
+// Start connects to the configured HTTP server and starts sending requests to it. This method
+// returns after the initial OAuth flow (if configured), and the collector runs asynchronously in
+// the background. If that flow fails, it closes the collector (so [Collector.Done] is closed too)
+// and returns false. This method must be called only once per collector. Lastly, collectors obey
+// the cancellation of the provided context, but with a grace period of [Collector.timeout].
 func (c *Collector) Start(ctx context.Context) bool {
 	switch c.Type {
 	case config.CollectorTypeHTTP:
@@ -148,8 +151,17 @@ func (c *Collector) Start(ctx context.Context) bool {
 	case config.CollectorTypeHTTP3:
 		c.client = clientH3(c.tls.Clone(), c.maxHeaderSize, c.timeout, c.transportID)
 	}
+	c.client.CheckRedirect = checkRedirect(c.auth.HeaderName())
 
 	schedCtx, execCtx := c.state.StartWith(ctx)
+	// No-op in non-OAuth modes. Either way, [Collector.auth] and [Collector.tls] are guaranteed to be non-nil.
+	oauthCtx := context.WithValue(execCtx, oauth2.HTTPClient, oauthClient(c.tls.MinVersion, c.timeout))
+	if err := c.auth.DoInitialOAuthFlow(oauthCtx); err != nil {
+		slog.Error("runtime error in initial OAuth flow", slog.Any("error", err), slog.String("name", c.Name))
+		c.Close(execCtx) // Nothing is in progress yet, so this is immediate.
+		return false
+	}
+
 	slog.Info("starting to send HTTP requests", slog.String("name", c.Name), slog.String("schedule", c.Cronspec))
 	go c.scheduleNext(schedCtx, execCtx, time.Now())
 	return true

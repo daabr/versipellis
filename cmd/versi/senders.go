@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -23,7 +24,7 @@ var (
 // map of their instances. It does not fail fast; it attempts to initialize all of them before aborting if
 // any of them failed. This provides a better experience for first-time users with multiple configuration
 // mistakes, as they get feedback on all issues at once rather than encountering them one by one.
-func initSenders(cfg map[string]any) (map[string]config.Sender, bool) {
+func initSenders(ctx context.Context, cfg map[string]any) (map[string]config.Sender, bool) {
 	senders := map[string]config.Sender{
 		"":                       dest.Discard,
 		config.SenderTypeDiscard: dest.Discard,
@@ -51,7 +52,7 @@ func initSenders(cfg map[string]any) (map[string]config.Sender, bool) {
 
 		switch baseType {
 		case config.SenderTypeHTTP, config.SenderTypeHTTP3:
-			s, err := http.NewSender(cfg, name, baseType, senders[config.SenderTypeDLQ])
+			s, err := http.NewSender(ctx, cfg, name, baseType, senders[config.SenderTypeDLQ])
 			if err != nil {
 				slog.Error("sender initialization error", slog.Any("error", err),
 					slog.String("name", name), slog.String("type", baseType),
