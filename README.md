@@ -7,7 +7,7 @@
 -->
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/needful-tee/versipellis)
 [![Go Reference](https://pkg.go.dev/badge/needful-t.ee/versipellis.svg)](https://pkg.go.dev/needful-t.ee/versipellis)
-[![Codecov](https://codecov.io/gh/needful-tee/versipellis/graph/badge.svg?token=OQG3ZP9HV0)](https://codecov.io/gh/needful-tee/versipellis)
+[![Codecov](https://codecov.io/gh/needful-tee/versipellis/graph/badge.svg?token=9kJ6rPfqMS)](https://codecov.io/gh/needful-tee/versipellis)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14316/badge)](https://www.bestpractices.dev/projects/14316)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/needful-tee/versipellis/badge)](https://scorecard.dev/viewer/?uri=github.com/needful-tee/versipellis)
 [![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
