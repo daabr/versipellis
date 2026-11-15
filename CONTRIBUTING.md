@@ -28,7 +28,7 @@ All types of contributions are encouraged and valued. See the [Table of Contents
 
 ## Code of Conduct
 
-This project and everyone participating in it are governed by our [Code of Conduct](./CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to the project maintainers.
+This project and everyone participating in it are governed by our [Code of Conduct](https://github.com/needful-tee/versipellis?tab=coc-ov-file#versipellis-code-of-conduct). By participating, you are expected to uphold this code. Please report unacceptable behavior to the project maintainers.
 
 ## Asking Questions
 

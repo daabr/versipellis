@@ -12,7 +12,7 @@
 Anyone can report vulnerabilities privately to the project's maintainers here:
 <https://github.com/needful-tee/versipellis/security/advisories/new>
 
-You may also contact the project owner directly (see contact details here: <https://github.com/daabr>).
+You may also contact the [project maintainers](https://github.com/orgs/needful-tee/people) directly.
 
 ### When Submitting a Report
 
