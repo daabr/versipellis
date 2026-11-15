@@ -48,7 +48,8 @@ It is entirely optional, but some fields may be required in some use-cases.
 
 `static_secret` - the static key or token to use
 
-- Required (only) when `type = "static"`
+- Required when `type = "static"`
+- Has no effect otherwise
 
 **Example 1:** static bearer token (based on [RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750), but without any OAuth flow)
 
@@ -122,9 +123,10 @@ It is entirely optional, but some fields may be required in some use-cases.
 - Options: `true`, `false`
 - Must be `true` in interactive OAuth **2.1** flows, but this is not enforced here
 
-`oauth_scopes` - list of (zero or more) permission scopes to request in any OAuth flow
+`oauth_scopes` - list of (zero or more) permission scopes to request in OAuth flows
 
 - Optional
+- Has no effect when `oauth_grant_type = "refresh_token"`
 - The TOML file format supports these two representation options:
 
   ```toml

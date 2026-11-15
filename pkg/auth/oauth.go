@@ -135,18 +135,17 @@ func (c *Config) checkOAuthConfig(name string) error {
 		return fmt.Errorf("OAuth token URL is required for grant type %q", c.grant)
 	case c.grant == grantTypeRefreshToken && c.oauthRefreshToken == "":
 		return fmt.Errorf("OAuth refresh token is required for grant type %q", c.grant)
-	case c.grant != grantTypeAuthCode && c.oauthPKCE:
-		slog.Warn("PKCE is only supported by the OAuth grant type 'authorization_code'", slog.String("name", name))
+	case c.grant == grantTypeRefreshToken && len(c.oauthConfig.Scopes) > 0:
+		slog.Warn("'oauth_scopes' has no effect in 'refresh_token' OAuth flows", slog.String("name", name))
+	}
+	if c.grant != grantTypeAuthCode && c.oauthPKCE {
+		slog.Warn("PKCE is supported only in 'authorization_code' OAuth flows", slog.String("name", name))
 	}
 	if c.grant != grantTypeAuthCode && len(c.oauthAuthParams) > 0 {
-		slog.Warn("'oauth_auth_params' is only supported by the OAuth grant type 'authorization_code'",
-			slog.String("name", name),
-		)
+		slog.Warn("'oauth_auth_params' is supported only in 'authorization_code' OAuth flows", slog.String("name", name))
 	}
 	if c.grant != grantTypeClientCreds && len(c.oauthTokenParams) > 0 {
-		slog.Warn("'oauth_token_params' is only supported by the OAuth grant type 'client_credentials'",
-			slog.String("name", name),
-		)
+		slog.Warn("'oauth_token_params' is supported only in 'client_credentials' OAuth flows", slog.String("name", name))
 	}
 
 	// OAuth URLs format validation (already checked above for required fields).
