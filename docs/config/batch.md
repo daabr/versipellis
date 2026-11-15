@@ -43,5 +43,5 @@ Additional notes:
 
 - Optional
 - Format: string containing decimal numbers, each with a unit suffix, e.g., `s` (seconds), and `ms` (milliseconds)
-- Special case: `"0"` and negative values (e.g., `"-1s"`) = no time limit,\
+- Special case: `"0"` and negative values (e.g., `"-1s"`) = no time limit,  
   dispatch batches only when they're ready, or when shutting down

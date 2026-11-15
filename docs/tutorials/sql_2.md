@@ -6,13 +6,13 @@ To explore more configuration options and details in-depth, see the [configurati
 
 ## Prerequisite: Comment-Out SQLite
 
-Comment-out the SQLite block (lines 6-9) in the file [`config/sql_queries.toml`](https://github.com/daabr/versipellis/blob/main/config/sql_queries.toml#L6-L9).
+Comment-out the SQLite block (lines 6-9) in the file [`config/sql_queries.toml`](https://github.com/needful-tee/versipellis/blob/main/config/sql_queries.toml#L6-L9).
 
 ## MariaDB
 
 1. [Basic setup instructions for this database](../setup/mariadb.md)
 
-2. Uncomment this block in the file [`config/sql_queries.toml`](https://github.com/daabr/versipellis/blob/main/config/sql_queries.toml#L11-L14):
+2. Uncomment this block in the file [`config/sql_queries.toml`](https://github.com/needful-tee/versipellis/blob/main/config/sql_queries.toml#L11-L14):
 
    ```toml
    [collector.sql]
@@ -31,7 +31,7 @@ Comment-out the SQLite block (lines 6-9) in the file [`config/sql_queries.toml`]
 
 1. [Basic setup instructions for this database](../setup/mysql.md)
 
-2. Uncomment this block in the file [`config/sql_queries.toml`](https://github.com/daabr/versipellis/blob/main/config/sql_queries.toml#L16-L19):
+2. Uncomment this block in the file [`config/sql_queries.toml`](https://github.com/needful-tee/versipellis/blob/main/config/sql_queries.toml#L16-L19):
 
    ```toml
    [collector.sql]
@@ -50,7 +50,7 @@ Comment-out the SQLite block (lines 6-9) in the file [`config/sql_queries.toml`]
 
 1. [Basic setup instructions for this database](../setup/oracle.md)
 
-2. Uncomment this block in the file [`config/sql_queries.toml`](https://github.com/daabr/versipellis/blob/main/config/sql_queries.toml#L21-L24):
+2. Uncomment this block in the file [`config/sql_queries.toml`](https://github.com/needful-tee/versipellis/blob/main/config/sql_queries.toml#L21-L24):
 
    ```toml
    [collector.sql]
@@ -69,7 +69,7 @@ Comment-out the SQLite block (lines 6-9) in the file [`config/sql_queries.toml`]
 
 1. [Basic setup instructions for this database](../setup/postgresql.md)
 
-2. Uncomment this block in the file [`config/sql_queries.toml`](https://github.com/daabr/versipellis/blob/main/config/sql_queries.toml#L26-L31):
+2. Uncomment this block in the file [`config/sql_queries.toml`](https://github.com/needful-tee/versipellis/blob/main/config/sql_queries.toml#L26-L31):
 
    ```toml
    [collector.sql]
@@ -85,7 +85,7 @@ Comment-out the SQLite block (lines 6-9) in the file [`config/sql_queries.toml`]
    - Key-value pairs format: `"host=localhost dbname=versi_db user=larry passfile=config/.pgpass"`
    - URI format: `"postgres://larry@localhost/versi_db?passfile=config/.pgpass"`
 
-4. Remove the `.example` suffix from the name of the file [`config/.pgpass.example`](https://github.com/daabr/versipellis/blob/main/config/.pgpass.example), and restrict access to it:
+4. Remove the `.example` suffix from the name of the file [`config/.pgpass.example`](https://github.com/needful-tee/versipellis/blob/main/config/.pgpass.example), and restrict access to it:
 
    ```shell
    mv config/.pgpass.example config/.pgpass

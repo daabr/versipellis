@@ -7,8 +7,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/flow"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/flow"
 )
 
 // Format* constants represent all the available "format" settings in the TOML file.

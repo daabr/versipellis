@@ -97,19 +97,19 @@ It is entirely optional, but some fields may be required in some use-cases.
 `oauth_auth_url` - authorization endpoint URL for interactive OAuth flows
 
 - Required when `oauth_grant_type = "authorization_code"`
-- Must start with `"https://"` (per [RFC 6749 § 3.1](https://datatracker.ietf.org/doc/html/rfc6749#section-3.1)),\
+- Must start with `"https://"` (per [RFC 6749 § 3.1](https://datatracker.ietf.org/doc/html/rfc6749#section-3.1)),  
   unless the host is loopback (`localhost`, `127.0.0.0/8`, or `[::1]`)
 
 `oauth_callback_url` - redirection URL back to the client in interactive OAuth flows
 
 - Required when `oauth_grant_type = "authorization_code"`
-- Must start with `"https://"` (per [RFC 6749 § 3.1.2.1](https://datatracker.ietf.org/doc/html/rfc6749#section-3.1.2.1)),\
+- Must start with `"https://"` (per [RFC 6749 § 3.1.2.1](https://datatracker.ietf.org/doc/html/rfc6749#section-3.1.2.1)),  
   unless the host is loopback (`localhost`, `127.0.0.0/8`, or `[::1]`)
 
 `oauth_token_url` - token endpoint URL for all OAuth flows
 
 - Required when `type = "oauth"`
-- Must start with `"https://"` (per [RFC 6749 § 3.2](https://datatracker.ietf.org/doc/html/rfc6749#section-3.2)),\
+- Must start with `"https://"` (per [RFC 6749 § 3.2](https://datatracker.ietf.org/doc/html/rfc6749#section-3.2)),  
   unless the host is loopback (`localhost`, `127.0.0.0/8`, or `[::1]`)
 
 `oauth_refresh_token` - static refresh token

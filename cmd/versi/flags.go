@@ -8,7 +8,7 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/daabr/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/config"
 )
 
 func flags(info *debug.BuildInfo) (exit, debugLog, structured bool, path string) {

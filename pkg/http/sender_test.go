@@ -20,10 +20,10 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/daabr/versipellis/pkg/codec"
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/dest"
-	"github.com/daabr/versipellis/pkg/flow"
+	"needful-t.ee/versipellis/pkg/codec"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/dest"
+	"needful-t.ee/versipellis/pkg/flow"
 )
 
 func TestNewSender(t *testing.T) {

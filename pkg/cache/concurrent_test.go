@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/daabr/versipellis/pkg/cache"
+	"needful-t.ee/versipellis/pkg/cache"
 )
 
 func TestConcurrentCRUD(t *testing.T) {

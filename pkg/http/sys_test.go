@@ -19,8 +19,8 @@ import (
 
 	"github.com/quic-go/quic-go/http3"
 
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/dest"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/dest"
 )
 
 type testCase struct {

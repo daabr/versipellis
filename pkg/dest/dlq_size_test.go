@@ -11,8 +11,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/daabr/versipellis/pkg/codec"
-	"github.com/daabr/versipellis/pkg/flow"
+	"needful-t.ee/versipellis/pkg/codec"
+	"needful-t.ee/versipellis/pkg/flow"
 )
 
 // TestDLQSizeRemeasure checks that the size of all the files in the DLQ directory is measured at startup,

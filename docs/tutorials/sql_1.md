@@ -6,7 +6,7 @@ To explore more configuration options and details in-depth, see the [configurati
 
 ## Run Versipellis
 
-We will be using this TOML configuration from Versipellis's sample file [`config/sql_queries.toml`](https://github.com/daabr/versipellis/blob/main/config/sql_queries.toml):
+We will be using this TOML configuration from Versipellis's sample file [`config/sql_queries.toml`](https://github.com/needful-tee/versipellis/blob/main/config/sql_queries.toml):
 
 ```toml
 [collector]

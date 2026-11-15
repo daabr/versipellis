@@ -18,7 +18,7 @@ For information about the DLQ itself, see [this page](../dead_letter_queue.md).
 - Integers greater than the maximum are normalized to the maximum
 
 > [!NOTE]
-> The warning is logged _once_ when the size reaches the threshold, and\
+> The warning is logged _once_ when the size reaches the threshold, and  
 > again _only after the size drops back below it_ and then reaches it again.
 
 `max_size` - maximum total size of the DLQ directory, in bytes

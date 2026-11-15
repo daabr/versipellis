@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/daabr/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/config"
 )
 
 func generateTestCert(t *testing.T, ca bool, parent *x509.Certificate, parentKey any) ([]byte, []byte, *x509.Certificate, any) {

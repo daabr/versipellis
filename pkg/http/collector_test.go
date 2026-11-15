@@ -13,8 +13,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/dest"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/dest"
 )
 
 func TestNewCollector(t *testing.T) {

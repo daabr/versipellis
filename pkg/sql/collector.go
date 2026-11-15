@@ -19,9 +19,9 @@ import (
 	_ "github.com/snowflakedb/gosnowflake/v2"
 	_ "modernc.org/sqlite"
 
-	"github.com/daabr/versipellis/pkg/codec"
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/flow"
+	"needful-t.ee/versipellis/pkg/codec"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/flow"
 )
 
 // DriverType* constants represent all the available database drivers for SQL collector configurations in the TOML file.

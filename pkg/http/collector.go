@@ -14,10 +14,10 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/daabr/versipellis/pkg/auth"
-	"github.com/daabr/versipellis/pkg/codec"
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/flow"
+	"needful-t.ee/versipellis/pkg/auth"
+	"needful-t.ee/versipellis/pkg/codec"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/flow"
 )
 
 // Collector contains all the configuration and state details for sending HTTP requests.

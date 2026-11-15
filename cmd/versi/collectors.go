@@ -7,9 +7,9 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/http"
-	"github.com/daabr/versipellis/pkg/sql"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/http"
+	"needful-t.ee/versipellis/pkg/sql"
 )
 
 type collector interface {

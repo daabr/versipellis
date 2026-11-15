@@ -6,7 +6,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/daabr/versipellis/pkg/cache"
+	"needful-t.ee/versipellis/pkg/cache"
 )
 
 func TestCacheSingleItemMethods(t *testing.T) {

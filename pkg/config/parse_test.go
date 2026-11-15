@@ -19,9 +19,9 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/dest"
-	"github.com/daabr/versipellis/pkg/flow"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/dest"
+	"needful-t.ee/versipellis/pkg/flow"
 )
 
 func TestParseFile(t *testing.T) {

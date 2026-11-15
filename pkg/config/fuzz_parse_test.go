@@ -5,7 +5,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/daabr/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/config"
 )
 
 func FuzzExtractSubmaps(f *testing.F) {

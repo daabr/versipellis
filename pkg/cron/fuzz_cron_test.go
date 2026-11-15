@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/daabr/versipellis/pkg/cron"
+	"needful-t.ee/versipellis/pkg/cron"
 )
 
 func FuzzParse(f *testing.F) {

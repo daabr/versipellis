@@ -17,7 +17,7 @@
   - `"discard"` or `"none"`
   - `"stdout"`
   - `"dead_letter_queue"`
-  - The full name of any sender which is configured in another section in the TOML file,\
+  - The full name of any sender which is configured in another section in the TOML file,  
     e.g., `sender.http`, `remus.lupin.sender.http`, `sender.http3[1]`, `sender.http3[2]`, etc.
 
 ## `[receiver.http]` (HTTP/1.1 + HTTP/2) Sub-Section

@@ -119,7 +119,7 @@ Imports:
 - Strict 3-block ordering:
   1. Standard library packages.
   2. Third-party/external dependencies.
-  3. Local module packages (`github.com/daabr/versipellis/...`).
+  3. Local module packages (`needful-t.ee/versipellis/...`).
 
 Line length:
 
