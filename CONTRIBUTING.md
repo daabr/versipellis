@@ -32,13 +32,13 @@ This project and everyone participating in it are governed by our [Code of Condu
 
 ## Asking Questions
 
-First, we assume that you've read the [documentation](https://daabr.github.io/versipellis/).
+First, we assume that you've read the [documentation](https://needful-tee.github.io/versipellis/).
 
-Also, it's best to search for [existing issues](https://github.com/daabr/versipellis/issues) that might help you. In case you find a suitable issue and you have additional clarifications/requests/details to share, you can add them in the existing issue. It is also advisable to search the internet for answers first.
+Also, it's best to search for [existing issues](https://github.com/needful-tee/versipellis/issues) that might help you. In case you find a suitable issue and you have additional clarifications/requests/details to share, you can add them in the existing issue. It is also advisable to search the internet for answers first.
 
 If you still want to ask a question, we recommend the following:
 
-- [Open a new issue](https://github.com/daabr/versipellis/issues/new/choose)
+- [Open a new issue](https://github.com/needful-tee/versipellis/issues/new/choose)
 - Explain what you're trying to achieve, what you're observing, and what needs clarification
 - Specify project and environment details (Versipellis, the platform/architecture/OS, connected services, etc.) - depending on what seems relevant
 
@@ -56,7 +56,7 @@ A good bug report shouldn't leave others needing to chase you up for more inform
 - Make sure that you're using the latest version
 - Determine if your issue is a bug in Versipellis or an error on your side, e.g., using incompatible environment components/versions
 - If you're looking for support, you might want to check [this section](#asking-questions)
-- To see if others have experienced (and potentially already solved) the same issue or similar ones, check if there isn't already an [existing issue](https://github.com/daabr/versipellis/issues)
+- To see if others have experienced (and potentially already solved) the same issue or similar ones, check if there isn't already an [existing issue](https://github.com/needful-tee/versipellis/issues)
 - Also make sure to search the internet to see if users outside of the GitHub community have discussed any similar issues
 
 Collect information about the bug:
@@ -72,11 +72,11 @@ Collect information about the bug:
 > [!CAUTION]
 > Never report security-related issues, vulnerabilities or bugs including sensitive information to the public issue tracker, or elsewhere in public.
 >
-> Instead, sensitive bugs must be [reported privately to the project's maintainers](https://github.com/daabr/versipellis/security/advisories/new) - see [SECURITY.md](./SECURITY.md) for details.
+> Instead, sensitive bugs must be [reported privately to the project's maintainers](https://github.com/needful-tee/versipellis/security/advisories/new) - see [SECURITY.md](./SECURITY.md) for details.
 
 We use GitHub issues to track bugs and errors. If you run into an issue with the project:
 
-- [Open a new issue](https://github.com/daabr/versipellis/issues/new/choose)
+- [Open a new issue](https://github.com/needful-tee/versipellis/issues/new/choose)
 - Explain what you're trying to achieve, and what you're expecting, in comparison to the actual behavior
 - Please provide as much context as possible and describe the *reproduction steps* that someone else can follow to recreate the issue on their own
 - For good bug reports you should isolate the problem and create a minimalistic test case, if possible
@@ -95,8 +95,8 @@ This section guides you through submitting an enhancement suggestion for Versipe
 ### Before Submitting an Enhancement
 
 - Make sure that you're using the latest version
-- Read the [documentation](https://daabr.github.io/versipellis/) carefully and find out if the functionality is already covered, maybe as a configurable option
-- Perform a [search](https://github.com/daabr/versipellis/issues) to see if the enhancement has already been suggested
+- Read the [documentation](https://needful-tee.github.io/versipellis/) carefully and find out if the functionality is already covered, maybe as a configurable option
+- Perform a [search](https://github.com/needful-tee/versipellis/issues) to see if the enhancement has already been suggested
   - If it has, add a comment to the existing issue instead of opening a new one
 
 Consider whether your idea fits with the scope and aims of the project. It's up to you to make a strong case to convince the project's developers of the merits of this feature. Keep in mind that we want features that will be useful to the majority of our users and not just a small subset.
@@ -104,7 +104,7 @@ Consider whether your idea fits with the scope and aims of the project. It's up 
 <!-- omit in toc -->
 ### How Do I Submit a Good Enhancement Suggestion?
 
-Enhancement suggestions are tracked as [GitHub issues](https://github.com/daabr/versipellis/issues).
+Enhancement suggestions are tracked as [GitHub issues](https://github.com/needful-tee/versipellis/issues).
 
 - Use a **clear and descriptive title** for the issue to identify the suggestion
 - Provide a **step-by-step description of the suggested enhancement** in as many details as possible
@@ -187,7 +187,7 @@ go tool cover -html=coverage.out
 
 ### Submitting a Pull Request
 
-1. [Fork the repository](https://github.com/daabr/versipellis/fork) and create a new branch from `main`
+1. [Fork the repository](https://github.com/needful-tee/versipellis/fork) and create a new branch from `main`
 2. Write clean, idiomatic, maintainable code with unit tests covering new or modified functionality
 3. [Run the test suite and the linter](#code-quality) to make sure all checks pass
 4. Make focused, atomic commits with clear, concise descriptions

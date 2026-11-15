@@ -22,8 +22,8 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/net/http/httpguts"
 
-	"github.com/daabr/versipellis/pkg/cache"
-	"github.com/daabr/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/cache"
+	"needful-t.ee/versipellis/pkg/config"
 )
 
 var (

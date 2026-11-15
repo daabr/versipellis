@@ -14,9 +14,9 @@ import (
 
 	"github.com/quic-go/quic-go/http3"
 
-	"github.com/daabr/versipellis/pkg/codec"
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/flow"
+	"needful-t.ee/versipellis/pkg/codec"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/flow"
 )
 
 // Receiver contains all the configuration and state details for receiving HTTP requests. It's a

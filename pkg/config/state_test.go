@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/daabr/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/config"
 )
 
 func TestStateUnstarted(t *testing.T) {

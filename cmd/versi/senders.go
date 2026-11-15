@@ -6,9 +6,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/dest"
-	"github.com/daabr/versipellis/pkg/http"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/dest"
+	"needful-t.ee/versipellis/pkg/http"
 )
 
 var (

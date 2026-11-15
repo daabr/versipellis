@@ -4,8 +4,8 @@ import (
 	"maps"
 	"testing"
 
-	"github.com/daabr/versipellis/pkg/codec"
-	"github.com/daabr/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/codec"
+	"needful-t.ee/versipellis/pkg/config"
 )
 
 func TestParseFormat(t *testing.T) {

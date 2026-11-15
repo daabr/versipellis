@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/daabr/versipellis/pkg/flow"
+	"needful-t.ee/versipellis/pkg/flow"
 )
 
 func TestChunk(t *testing.T) {

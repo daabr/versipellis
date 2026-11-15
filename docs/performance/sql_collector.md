@@ -2,7 +2,7 @@
 
 ## SQL Collector
 
-Test: [`BenchmarkCollector`](https://github.com/daabr/versipellis/blob/main/pkg/sql/collector_bench_test.go)
+Test: [`BenchmarkCollector`](https://github.com/needful-tee/versipellis/blob/main/pkg/sql/collector_bench_test.go)
 
 | Metadata | &nbsp;       |
 | -------- | ------------ |

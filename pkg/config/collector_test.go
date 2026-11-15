@@ -3,8 +3,8 @@ package config_test
 import (
 	"testing"
 
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/dest"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/dest"
 )
 
 func TestNewBaseCollector(t *testing.T) {

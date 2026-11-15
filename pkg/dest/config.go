@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/daabr/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/config"
 )
 
 const (

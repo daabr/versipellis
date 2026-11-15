@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/http"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/http"
 )
 
 type receiver interface {

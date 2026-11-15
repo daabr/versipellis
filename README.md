@@ -3,13 +3,13 @@
 # Versipellis - The Data Flow Shape Shifter
 
 <!-- Waiting for Google Gemini to index this repo, so the link won't lead to a 404.
-[![Code Wiki](https://img.shields.io/badge/Gemini-code_wiki-007d9c?logo=googlegemini)](https://codewiki.google/github.com/daabr/versipellis)
+[![Code Wiki](https://img.shields.io/badge/Gemini-code_wiki-007d9c?logo=googlegemini)](https://codewiki.google/github.com/needful-tee/versipellis)
 -->
-[![DeepWiki](https://img.shields.io/badge/DeepWiki-gray.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/daabr/versipellis)
-[![Go Reference](https://pkg.go.dev/badge/github.com/daabr/versipellis.svg)](https://pkg.go.dev/github.com/daabr/versipellis)
-[![Codecov](https://codecov.io/gh/daabr/versipellis/graph/badge.svg?token=IZFQXL47EM)](https://codecov.io/gh/daabr/versipellis)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/needful-tee/versipellis)
+[![Go Reference](https://pkg.go.dev/badge/needful-t.ee/versipellis.svg)](https://pkg.go.dev/needful-t.ee/versipellis)
+[![Codecov](https://codecov.io/gh/needful-tee/versipellis/graph/badge.svg?token=OQG3ZP9HV0)](https://codecov.io/gh/needful-tee/versipellis)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14316/badge)](https://www.bestpractices.dev/projects/14316)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/daabr/versipellis/badge)](https://scorecard.dev/viewer/?uri=github.com/daabr/versipellis)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/needful-tee/versipellis/badge)](https://scorecard.dev/viewer/?uri=github.com/needful-tee/versipellis)
 [![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
 
 Versipellis (`versi`) is a versatile, scalable tool for transferring and transforming data reliably across services, networks, protocols and formats, without altering the data itself.
@@ -30,14 +30,14 @@ The primary design principles of this project are: ease of use, efficiency at sc
 
 ### Installation Option 1: Docker Image
 
-<https://github.com/daabr/versipellis/pkgs/container/versipellis>
+<https://github.com/needful-tee/versipellis/pkgs/container/versipellis>
 
 Command line example:
 
 ```shell
 docker run -d --name my-versi-container \
        -v $HOME/versi/config:/app/config -v $HOME/versi/data:/app/data \
-       ghcr.io/daabr/versipellis:latest
+       ghcr.io/needful-tee/versipellis:latest
 ```
 
 - Platforms: Linux (amd64/arm64)
@@ -50,7 +50,7 @@ docker run -d --name my-versi-container \
 
 ### Installation Option 2: Precompiled Executable Binary
 
-<https://github.com/daabr/versipellis/releases/latest>
+<https://github.com/needful-tee/versipellis/releases/latest>
 
 - Platforms:
   - Linux (amd64/arm64)
@@ -87,7 +87,8 @@ CGO_ENABLED=1 go build -tags=odbc ./cmd/versi && ./versi -h
 - Directions: pull (retrieve from servers), push (receive from clients)
 - Encryption: none, TLS, mTLS
 - Content encoding: `identity` (none), `gzip`
-- Auth: [coming soon!](./docs/roadmap.md)
+- [Coming soon](./docs/roadmap.md): Authentication and authorization (pull only):  
+  username + password (RFC 7617), static keys/tokens, OAuth 2, JWT
 
 ### SQL Input
 
@@ -115,3 +116,5 @@ Supported SQL-based databases:
 
 - Directions: push (send to servers)
 - Same feature set as [HTTP input](#http-input) above
+  - [Coming soon](./docs/roadmap.md): Including authentication and authorization
+  - Not including content encoding, i.e. compression (yet)

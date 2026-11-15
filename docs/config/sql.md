@@ -92,8 +92,10 @@ Other drivers below don't require any setup prior to running Versipellis.
   - <https://github.com/jackc/pgx/tree/master/pgconn>
 
 > [!TIP]
-> Use the [`.pgpass` file](https://www.postgresql.org/docs/current/libpq-pgpass.html) to avoid exposing the user password in the connection string.\
-> To use a non-default path for it, specify the [`passfile` parameter](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNECT-PASSFILE) in the connection string, or set the `PGPASSFILE` environment variable.
+> Use the [`.pgpass` file](https://www.postgresql.org/docs/current/libpq-pgpass.html) to avoid exposing the user password in the connection string.
+>
+> To use a non-default path for it, specify the [`passfile` parameter](https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNECT-PASSFILE) in the connection string,  
+> or set the `PGPASSFILE` environment variable.
 
 ### SAP HANA
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/daabr/versipellis/pkg/cron"
+	"needful-t.ee/versipellis/pkg/cron"
 )
 
 // CollectorType* constants represent all the available configuration modes of "collector" sections in the TOML file.

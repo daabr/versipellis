@@ -138,9 +138,9 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/daabr/versipellis)
+        - prefix(needful-t.ee/versipellis)
     gofumpt:
-      module-path: github.com/daabr/versipellis
+      module-path: needful-t.ee/versipellis
       extra:
         clothe-returns: true
         balance-calls: true

@@ -10,7 +10,7 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/daabr/versipellis/pkg/flow"
+	"needful-t.ee/versipellis/pkg/flow"
 )
 
 const (

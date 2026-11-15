@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/net/http/httpguts"
 
-	"github.com/daabr/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/config"
 )
 
 const (

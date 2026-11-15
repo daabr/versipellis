@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/daabr/versipellis/pkg/codec"
-	"github.com/daabr/versipellis/pkg/flow"
+	"needful-t.ee/versipellis/pkg/codec"
+	"needful-t.ee/versipellis/pkg/flow"
 )
 
 func TestDiscard(t *testing.T) {

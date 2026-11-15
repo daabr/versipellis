@@ -29,7 +29,7 @@
 - Optional
 - Default: `1` (no concurrency)
 - Valid range: any positive integer between `1` and `100`
-- If the collector is at its concurrency limit when a new operation\
+- If the collector is at its concurrency limit when a new operation  
   needs to start, the operation is **skipped, not delayed**
 
 > [!WARNING]
@@ -43,7 +43,7 @@
   - `"discard"` or `"none"`
   - `"stdout"`
   - `"dead_letter_queue"`
-  - The full name of any sender which is configured in another section in the TOML file,\
+  - The full name of any sender which is configured in another section in the TOML file,  
     e.g., `sender.http`, `remus.lupin.sender.http`, `sender.http3[1]`, `sender.http3[2]`, etc.
 
 ## `[collector.http]` (HTTP/1.1 + HTTP/2) Sub-Section

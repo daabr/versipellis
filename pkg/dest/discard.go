@@ -3,8 +3,8 @@ package dest
 import (
 	"context"
 
-	"github.com/daabr/versipellis/pkg/config"
-	"github.com/daabr/versipellis/pkg/flow"
+	"needful-t.ee/versipellis/pkg/config"
+	"needful-t.ee/versipellis/pkg/flow"
 )
 
 // Discard is a trivial sender that doesn't output anything, but it does release

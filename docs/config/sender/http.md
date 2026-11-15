@@ -120,7 +120,7 @@
 - Default: `100`
 - Valid range: any positive integer between `1` (no concurrency) and `200`
 - Integer values out of bounds in either direction are normalized to the maximum
-- If the sender is at its concurrency limit when a new request needs to start,\
+- If the sender is at its concurrency limit when a new request needs to start,  
   the request is **delayed until a slot is available, not rejected/dropped**
 - Each request keeps its slot until it completes, including its retries
 

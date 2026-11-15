@@ -3,7 +3,7 @@ package config
 import (
 	"context"
 
-	"github.com/daabr/versipellis/pkg/flow"
+	"needful-t.ee/versipellis/pkg/flow"
 )
 
 // SenderType* constants represent all the available configuration modes of "sender" sections in the TOML file.
