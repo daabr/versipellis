@@ -25,7 +25,7 @@ jobs:
       - name: Test
         run: |
           go install gotest.tools/gotestsum@c4a0df2e75a225d979a444342dd3db752b53619f # v1.13.0
-          gotestsum -f github-actions -- -race -coverprofile=coverage.out ./pkg/...
+          gotestsum -f github-actions --junitfile junit.xml -- -race -coverprofile=coverage.out ./pkg/...
 
       - name: Lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -33,8 +33,16 @@ jobs:
           version: latest
           args: --timeout=5m # https://github.com/golangci/golangci-lint-action/issues/308
 
-      - name: Upload to Codecov
+      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          slug: needful-tee/versipellis
+      - name: Upload test analytics to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: test_results
+          files: ./junit.xml
           slug: needful-tee/versipellis
