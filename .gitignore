@@ -3,6 +3,7 @@
 /config/versi.toml
 /data/
 /dist/
+/junit.xml
 
 ### https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
 
